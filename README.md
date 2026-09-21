@@ -72,6 +72,31 @@ Server environment:
 
 `npm run bench:field` prints build time and size per level.
 
+## Hosting
+
+The server is one always-on process, so it wants a small VM rather than
+anything serverless. The repo ships a setup for a GCP `e2-micro` (in the
+always-free tier in `us-west1`, `us-central1` and `us-east1`):
+
+1. Merges to `main` publish the image to `ghcr.io/bohemian-miser/spectacle`
+   (`.github/workflows/publish.yml`). Make that package **public** once in the
+   repo's Packages settings so the VM can pull it without credentials.
+2. With `gcloud` logged in and a project selected:
+   ```bash
+   ./deploy/gcp/create-vm.sh                                  # HTTP on the VM's IP
+   DOMAIN=spectacle.example.com ./deploy/gcp/create-vm.sh     # HTTPS via Caddy
+   ```
+   The startup script installs Docker, adds 1 GB of swap, and runs
+   [`deploy/gcp/docker-compose.yml`](deploy/gcp/docker-compose.yml): the game,
+   Caddy in front (TLS when a domain is set), and Watchtower, which pulls the
+   new image within five minutes of a publish and restarts the game. A restart
+   wipes the arena — fine for now, and the reason persistence is on the list.
+3. Tune without redeploying: edit `/opt/spectacle/.env` on the VM (`BOTS`,
+   `FIELD_*`, any `KNOB_*`), then `docker compose up -d` there.
+
+Stop paying: `gcloud compute instances stop spectacle --zone us-central1-a`.
+Egress beyond the free 1 GB/month is the only meaningful cost while it is on.
+
 ## How it is built
 
 ```

@@ -56,3 +56,26 @@ jobs:
             smoke*.png
             server.log
           retention-days: 7
+
+  image:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: spectacle:ci
+          cache-from: type=gha
+      - name: Container answers on /healthz
+        run: |
+          docker run -d --name spectacle -p 8787:8787 -e BOTS=1 spectacle:ci
+          for i in $(seq 1 30); do
+            curl -sf http://localhost:8787/healthz && break
+            sleep 1
+          done
+          curl -sf http://localhost:8787/healthz
+          docker logs spectacle
