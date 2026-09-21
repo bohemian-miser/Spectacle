@@ -19,9 +19,8 @@ you.
    line; lines never cross inside a tile. A level-3 patch underneath shows the
    circuits (coloured by length) and open lines the rule produces. Tiles with
    an odd number of lines are flagged as *tails* — your line will end there. *Surprise me* deals a
-   random clean rule (one from the family's kernel, so every tile pairs up);
-   *FASS* is the proven infinite-line rule (`128 · 010100000` on hexagons,
-   `1278 · 0101000000` on Tile(1,1)).
+   random clean rule (one from the family's kernel, so every tile pairs up).
+   The rules that draw one endless line exist; finding them is the game.
 2. **Tap a tile.** It fades and takes your colour, and the chord nearest your tap
    starts growing out of one end, picked at random.
 3. **It grows.** One tile per step; the step interval shrinks with your score
@@ -169,7 +168,7 @@ round in Chromium and uploads screenshots).
 ## Next
 
 - Tune the knobs (the point of having them): the score→speed curve currently
-  rewards a long FASS line heavily; circuit area vs length; wipe penalties.
+  rewards one long line heavily; circuit area vs length; wipe penalties.
 - More than one live line, growing from both ends, or steering at junctions.
 - A bigger field: the un-rooted engine from Spectre can make it effectively
   infinite; the renderer would go WebGL instanced as in the Infinite Map.

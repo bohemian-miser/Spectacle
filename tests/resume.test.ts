@@ -7,7 +7,7 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../shared/game/protocol';
-import { defaultRule } from '../shared/game/rule';
+import { fassRule } from '../shared/game/rule';
 
 const PORT = 18000 + Math.floor(Math.random() * 1000);
 let server: ChildProcess;
@@ -74,7 +74,7 @@ describe('resume', () => {
     const a = new Client();
     await a.open();
     await a.until('hello');
-    a.send({ t: 'join', name: 'Ann', rule: defaultRule('hex') });
+    a.send({ t: 'join', name: 'Ann', rule: fassRule('hex') });
     const w1 = await a.until('welcome');
     if (w1.t !== 'welcome') throw new Error();
     expect(w1.token).toMatch(/^[0-9a-f]{32}$/);
@@ -83,7 +83,7 @@ describe('resume', () => {
     const b = new Client();
     await b.open();
     await b.until('hello');
-    b.send({ t: 'join', name: 'ignored', rule: defaultRule('hex'), resume: { id: w1.you, token: w1.token } });
+    b.send({ t: 'join', name: 'ignored', rule: fassRule('hex'), resume: { id: w1.you, token: w1.token } });
     const w2 = await b.until('welcome');
     if (w2.t !== 'welcome') throw new Error();
     expect(w2.you).toBe(w1.you);
@@ -93,7 +93,7 @@ describe('resume', () => {
     const c = new Client();
     await c.open();
     await c.until('hello');
-    c.send({ t: 'join', name: 'Cat', rule: defaultRule('hex'), resume: { id: w1.you, token: 'nope' } });
+    c.send({ t: 'join', name: 'Cat', rule: fassRule('hex'), resume: { id: w1.you, token: 'nope' } });
     const w3 = await c.until('welcome');
     if (w3.t !== 'welcome') throw new Error();
     expect(w3.you).not.toBe(w1.you);

@@ -7,7 +7,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { applyPair, matchingToPairs, pairsToMatchingIndex, removePairAt, type Pair } from '../../shared/game/pairs';
-import { describeRule, defaultRule, oddTypes, randomCleanRule, type PlayerRule } from '../../shared/game/rule';
+import { describeRule, oddTypes, randomCleanRule, type PlayerRule } from '../../shared/game/rule';
 import { mathRandomRng } from '../../shared/game/rng';
 import {
   EDGE_CLASS_COLORS,
@@ -154,9 +154,6 @@ export function RuleEditor({ family, rule, color = '#ffffff', onChange, onDrafti
           </label>
           <button type="button" className="btn" onClick={() => setRule(randomCleanRule(family, mathRandomRng))}>
             Surprise me
-          </button>
-          <button type="button" className="btn" onClick={() => setRule(defaultRule(family))} title="The proven infinite-line rule">
-            FASS
           </button>
           <button type="button" className="btn" onClick={() => setRule(withSubset(family, [], rule.matching))}>
             Clear

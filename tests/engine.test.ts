@@ -3,7 +3,7 @@ import { Engine } from '../shared/game/engine';
 import { buildField, tileCenter } from '../shared/game/field';
 import { DEFAULT_KNOBS, stepIntervalMs, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
-import { defaultRule, ruleFromCombo, validateRule } from '../shared/game/rule';
+import { fassRule, ruleFromCombo, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { chordTableFor, tileChords, walkStrand } from '../shared/game/strand';
 
@@ -98,7 +98,7 @@ describe('engine', () => {
   it('a rival crossing your chord wipes your path (tile mode)', () => {
     const e = make({ crossingMode: 'tile' });
     e.addPlayer('a', 'Ann', SEL15);
-    e.addPlayer('b', 'Bob', defaultRule('spectre'));
+    e.addPlayer('b', 'Bob', fassRule('spectre'));
     const { tile } = loopTile();
     const ta = e.tap('a', tile, tileCenter(FIELD, tile));
     expect(ta.result.ok).toBe(true);
@@ -146,7 +146,7 @@ describe('engine', () => {
     e.addPlayer('a', 'Ann', SEL15);
     const { tile } = loopTile();
     e.tap('a', tile, tileCenter(FIELD, tile));
-    const ev = e.setRule('a', defaultRule('spectre'));
+    const ev = e.setRule('a', fassRule('spectre'));
     expect(ev.some((x) => x.t === 'wipe')).toBe(true);
     expect(ev.find((x) => x.t === 'rule')).toMatchObject({ id: 'a', score: 0 });
     expect(e.players.get('a')!.paths).toHaveLength(0);
@@ -168,6 +168,6 @@ describe('engine', () => {
     // Delta under 1278 has 4 points → matchings 0,1,2; index 1 is the crossing one.
     const bad = { family: 'spectre', subset: [1, 2, 7, 8], matching: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
     expect(validateRule(bad, 'spectre')).toBeNull();
-    expect(validateRule(defaultRule('spectre'), 'spectre')).toEqual(defaultRule('spectre'));
+    expect(validateRule(fassRule('spectre'), 'spectre')).toEqual(fassRule('spectre'));
   });
 });

@@ -121,17 +121,29 @@ export function randomCleanRule(family: TileFamilyId, rng: Rng): PlayerRule {
   return { family, subset: pick.edges, matching: randomMatching(family, pick.edges, rng) };
 }
 
-/** The default rule offered on entry: the proven FASS-curve rule where one exists. */
+/**
+ * The rule offered on entry: selection 15 — clean in both families, and it
+ * only ever makes short closed loops (3, 6 or 9 segments on the spectre), so
+ * it demonstrates circuits without giving away the long lines. The rules
+ * that draw an infinite strand are for players to find.
+ */
 export function defaultRule(family: TileFamilyId): PlayerRule {
+  const valid = validEdgeSubsets(family);
+  if (valid.some((v) => v.edges.join('') === '15')) {
+    return ruleFromCombo(family, '15', leafOrder(family).map(() => '0').join(''));
+  }
+  const first = valid.find((v) => v.edges.length > 0);
+  return { family, subset: first?.edges ?? [], matching: leafOrder(family).map(() => 0) };
+}
+
+/** The proven infinite-line (FASS) rule per family — used by tests and bots, never shown as a preset. */
+export function fassRule(family: TileFamilyId): PlayerRule {
   switch (family) {
     case 'hex':
       return ruleFromCombo('hex', '128', '010100000');
     case 'spectre':
       return ruleFromCombo('spectre', '1278', '0101000000');
-    default: {
-      const valid = validEdgeSubsets(family).filter((v) => v.edges.length > 0);
-      const edges = valid[0]?.edges ?? [];
-      return { family, subset: edges, matching: leafOrder(family).map(() => 0) };
-    }
+    default:
+      return defaultRule(family);
   }
 }
