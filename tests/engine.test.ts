@@ -3,7 +3,7 @@ import { Engine } from '../shared/game/engine';
 import { buildField, tileCenter } from '../shared/game/field';
 import { DEFAULT_KNOBS, stepIntervalMs, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
-import { fassRule, ruleFromCombo, validateRule } from '../shared/game/rule';
+import { defaultRule, fassRule, oddTypes, ruleFromCombo, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { chordTableFor, tileChords, walkStrand } from '../shared/game/strand';
 
@@ -169,5 +169,14 @@ describe('engine', () => {
     const bad = { family: 'spectre', subset: [1, 2, 7, 8], matching: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
     expect(validateRule(bad, 'spectre')).toBeNull();
     expect(validateRule(fassRule('spectre'), 'spectre')).toEqual(fassRule('spectre'));
+  });
+
+  it('the default rule is selection 15 — clean, and not the infinite-line rule', () => {
+    for (const family of ['hex', 'spectre'] as const) {
+      const d = defaultRule(family);
+      expect(d.subset).toEqual([1, 5]);
+      expect(oddTypes(d)).toEqual([]);
+      expect(d.subset).not.toEqual(fassRule(family).subset);
+    }
   });
 });
