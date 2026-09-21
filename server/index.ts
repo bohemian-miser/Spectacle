@@ -9,9 +9,11 @@
  *   FIELD_ROOT    (Delta)    root tile type
  *   BOTS          (0)        number of bot players
  *   SEED          (random)   RNG seed
+ *   RESUME_GRACE_MS (90000)  how long a dropped player is kept for `join.resume`
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
  */
 
+import { randomBytes } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
@@ -24,7 +26,7 @@ import type { ClientMessage, GameEvent, ServerMessage } from '../shared/game/pro
 import { PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
-import { Bots } from './bots';
+import { Bots } from '../shared/game/bots';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -106,7 +108,7 @@ const wss = new WebSocketServer({ server: http, path: '/ws' });
 
 interface Client {
   readonly ws: WebSocket;
-  readonly id: string;
+  id: string;
   joined: boolean;
   lastTapAt: number;
 }
@@ -114,6 +116,41 @@ interface Client {
 const clients = new Map<string, Client>();
 let nextClient = 1;
 let pending: GameEvent[] = [];
+
+/**
+ * Dropped players are kept for a grace period so a reconnect (a flaky phone,
+ * or Cloud Run's hourly request cap) picks the same player up: same id, score,
+ * lines. The token is issued in `welcome` and must come back in `join.resume`.
+ */
+const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 90_000);
+const tokens = new Map<string, string>(); // player id → token
+const detached = new Map<string, ReturnType<typeof setTimeout>>(); // player id → expiry
+
+function detach(id: string): void {
+  if (!engine.players.has(id)) return;
+  detached.set(
+    id,
+    setTimeout(() => {
+      detached.delete(id);
+      tokens.delete(id);
+      pending.push(...engine.removePlayer(id));
+    }, RESUME_GRACE_MS),
+  );
+}
+
+function tryResume(client: Client, resume: unknown): boolean {
+  if (!resume || typeof resume !== 'object') return false;
+  const r = resume as { id?: unknown; token?: unknown };
+  if (typeof r.id !== 'string' || typeof r.token !== 'string') return false;
+  const expiry = detached.get(r.id);
+  if (expiry === undefined || tokens.get(r.id) !== r.token) return false;
+  clearTimeout(expiry);
+  detached.delete(r.id);
+  clients.delete(client.id);
+  client.id = r.id;
+  clients.set(client.id, client);
+  return true;
+}
 
 function send(ws: WebSocket, msg: ServerMessage): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
@@ -143,6 +180,12 @@ wss.on('connection', (ws) => {
     switch (msg.t) {
       case 'join': {
         if (client.joined) return;
+        if (tryResume(client, msg.resume)) {
+          client.joined = true;
+          const snap = engine.snapshot();
+          send(ws, { t: 'welcome', you: client.id, token: tokens.get(client.id)!, field: spec, knobs, players: snap.players, paths: snap.paths });
+          return;
+        }
         const rule = validateRule(msg.rule, field.family);
         if (!rule) {
           send(ws, { t: 'error', message: 'invalid rule for this arena' });
@@ -154,8 +197,10 @@ wss.on('connection', (ws) => {
         }
         const ev = engine.addPlayer(client.id, cleanName(msg.name), rule);
         client.joined = true;
+        const token = randomBytes(16).toString('hex');
+        tokens.set(client.id, token);
         const snap = engine.snapshot();
-        send(ws, { t: 'welcome', you: client.id, field: spec, knobs, players: snap.players, paths: snap.paths });
+        send(ws, { t: 'welcome', you: client.id, token, field: spec, knobs, players: snap.players, paths: snap.paths });
         // Everyone else learns about the newcomer on the next flush; the
         // newcomer already has themselves in the snapshot.
         for (const c of clients.values()) if (c !== client && c.joined) send(c.ws, { t: 'events', ev });
@@ -194,7 +239,7 @@ wss.on('connection', (ws) => {
 
   ws.on('close', () => {
     clients.delete(client.id);
-    if (client.joined) pending.push(...engine.removePlayer(client.id));
+    if (client.joined) detach(client.id);
   });
   ws.on('error', () => ws.close());
 });

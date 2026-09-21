@@ -5,12 +5,12 @@
  * sometimes onto a rival's path to cut it.
  */
 
-import type { Engine } from '../shared/game/engine';
-import { tileCenter } from '../shared/game/field';
-import type { GameEvent } from '../shared/game/protocol';
-import { randomCleanRule } from '../shared/game/rule';
-import type { Rng } from '../shared/game/rng';
-import { chordTableFor, tileChords } from '../shared/game/strand';
+import type { Engine } from './engine';
+import { tileCenter } from './field';
+import type { GameEvent } from './protocol';
+import { randomCleanRule } from './rule';
+import type { Rng } from './rng';
+import { chordTableFor, tileChords } from './strand';
 
 const NAMES = [
   'hexbot', 'psi', 'mystic', 'delta', 'theta', 'lambda', 'xi', 'sigma', 'phi', 'gamma',

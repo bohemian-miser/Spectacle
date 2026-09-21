@@ -34,6 +34,8 @@ export class Store {
   field: Field | null = null;
   knobs: Knobs | null = null;
   you = '';
+  /** Resume ticket from the last `welcome` (online only). */
+  resume: { id: string; token: string } | null = null;
   readonly players = new Map<string, ClientPlayer>();
   readonly paths = new Map<number, ClientPath>();
   /** tile → paths on it (for the faded-tile render). */
@@ -106,6 +108,7 @@ export class Store {
         this.paths.clear();
         this.occupancy.clear();
         this.you = msg.you;
+        this.resume = { id: msg.you, token: msg.token };
         this.knobs = msg.knobs;
         if (!this.field || this.field.spec.family !== msg.field.family || this.field.spec.level !== msg.field.level || this.field.spec.rootTile !== msg.field.rootTile) {
           this.field = buildField(msg.field);

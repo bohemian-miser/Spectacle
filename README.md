@@ -72,11 +72,33 @@ Server environment:
 
 `npm run bench:field` prints build time and size per level.
 
-## Hosting
+## Solo mode and GitHub Pages
 
-The server is one always-on process, so it wants a small VM rather than
-anything serverless. The repo ships a setup for a GCP `e2-micro` (in the
-always-free tier in `us-west1`, `us-central1` and `us-east1`):
+The engine and the bots are plain shared code, so the whole game can run
+inside one browser tab: pick *Solo, in this tab* in the lobby (or open
+`/?solo`), choose the family, size and bot count, and play against bots with
+nothing shared. The static build on GitHub Pages
+(`.github/workflows/pages.yml`, published from `main`) is solo-only and links
+to the live arena when the repository variable `SPECTACLE_ONLINE_URL` is set.
+Enable Pages with the source set to *GitHub Actions* once in the repo settings.
+
+## Hosting the online arena
+
+The server is one always-on process while anyone is playing. Two GCP options
+ship in `deploy/gcp/`; pick by what you want to pay for idle time.
+
+**Cloud Run — scales to zero.** `./deploy/gcp/cloudrun.sh` builds the
+Dockerfile with Cloud Build and deploys one instance at most, none when idle.
+While people are connected you pay for one small instance; when the last one
+leaves it is retired after about fifteen idle minutes, and idle costs nothing.
+The free tier covers roughly fifty instance-hours a month. Cloud Run caps a
+request, and so a WebSocket, at an hour; the client reconnects and resumes the
+same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 90 s), so
+nobody notices. Cold start is a few seconds for the first arrival.
+
+**A free `e2-micro` VM — always on.** One `e2-micro` in `us-west1`,
+`us-central1` or `us-east1` is in the always-free tier, so idle is free
+anyway and there is nothing to scale down; it just keeps the arena warm.
 
 1. Merges to `main` publish the image to `ghcr.io/bohemian-miser/spectacle`
    (`.github/workflows/publish.yml`). Make that package **public** once in the
@@ -94,8 +116,9 @@ always-free tier in `us-west1`, `us-central1` and `us-east1`):
 3. Tune without redeploying: edit `/opt/spectacle/.env` on the VM (`BOTS`,
    `FIELD_*`, any `KNOB_*`), then `docker compose up -d` there.
 
-Stop paying: `gcloud compute instances stop spectacle --zone us-central1-a`.
-Egress beyond the free 1 GB/month is the only meaningful cost while it is on.
+Stop the VM: `gcloud compute instances stop spectacle --zone us-central1-a`.
+Either way, egress beyond the free 1 GB/month is the only cost that scales
+with players.
 
 ## How it is built
 

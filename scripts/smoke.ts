@@ -5,6 +5,7 @@
 import { chromium } from '@playwright/test';
 
 const url = process.argv[2] ?? 'http://localhost:8787/';
+const enterLabel = /[?&]solo/.test(url) ? 'Play solo' : 'Enter the arena';
 const out = process.argv[3] ?? '/tmp/spectacle-smoke.png';
 
 const browser = await chromium.launch(process.env.PW_EXE ? { executablePath: process.env.PW_EXE } : {});
@@ -17,7 +18,7 @@ page.on('pageerror', (e) => errors.push(String(e)));
 await page.goto(url);
 await page.getByPlaceholder('name').fill('smoke');
 await page.screenshot({ path: out.replace('.png', '-lobby.png') });
-await page.getByRole('button', { name: 'Enter the arena' }).click();
+await page.getByRole('button', { name: enterLabel }).click();
 await page.waitForSelector('.arena-canvas');
 await page.waitForTimeout(500);
 // Zoom in a bit around the centre, then tap it.

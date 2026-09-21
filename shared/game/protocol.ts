@@ -40,8 +40,14 @@ export interface PlayerPublic {
 
 // --- client → server ---------------------------------------------------------
 
+export interface ResumeTicket {
+  readonly id: string;
+  readonly token: string;
+}
+
 export type ClientMessage =
-  | { readonly t: 'join'; readonly name: string; readonly rule: PlayerRule }
+  /** `resume` reattaches to a player the server still holds after a dropped connection. */
+  | { readonly t: 'join'; readonly name: string; readonly rule: PlayerRule; readonly resume?: ResumeTicket }
   | { readonly t: 'tap'; readonly tile: number; readonly x: number; readonly y: number }
   | { readonly t: 'rule'; readonly rule: PlayerRule }
   | { readonly t: 'ping'; readonly n: number };
@@ -76,6 +82,8 @@ export type ServerMessage =
   | {
       readonly t: 'welcome';
       readonly you: string;
+      /** Present it with `join.resume` to pick this player up again after a drop. */
+      readonly token: string;
       readonly field: FieldSpec;
       readonly knobs: Knobs;
       readonly players: readonly PlayerPublic[];

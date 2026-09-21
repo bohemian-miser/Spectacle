@@ -6,6 +6,8 @@ import react from '@vitejs/plugin-react';
 // In dev, Vite proxies `/ws` to the tsx-run server on :8787.
 export default defineConfig({
   root: 'client',
+  // '/' when the game server serves the client; '/Spectacle/' for GitHub Pages.
+  base: process.env.VITE_BASE ?? '/',
   plugins: [react()],
   build: {
     outDir: '../dist',

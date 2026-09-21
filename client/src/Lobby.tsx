@@ -1,22 +1,33 @@
 import { useState } from 'react';
 import type { PlayerRule } from '../../shared/game/rule';
-import { FAMILY_DISPLAY_NAMES } from '../../shared/tiles';
+import { FAMILY_DISPLAY_NAMES, buildSystem, countTiles, type TileFamilyId } from '../../shared/tiles';
+import { ONLINE_URL, SOLO_ONLY, type Mode } from './App';
+import { SOLO_LEVELS, type SoloOptions } from './local';
 import { RuleEditor } from './RuleEditor';
 import type { Store } from './store';
 
 export interface LobbyProps {
   readonly store: Store;
+  readonly mode: Mode;
+  readonly solo: SoloOptions;
   readonly rule: PlayerRule;
   readonly name: string;
   /** Already in the arena: this is a "new rule" restart, not a first entry. */
   readonly inArena: boolean;
+  onMode(mode: Mode): void;
+  onSolo(opts: SoloOptions): void;
   onRule(rule: PlayerRule): void;
   onName(name: string): void;
   onEnter(): void;
   onCancel(): void;
 }
 
-export function Lobby({ store, rule, name, inArena, onRule, onName, onEnter, onCancel }: LobbyProps): JSX.Element {
+function tileCount(family: TileFamilyId, level: number): number {
+  return countTiles(buildSystem(family, level)['Delta']);
+}
+
+export function Lobby(props: LobbyProps): JSX.Element {
+  const { store, mode, solo, rule, name, inArena, onMode, onSolo, onRule, onName, onEnter, onCancel } = props;
   const [touched, setTouched] = useState(false);
   const hello = store.hello;
   const ready = rule.subset.length > 0 && name.trim().length > 0;
@@ -28,9 +39,59 @@ export function Lobby({ store, rule, name, inArena, onRule, onName, onEnter, onC
         <h1>Spectacle</h1>
         <p className="muted">
           A massively multiplayer strand-drawing game on {hello ? FAMILY_DISPLAY_NAMES[hello.field.family].toLowerCase() : 'tiles'}.
-          {hello ? ` ${hello.tiles.toLocaleString()} tiles, ${hello.players} playing.` : ''}
+          {hello && mode === 'online' ? ` ${hello.tiles.toLocaleString()} tiles, ${hello.players} playing.` : ''}
         </p>
       </header>
+
+      {!inArena && (
+        <section className="panel">
+          <h2>Where</h2>
+          {!SOLO_ONLY && (
+            <div className="mode-row">
+              <button type="button" className={`btn${mode === 'online' ? ' is-on' : ''}`} onClick={() => onMode('online')}>
+                Online arena
+              </button>
+              <button type="button" className={`btn${mode === 'solo' ? ' is-on' : ''}`} onClick={() => onMode('solo')}>
+                Solo, in this tab
+              </button>
+            </div>
+          )}
+          {mode === 'solo' && (
+            <div className="solo-row">
+              <label>
+                Tiles
+                <select value={solo.family} onChange={(e) => onSolo({ ...solo, family: e.target.value as TileFamilyId })}>
+                  <option value="hex">Hexagons</option>
+                  <option value="spectre">Tile(1,1) — the Spectre</option>
+                </select>
+              </label>
+              <label>
+                Size
+                <select value={solo.level} onChange={(e) => onSolo({ ...solo, level: Number(e.target.value) })}>
+                  {SOLO_LEVELS.map((lv) => (
+                    <option key={lv} value={lv}>
+                      level {lv} · {tileCount(solo.family, lv).toLocaleString()} tiles
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Bots
+                <input type="number" min={0} max={12} value={solo.bots} onChange={(e) => onSolo({ ...solo, bots: Math.max(0, Math.min(12, Number(e.target.value) || 0)) })} />
+              </label>
+              <span className="muted">
+                Everything runs in your browser; nothing is shared.
+                {SOLO_ONLY && ONLINE_URL && (
+                  <>
+                    {' '}
+                    <a href={ONLINE_URL}>Play online with others →</a>
+                  </>
+                )}
+              </span>
+            </div>
+          )}
+        </section>
+      )}
 
       <section className="panel">
         <h2>1. Your name</h2>
@@ -62,7 +123,7 @@ export function Lobby({ store, rule, name, inArena, onRule, onName, onEnter, onC
         {hello ? (
           <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} />
         ) : (
-          <p className="muted">Connecting to the arena…</p>
+          <p className="muted">{mode === 'online' ? 'Connecting to the arena…' : 'Building the field…'}</p>
         )}
       </section>
 
@@ -73,7 +134,7 @@ export function Lobby({ store, rule, name, inArena, onRule, onName, onEnter, onC
           </button>
         )}
         <button type="button" className="btn btn-accent btn-big" disabled={!ready || !hello} onClick={onEnter}>
-          {inArena ? 'Restart with this rule' : 'Enter the arena'}
+          {inArena ? 'Restart with this rule' : mode === 'solo' ? 'Play solo' : 'Enter the arena'}
         </button>
         {inArena && <span className="muted">Restarting wipes your lines{store.knobs?.resetScoreOnRule ? ' and score' : ''}.</span>}
       </footer>

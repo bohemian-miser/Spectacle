@@ -8,7 +8,16 @@ export function wsUrl(): string {
   return `${proto}//${location.host}/ws`;
 }
 
-export class Connection {
+/** What the app talks to: the real server over a WebSocket, or the in-tab engine. */
+export interface GameConnection {
+  readonly kind: 'online' | 'solo';
+  open(onOpen: () => void, onClose: () => void): void;
+  send(msg: ClientMessage): void;
+  close(): void;
+}
+
+export class Connection implements GameConnection {
+  readonly kind = 'online';
   private ws: WebSocket | null = null;
   private closedByUs = false;
 

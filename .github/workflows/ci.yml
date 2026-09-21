@@ -48,6 +48,7 @@ jobs:
           done
           curl -sf http://localhost:8787/healthz
           npx tsx scripts/smoke.ts http://localhost:8787/ smoke.png
+          npx tsx scripts/smoke.ts "http://localhost:8787/?solo" smoke-solo.png
       - uses: actions/upload-artifact@v4
         if: always()
         with:

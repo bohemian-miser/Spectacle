@@ -7,14 +7,14 @@ import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } f
 import { tileAt } from '../../shared/game/field';
 import { stepIntervalMs } from '../../shared/game/knobs';
 import { describeRule } from '../../shared/game/rule';
-import type { Connection } from './net';
+import type { GameConnection } from './net';
 import { Renderer } from './render';
 import type { Store } from './store';
 import { useStore } from './useStore';
 
 export interface ArenaProps {
   readonly store: Store;
-  readonly conn: Connection;
+  readonly conn: GameConnection;
   onNewRule(): void;
 }
 
