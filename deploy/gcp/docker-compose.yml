@@ -1,0 +1,45 @@
+# Runs on the VM. Three containers:
+#   spectacle  - the game (image built by .github/workflows/publish.yml)
+#   caddy      - TLS + reverse proxy (plain HTTP on the IP until DOMAIN is set)
+#   watchtower - pulls the new image when main is published and restarts the game
+services:
+  spectacle:
+    image: ghcr.io/bohemian-miser/spectacle:latest
+    restart: unless-stopped
+    env_file: .env
+    expose:
+      - "8787"
+    labels:
+      - com.centurylinklabs.watchtower.enable=true
+    deploy:
+      resources:
+        limits:
+          memory: 512m
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      # A hostname (e.g. spectacle.example.com) turns on automatic HTTPS.
+      # Leave unset to serve plain HTTP on the VM's IP.
+      - SITE_ADDRESS=${SITE_ADDRESS:-:80}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - spectacle
+
+  watchtower:
+    image: containrrr/watchtower
+    restart: unless-stopped
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    command: --label-enable --cleanup --interval 300
+
+volumes:
+  caddy_data:
+  caddy_config:

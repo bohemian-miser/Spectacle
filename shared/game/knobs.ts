@@ -1,0 +1,122 @@
+/**
+ * Every tunable in one place. The server owns the live values (env overrides
+ * below) and sends them to clients in the welcome message, so the HUD can show
+ * what it is playing under. Mechanics first; balance later — but every number
+ * that will need balancing is already a knob rather than a literal.
+ */
+
+export interface Knobs {
+  /** Server simulation tick, ms. Growth is integrated per tick. */
+  tickMs: number;
+
+  // --- scoring -------------------------------------------------------------
+  /** Points for every tile a path grows into (including the tapped one). */
+  pointsPerTile: number;
+  /** Flat bonus for closing a circuit, before the combo multiplier. */
+  circuitBase: number;
+  /** Bonus per segment of a closed circuit. */
+  circuitLengthWeight: number;
+  /** Bonus per tile-area enclosed by a closed circuit. */
+  circuitAreaWeight: number;
+  /** Multiplier applied to the first circuit of a streak. */
+  comboStart: number;
+  /** Added to the multiplier for each further circuit without being wiped. */
+  comboStep: number;
+  comboMax: number;
+  /** Fraction of score lost when one of your paths is cut (0 = none). */
+  wipePenaltyFraction: number;
+
+  // --- growth --------------------------------------------------------------
+  /** Milliseconds per step at score 0. */
+  baseStepMs: number;
+  /** Speed-up: interval = baseStepMs / (1 + score * speedPerPoint). */
+  speedPerPoint: number;
+  /** Fastest allowed step interval. */
+  minStepMs: number;
+  /** Stop growing after this many tiles (0 = unlimited). */
+  maxPathLength: number;
+  /** At a class-0 junction (three chord ends meet) pick at random, or stop. */
+  junctionPolicy: 'random' | 'stop';
+
+  // --- conflict ------------------------------------------------------------
+  /**
+   * `geometric`: another player's chord cuts yours only when the two segments
+   * properly cross or share a connection point inside the same tile.
+   * `tile`: entering a tile that carries any of your steps cuts you.
+   */
+  crossingMode: 'geometric' | 'tile';
+  /** In geometric mode, does sharing a connection point count as a cross? */
+  touchCounts: boolean;
+  /** May a tap land on a tile that already carries someone else's path? */
+  tapOntoOthers: boolean;
+
+  // --- housekeeping --------------------------------------------------------
+  /** Closed circuits a player keeps on the board (oldest dropped first). */
+  maxCompletedCircuits: number;
+  /** Choosing a new rule wipes your paths; does it also reset the score? */
+  resetScoreOnRule: boolean;
+  maxPlayers: number;
+  maxNameLength: number;
+}
+
+export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
+  tickMs: 50,
+
+  pointsPerTile: 1,
+  circuitBase: 10,
+  circuitLengthWeight: 1,
+  circuitAreaWeight: 2,
+  comboStart: 1,
+  comboStep: 0.5,
+  comboMax: 5,
+  wipePenaltyFraction: 0,
+
+  baseStepMs: 500,
+  speedPerPoint: 0.01,
+  minStepMs: 40,
+  maxPathLength: 0,
+  junctionPolicy: 'random',
+
+  crossingMode: 'geometric',
+  touchCounts: true,
+  tapOntoOthers: true,
+
+  maxCompletedCircuits: 3,
+  resetScoreOnRule: true,
+  maxPlayers: 200,
+  maxNameLength: 16,
+});
+
+/** Step interval for a player at `score` — the "speed proportional to score" knob. */
+export function stepIntervalMs(knobs: Knobs, score: number): number {
+  const ms = knobs.baseStepMs / (1 + Math.max(0, score) * knobs.speedPerPoint);
+  return Math.max(knobs.minStepMs, ms);
+}
+
+/**
+ * Apply `KNOB_<NAME>` environment overrides (e.g. `KNOB_BASE_STEP_MS=200`).
+ * Numbers and booleans are parsed; enum knobs are validated against their
+ * allowed values; anything unparseable is ignored with a warning.
+ */
+export function knobsFromEnv(env: Record<string, string | undefined>, base: Knobs = DEFAULT_KNOBS): Knobs {
+  const out: Knobs = { ...base };
+  const rec = out as unknown as Record<string, unknown>;
+  for (const key of Object.keys(base) as (keyof Knobs)[]) {
+    const envKey = `KNOB_${key.replace(/([A-Z])/g, '_$1').toUpperCase()}`;
+    const raw = env[envKey];
+    if (raw === undefined) continue;
+    const current = rec[key];
+    if (typeof current === 'number') {
+      const n = Number(raw);
+      if (Number.isFinite(n)) rec[key] = n;
+      else console.warn(`[knobs] ignoring ${envKey}=${raw} (not a number)`);
+    } else if (typeof current === 'boolean') {
+      rec[key] = raw === '1' || raw.toLowerCase() === 'true';
+    } else if (key === 'junctionPolicy') {
+      if (raw === 'random' || raw === 'stop') out.junctionPolicy = raw;
+    } else if (key === 'crossingMode') {
+      if (raw === 'geometric' || raw === 'tile') out.crossingMode = raw;
+    }
+  }
+  return out;
+}
