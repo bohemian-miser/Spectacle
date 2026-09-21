@@ -29,8 +29,9 @@ function tileCount(family: TileFamilyId, level: number): number {
 export function Lobby(props: LobbyProps): JSX.Element {
   const { store, mode, solo, rule, name, inArena, onMode, onSolo, onRule, onName, onEnter, onCancel } = props;
   const [touched, setTouched] = useState(false);
+  const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
-  const ready = rule.subset.length > 0 && name.trim().length > 0;
+  const ready = rule.subset.length > 0 && name.trim().length > 0 && drafting.length === 0;
   const color = store.me?.color ?? '#17c3b2';
 
   return (
@@ -121,7 +122,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
           of lines is a tail, and your line stops there.
         </p>
         {hello ? (
-          <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} />
+          <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} onDrafting={setDrafting} />
         ) : (
           <p className="muted">{mode === 'online' ? 'Connecting to the arena…' : 'Building the field…'}</p>
         )}
@@ -136,6 +137,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
         <button type="button" className="btn btn-accent btn-big" disabled={!ready || !hello} onClick={onEnter}>
           {inArena ? 'Restart with this rule' : mode === 'solo' ? 'Play solo' : 'Enter the arena'}
         </button>
+        {drafting.length > 0 && <span className="tag tag-bad">finish pairing {drafting.join(', ')} first</span>}
         {inArena && <span className="muted">Restarting wipes your lines{store.knobs?.resetScoreOnRule ? ' and score' : ''}.</span>}
       </footer>
     </div>

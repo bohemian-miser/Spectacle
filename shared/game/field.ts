@@ -4,7 +4,7 @@
  * A field is fully determined by `FieldSpec` (family, substitution level, root
  * tile), so the server only ever sends the spec; each client rebuilds the same
  * `flatten()` order locally and tile indices agree byte for byte. Level 5 on
- * hexagons is ~35k tiles, level 6 ~270k.
+ * hexagons is ~31k tiles, level 6 (the default arena) ~242k.
  *
  * Alongside the instances the field carries what strand-following and tapping
  * need: world-space vertices, vertex-sharing neighbours (CSR), and a uniform
@@ -31,7 +31,7 @@ export interface FieldSpec {
 
 export const DEFAULT_FIELD_SPEC: FieldSpec = Object.freeze({
   family: 'hex' as TileFamilyId,
-  level: 5,
+  level: 6,
   rootTile: 'Delta' as TileTypeId,
 });
 

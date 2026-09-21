@@ -13,9 +13,12 @@ you.
 
 ## How it plays
 
-1. **Name and rule.** The lobby is the Tails-problem rule lab: switch edge classes
-   on, click a tile to cycle how its lines pair up. Tiles with an odd number of
-   lines are flagged as *tails* — your line will end there. *Surprise me* deals a
+1. **Name and rule.** The lobby is the Tails-problem rule lab: every edge of
+   every tile wears its class number (click one to switch that class on), and
+   you draw the pairing by hand — drag dot to dot, click a dot to remove its
+   line; lines never cross inside a tile. A level-3 patch underneath shows the
+   circuits (coloured by length) and open lines the rule produces. Tiles with
+   an odd number of lines are flagged as *tails* — your line will end there. *Surprise me* deals a
    random clean rule (one from the family's kernel, so every tile pairs up);
    *FASS* is the proven infinite-line rule (`128 · 010100000` on hexagons,
    `1278 · 0101000000` on Tile(1,1)).
@@ -64,7 +67,7 @@ Server environment:
 |---|---|---|
 | `PORT` | `8787` | HTTP + WebSocket port |
 | `FIELD_FAMILY` | `hex` | `hex` or `spectre` |
-| `FIELD_LEVEL` | `5` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 5 ≈ 35k |
+| `FIELD_LEVEL` | `6` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 6 ≈ 273k |
 | `FIELD_ROOT` | `Delta` | root tile of the patch |
 | `BOTS` | `0` | bot players (random clean rules, occasionally aggressive) |
 | `SEED` | random | RNG seed |
@@ -134,8 +137,10 @@ shared/game/    field.ts     one finite patch: instances, vertex-neighbours, hit
                 protocol.ts  wire types
 server/         Node + ws: one arena, ticks the engine, broadcasts batched events,
                 serves dist/. bots.ts is the opposition.
-client/         Vite + React: lobby with the rule editor (SVG tile thumbnails),
-                Canvas2D arena with pan/zoom/tap and the HUD.
+client/         Vite + React: lobby with the rule editor (interactive SVG
+                tiles, level-3 preview), the arena — a WebGL2 instanced tile
+                layer (Canvas2D fallback) under a Canvas2D strand overlay —
+                pan/zoom/tap and the HUD.
 ```
 
 The server is authoritative and the field is deterministic from its spec, so a

@@ -29,6 +29,7 @@ interface PointerState {
 
 export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const tileCanvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const pointers = useRef(new Map<number, PointerState>());
   const pinchDist = useRef(0);
@@ -37,7 +38,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
 
   useEffect(() => {
     const canvas = canvasRef.current!;
-    const r = new Renderer(canvas, store);
+    const r = new Renderer(tileCanvasRef.current!, canvas, store);
     rendererRef.current = r;
     r.resize();
     if (store.field) {
@@ -147,6 +148,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
 
   return (
     <div className="arena">
+      <canvas ref={tileCanvasRef} className="arena-canvas arena-tiles" aria-hidden="true" />
       <canvas
         ref={canvasRef}
         className="arena-canvas"

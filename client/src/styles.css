@@ -90,6 +90,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 /* Arena */
 .arena { position: fixed; inset: 0; overflow: hidden; }
 .arena-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; display: block; }
+.arena-tiles { pointer-events: none; }
 .hud {
   position: absolute;
   background: rgba(15, 18, 26, 0.86);
@@ -138,3 +139,19 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .solo-row select, .solo-row input { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 15px; }
 .solo-row input[type='number'] { width: 80px; }
 .solo-row a { color: var(--accent); }
+
+/* Interactive thumbs + patch preview */
+.thumb.is-drawable { cursor: crosshair; touch-action: none; }
+.thumb-edge { cursor: pointer; }
+.thumb-edge:hover line:first-child { stroke-opacity: 1; stroke-width: 0.14; }
+.thumb-edge text { cursor: pointer; user-select: none; }
+.thumb-dot { cursor: grab; }
+.thumb-card.is-draft { border-color: var(--accent); }
+.tag-btn { cursor: pointer; font: inherit; font-size: 12px; }
+.tag-btn:hover { border-color: var(--accent); color: var(--text); }
+.check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
+.rule-hint { margin: -6px 0 0; font-size: 13px; }
+.patch-preview { display: grid; gap: 6px; }
+.patch-svg { width: 100%; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; }
+.patch-tiles path { fill: #262c3b; stroke: #3a4258; stroke-width: 0.05; }
+.patch-stats { font-size: 13px; }
