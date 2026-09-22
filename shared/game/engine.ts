@@ -11,13 +11,16 @@
  *  - arriving back at the start chord closes a circuit and pays a combo bonus
  *    on length and enclosed area;
  *  - a chord entering a tile where another player's chord crosses it wipes
- *    that player's whole path;
+ *    that player's whole path, and the points it had earned with it (a knob
+ *    can hand a fraction of them to the cutter);
+ *  - a tap may not land on a rival's line nor inside a rival's closed
+ *    circuit (both knobs);
  *  - a tail (no continuation) leaves the path stuck; tap elsewhere to start
  *    another — every line a player draws stays until it is cut.
  */
 
 import type { Pt } from '../tiles';
-import { polygonArea, type Field } from './field';
+import { pointInPolygon, polygonArea, tileCenter, type Field } from './field';
 import { stepIntervalMs, type Knobs } from './knobs';
 import type { GameEvent, PathStatus, PathWire, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
@@ -42,6 +45,8 @@ export interface Path {
   readonly steps: WalkStep[];
   /** Fractional steps accumulated since the last advance. */
   progress: number;
+  /** Points this path has earned; they go with it when it goes. */
+  points: number;
 }
 
 export interface Player {
@@ -154,8 +159,11 @@ export class Engine {
     if (!this.knobs.tapOntoOthers) {
       const occ = this.occupancy.get(tile);
       if (occ && [...occ].some((path) => path.owner !== id)) {
-        return { result: { ok: false, reason: 'someone is already here' }, events: ev };
+        return { result: { ok: false, reason: "that's someone else's line" }, events: ev };
       }
+    }
+    if (!this.knobs.tapInsideRivalCircuits && this.insideRivalCircuit(id, tileCenter(this.field, tile))) {
+      return { result: { ok: false, reason: "that's inside someone else's circuit" }, events: ev };
     }
     const chord = nearestChord(this.field, p.table, tile, at);
     const exitEnd: 0 | 1 = this.rng.next() < 0.5 ? 0 : 1;
@@ -173,6 +181,7 @@ export class Engine {
       status: 'growing',
       steps: [],
       progress: 0,
+      points: 0,
     };
     p.paths.push(path);
     this.pathsById.set(path.id, path);
@@ -241,6 +250,7 @@ export class Engine {
     }
     occ.add(path);
     ev.push({ t: 'step', path: path.id, owner: p.id, step: s });
+    path.points += this.knobs.pointsPerTile;
     this.addScore(p, this.knobs.pointsPerTile, ev);
   }
 
@@ -266,16 +276,8 @@ export class Engine {
       }
       if (hit) {
         const rival = this.players.get(other.owner);
+        if (rival) rival.combo = this.knobs.comboStart;
         this.dropPath(other, p.id, ev);
-        if (rival) {
-          rival.combo = this.knobs.comboStart;
-          if (this.knobs.wipePenaltyFraction > 0) {
-            const loss = Math.floor(rival.score * this.knobs.wipePenaltyFraction);
-            this.addScore(rival, -loss, ev);
-          } else {
-            ev.push({ t: 'score', id: rival.id, score: rival.score, combo: rival.combo });
-          }
-        }
       }
     }
   }
@@ -292,6 +294,7 @@ export class Engine {
     path.progress = 0;
     ev.push({ t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo });
     p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
+    path.points += bonus;
     this.addScore(p, bonus, ev);
     // Trim old trophies only when a cap is set.
     if (k.maxCompletedCircuits > 0) {
@@ -306,6 +309,31 @@ export class Engine {
     ev.push({ t: 'status', path: path.id, status });
   }
 
+  /** Is `p` strictly inside a closed circuit belonging to anyone but `id`? */
+  insideRivalCircuit(id: string, p: Pt): boolean {
+    for (const rival of this.players.values()) {
+      if (rival.id === id) continue;
+      for (const path of rival.paths) {
+        if (path.status !== 'closed' || path.steps.length < 3) continue;
+        // Cheap bounding-box reject before the polygon test.
+        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+        for (const s of path.steps) {
+          if (s.a.x < minX) minX = s.a.x;
+          if (s.a.x > maxX) maxX = s.a.x;
+          if (s.a.y < minY) minY = s.a.y;
+          if (s.a.y > maxY) maxY = s.a.y;
+        }
+        if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;
+        if (pointInPolygon(p, path.steps.map((s) => s.a))) return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Remove a path from the board. Its points leave with it: the owner loses
+   * them, and a cutter (`by`) receives `stealFraction` of them.
+   */
   private dropPath(path: Path, by: string | undefined, ev: GameEvent[]): void {
     const p = this.players.get(path.owner);
     if (p) {
@@ -320,6 +348,13 @@ export class Engine {
       if (occ.size === 0) this.occupancy.delete(s.tile);
     }
     ev.push(by === undefined ? { t: 'wipe', path: path.id, owner: path.owner } : { t: 'wipe', path: path.id, owner: path.owner, by });
+    if (path.points > 0) {
+      if (p) this.addScore(p, -path.points, ev);
+      const cutter = by !== undefined ? this.players.get(by) : undefined;
+      if (cutter && this.knobs.stealFraction > 0) {
+        this.addScore(cutter, Math.floor(path.points * this.knobs.stealFraction), ev);
+      }
+    }
   }
 
   private addScore(p: Player, delta: number, ev: GameEvent[]): void {

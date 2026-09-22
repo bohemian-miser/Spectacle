@@ -25,7 +25,10 @@ you.
    starts growing out of one end, picked at random.
 3. **It grows.** One tile per step; the step interval shrinks with your score
    (`baseStepMs / (1 + score × speedPerPoint)`, floored at `minStepMs`). Each tile
-   entered scores `pointsPerTile`.
+   entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
+   points it earned, and when the line goes (cut, abandoned, capped) so do its
+   points — your score is what you hold on the board. `stealFraction` hands a
+   share of a cut line's points to the cutter (default 0).
 4. **Circuits.** If the line arrives back at its first chord it closes. You get
    `combo × (circuitBase + lengthWeight × length + areaWeight × enclosedArea)`,
    and your combo multiplier steps up for the next one. Closed circuits stay on
@@ -37,8 +40,10 @@ you.
    `maxCompletedCircuits` cap this if you want; both default to unlimited).
 6. **Crossing.** When a line enters a tile where another player's chord crosses
    it (proper intersection, or a shared connection point — both are knobs),
-   that player's whole path is wiped and their combo resets. Tapping straight
-   onto a rival's tile is allowed and works the same way.
+   that player's whole path is wiped, with its points, and their combo resets.
+   You cannot *start* on a rival's line or inside a rival's closed circuit
+   (`tapOntoOthers`, `tapInsideRivalCircuits`); you have to grow into them.
+   Closed circuits darken with their length on the board.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
 Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts);

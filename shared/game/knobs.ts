@@ -23,8 +23,12 @@ export interface Knobs {
   /** Added to the multiplier for each further circuit without being wiped. */
   comboStep: number;
   comboMax: number;
-  /** Fraction of score lost when one of your paths is cut (0 = none). */
-  wipePenaltyFraction: number;
+  /**
+   * Zero-sum scoring: a path carries the points it earned, and losing the
+   * path (cut, abandoned, capped) loses those points. This fraction of a cut
+   * path's points goes to the cutter (0 = the points just vanish).
+   */
+  stealFraction: number;
 
   // --- growth --------------------------------------------------------------
   /** Milliseconds per step at score 0. */
@@ -49,6 +53,8 @@ export interface Knobs {
   touchCounts: boolean;
   /** May a tap land on a tile that already carries someone else's path? */
   tapOntoOthers: boolean;
+  /** May a tap land inside a rival's closed circuit? */
+  tapInsideRivalCircuits: boolean;
 
   // --- housekeeping --------------------------------------------------------
   /** Closed circuits a player keeps on the board, oldest dropped first (0 = unlimited). */
@@ -71,7 +77,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   comboStart: 1,
   comboStep: 0.5,
   comboMax: 5,
-  wipePenaltyFraction: 0,
+  stealFraction: 0,
 
   baseStepMs: 500,
   speedPerPoint: 0.01,
@@ -81,7 +87,8 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
 
   crossingMode: 'geometric',
   touchCounts: true,
-  tapOntoOthers: true,
+  tapOntoOthers: false,
+  tapInsideRivalCircuits: false,
 
   maxCompletedCircuits: 0,
   maxLivePaths: 0,

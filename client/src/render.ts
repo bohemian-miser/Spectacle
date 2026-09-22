@@ -10,7 +10,7 @@ import type { Camera } from './camera';
 import type { ClientPath, Store } from './store';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
-import { parseColor, typeFill, type TileLayer } from './tiles-layer';
+import { circuitDarkening, darkenCss, parseColor, typeFill, type TileLayer } from './tiles-layer';
 
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
@@ -149,26 +149,29 @@ export class Renderer {
     tiles.clearTints();
     const colors = new Map<string, [number, number, number]>();
     for (const [tile, paths] of store.occupancy) {
-      // Your own claim wins the tint; otherwise the first owner on the tile.
-      let owner: string | null = null;
+      // Your own claim wins the tint; otherwise the first path on the tile.
+      let pick: ClientPath | null = null;
       for (const p of paths) {
         if (p.owner === store.you) {
-          owner = p.owner;
+          pick = p;
           break;
         }
-        if (owner === null) owner = p.owner;
+        if (pick === null) pick = p;
       }
-      if (owner === null) continue;
-      const player = store.players.get(owner);
+      if (pick === null) continue;
+      const player = store.players.get(pick.owner);
       if (!player) continue;
-      let rgb = colors.get(owner);
+      let rgb = colors.get(pick.owner);
       if (!rgb) {
         rgb = parseColor(player.color);
-        colors.set(owner, rgb);
+        colors.set(pick.owner, rgb);
       }
-      // Lighten toward the colour: the tile "fades" and takes the owner's hue.
-      const mine = owner === store.you;
-      tiles.setTint(tile, Math.min(255, rgb[0] + 70), Math.min(255, rgb[1] + 70), Math.min(255, rgb[2] + 70), mine ? 115 : 85);
+      // Lighten toward the colour: the tile "fades" and takes the owner's
+      // hue. A closed circuit's tiles darken with its length instead.
+      const mine = pick.owner === store.you;
+      const k = pick.status === 'closed' ? 1 - circuitDarkening(pick.steps.length) : 1;
+      const lift = pick.status === 'closed' ? 30 : 70;
+      tiles.setTint(tile, Math.min(255, (rgb[0] + lift) * k), Math.min(255, (rgb[1] + lift) * k), Math.min(255, (rgb[2] + lift) * k), mine ? 115 : 85);
     }
   }
 
@@ -226,7 +229,7 @@ export class Renderer {
         ctx.lineWidth = w + Math.max(2, 0.08 * s);
         ctx.stroke();
       }
-      ctx.strokeStyle = owner.color;
+      ctx.strokeStyle = path.status === 'closed' ? darkenCss(owner.color, circuitDarkening(path.steps.length)) : owner.color;
       ctx.lineWidth = w;
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;
       ctx.stroke();
