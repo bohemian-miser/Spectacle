@@ -108,6 +108,9 @@ export interface BoardTheme {
   readonly lineAlpha: number;
   readonly lineCss: string;
   readonly haloCss: string;
+  /** The direction arrow on a tile, also ink — see `directionArrow`. */
+  readonly arrowAlpha: number;
+  readonly arrowCss: string;
   /** The cross on a stuck line. */
   readonly badCss: string;
   /** Per-type tile fills: saturation, and the lightness the first type takes. */
@@ -162,6 +165,7 @@ function readTokens(name: ThemeName): BoardTheme {
   const bg = parseColor(str('--bg', dark ? '#14161a' : '#f7f8fa'));
   const ink = parseColor(str('--text', dark ? '#e7e9ee' : '#171a1f'));
   const lineAlpha = num('--board-line-alpha', dark ? 0.1 : 0.14);
+  const arrowAlpha = num('--board-arrow-alpha', dark ? 0.26 : 0.22);
   return {
     name,
     bg: [bg[0] / 255, bg[1] / 255, bg[2] / 255],
@@ -171,6 +175,8 @@ function readTokens(name: ThemeName): BoardTheme {
     lineAlpha,
     lineCss: rgba(ink, lineAlpha),
     haloCss: rgba(ink, num('--board-halo-alpha', dark ? 0.55 : 0.45)),
+    arrowAlpha,
+    arrowCss: rgba(ink, arrowAlpha),
     badCss: str('--bad', dark ? '#f58aa2' : '#c53a60'),
     tileSat: num('--tile-sat', dark ? 0.34 : 0.4),
     tileLight: num('--tile-light', dark ? 0.31 : 0.76),

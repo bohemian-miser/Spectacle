@@ -9,20 +9,24 @@ import { tilesInBox, type Box, type Field } from '../../shared/game/field';
 import { leafPts } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { BoardTheme } from './theme';
-import { cssRgb, type Rgb01, type TileLayer } from './tiles-layer';
+import { ARROW_MIN_SCALE, cssRgb, directionArrow, type Rgb01, type TileLayer } from './tiles-layer';
+
+function polyPath(pts: readonly { x: number; y: number }[]): Path2D {
+  const p = new Path2D();
+  p.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) p.lineTo(pts[i].x, pts[i].y);
+  p.closePath();
+  return p;
+}
 
 export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills: readonly Rgb01[], board: BoardTheme): TileLayer {
   const ctx = canvas.getContext('2d')!;
   const back = document.createElement('canvas');
   const bctx = back.getContext('2d')!;
-  const paths = field.leafTypes.map((type) => {
-    const pts = leafPts(field.family, type);
-    const p = new Path2D();
-    p.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) p.lineTo(pts[i].x, pts[i].y);
-    p.closePath();
-    return p;
-  });
+  const paths = field.leafTypes.map((type) => polyPath(leafPts(field.family, type)));
+  // Every hex tile is the same regular hexagon, so only the arrow says which
+  // way one is turned; a Spectre wears its rotation on its outline.
+  const arrow = field.family === 'hex' ? polyPath(directionArrow(leafPts(field.family, field.leafTypes[0]))) : null;
   let css = fills.map(cssRgb);
   let scheme = board;
   const tints = new Map<number, string>();
@@ -94,6 +98,16 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
         setTransform(ctx, tile, cam, w, h, dpr);
         ctx.fillStyle = color;
         ctx.fill(paths[field.types[tile]]);
+      }
+      // Arrows last, so a claimed tile keeps its direction. `visible` is the
+      // last tilesInBox result, which is this camera: it is refreshed above on
+      // every move.
+      if (arrow && cam.scale > ARROW_MIN_SCALE) {
+        ctx.fillStyle = scheme.arrowCss;
+        for (const i of visible) {
+          setTransform(ctx, i, cam, w, h, dpr);
+          ctx.fill(arrow);
+        }
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     },

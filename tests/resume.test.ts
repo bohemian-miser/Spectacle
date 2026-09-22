@@ -57,6 +57,19 @@ class Client {
   }
 }
 
+/**
+ * The resume window opens when the *server* notices the socket go: `tryResume`
+ * only finds a player its close handler has already detached. So close, wait
+ * for the closing handshake, and give the server one round-trip to work
+ * through it — reconnect any sooner and the drop has not registered yet, and
+ * the resume correctly hands out a new player instead.
+ */
+async function awaitDrop(c: Client): Promise<void> {
+  c.ws.close();
+  await new Promise<void>((r) => c.ws.once('close', () => r()));
+  await fetch(`http://127.0.0.1:${PORT}/healthz`);
+}
+
 beforeAll(async () => {
   server = spawn('npx', ['tsx', 'server/index.ts'], {
     env: { ...process.env, PORT: String(PORT), BOTS: '0', FIELD_LEVEL: '3', RESUME_GRACE_MS: '5000' },
@@ -78,7 +91,7 @@ describe('resume', () => {
     const w1 = await a.until('welcome');
     if (w1.t !== 'welcome') throw new Error();
     expect(w1.token).toMatch(/^[0-9a-f]{32}$/);
-    a.ws.close();
+    await awaitDrop(a);
 
     const b = new Client();
     await b.open();
@@ -88,7 +101,7 @@ describe('resume', () => {
     if (w2.t !== 'welcome') throw new Error();
     expect(w2.you).toBe(w1.you);
     expect(w2.players.map((p) => p.name)).toEqual(['Ann']);
-    b.ws.close();
+    await awaitDrop(b);
 
     const c = new Client();
     await c.open();

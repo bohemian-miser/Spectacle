@@ -47,6 +47,13 @@ you.
    Closed circuits darken with their length on the board.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
+**Which way a tile is turned.** Every hexagon in the arena is the same regular
+hexagon, so nothing in its outline says which of the six rotations it is sitting
+in — while its edge classes are numbered from edge 0 round. Zoom in and each one
+wears a faint arrow pointing at that edge; the tiles in the rule lab wear the
+same arrow, so their numbers can be read straight off the board. (A Spectre's
+outline already shows its rotation, so it goes without.)
+
 **Light or dark.** The button in the lobby header (and in the arena HUD) flips
 the whole game, board included: tile fills, outlines and strand colours are part
 of the scheme, not just the panels. Light is the default; your choice is

@@ -10,7 +10,7 @@
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Pair } from '../../shared/game/pairs';
 import { boardTheme, useTheme } from './theme';
-import { cssRgb, typeFill } from './tiles-layer';
+import { cssRgb, directionArrow, typeFill } from './tiles-layer';
 import {
   EDGE_CLASS_COLORS,
   centroid,
@@ -135,6 +135,9 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
     >
       <title>{title ?? type}</title>
       <path d={straightOutline(pts)} className="thumb-outline" fill={fill} />
+      {/* The same arrow the board draws on a hexagon: it points at edge 0, so
+          the numbers below can be read off a tile out there. */}
+      {family === 'hex' && <path d={straightOutline(directionArrow(pts))} className="thumb-arrow" />}
 
       {/* Edges: clickable, with their class number outside. */}
       {labels.map((raw, i) => {

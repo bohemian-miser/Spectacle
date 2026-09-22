@@ -5,6 +5,7 @@
  * moves (`tiles-2d.ts`).
  */
 
+import type { Pt } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { BoardTheme } from './theme';
 
@@ -32,6 +33,51 @@ export interface TileLayer {
 export function typeFill(family: string, index: number, board: BoardTheme): Rgb01 {
   const h = family === 'hex' ? (index * 36 + 200) % 360 : (index * 33 + 180) % 360;
   return hslToRgb(h, board.tileSat, board.tileLight + (index % 3) * 0.03);
+}
+
+/**
+ * World→pixel scale at which a tile is big enough to wear its direction arrow.
+ * A hexagon is 2 units across, so this is about 36 px of tile: below it the
+ * darts turn into speckle and the board is better off without them.
+ */
+export const ARROW_MIN_SCALE = 18;
+
+/**
+ * A dart in tile-local coordinates, from the tile's centre to the middle of its
+ * edge 0 — which way the tile is turned.
+ *
+ * Hexagons are why this exists: every hex tile is the same regular hexagon, so
+ * nothing on the board says which of the six rotations a tile is sitting in,
+ * while its edge classes are numbered from edge 0 round. The arrow is that
+ * edge, and the thumb in the rule editor wears the same one, so the numbers
+ * there can be read straight off the board.
+ */
+export function directionArrow(pts: readonly Pt[]): Pt[] {
+  const n = pts.length;
+  let cx = 0;
+  let cy = 0;
+  for (const p of pts) {
+    cx += p.x / n;
+    cy += p.y / n;
+  }
+  const mx = (pts[0].x + pts[1 % n].x) / 2;
+  const my = (pts[0].y + pts[1 % n].y) / 2;
+  const r = Math.hypot(mx - cx, my - cy) || 1;
+  // Unit vector at the edge, and its left normal.
+  const dx = (mx - cx) / r;
+  const dy = (my - cy) / r;
+  const nx = -dy;
+  const ny = dx;
+  const at = (along: number, across: number): Pt => ({
+    x: cx + dx * along * r + nx * across * r,
+    y: cy + dy * along * r + ny * across * r,
+  });
+  const tip = 0.62;
+  const head = 0.24;
+  const wing = 0.21;
+  const shaft = 0.08;
+  const tail = -0.34;
+  return [at(tip, 0), at(head, wing), at(head, shaft), at(tail, shaft), at(tail, -shaft), at(head, -shaft), at(head, -wing)];
 }
 
 export function hslToRgb(h: number, s: number, l: number): Rgb01 {

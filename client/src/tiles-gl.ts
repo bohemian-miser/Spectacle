@@ -11,7 +11,7 @@ import type { Field } from '../../shared/game/field';
 import { leafPts, type Pt } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { BoardTheme } from './theme';
-import type { Rgb01, TileLayer } from './tiles-layer';
+import { ARROW_MIN_SCALE, directionArrow, type Rgb01, type TileLayer } from './tiles-layer';
 
 const VS = `#version 300 es
 precision highp float;
@@ -229,6 +229,42 @@ export function createGlTiles(
     batches.push({ vao, indexCount: tri.length, vertexCount: pts.length, first: firstOf[t], count: perType[t], type: t });
   }
 
+  // The direction arrow: one shape in tile-local coordinates for every tile of
+  // the family, so the whole field is a single instanced draw over `instBuf`.
+  // Only hexagons need it — a Spectre's outline already shows its rotation.
+  let arrowVao: WebGLVertexArrayObject | null = null;
+  let arrowIndexCount = 0;
+  if (field.family === 'hex') {
+    const pts = directionArrow(leafPts(field.family, field.leafTypes[0]));
+    const verts = new Float32Array(pts.length * 2);
+    pts.forEach((p, i) => {
+      verts[i * 2] = p.x;
+      verts[i * 2 + 1] = p.y;
+    });
+    const tri = new Uint16Array(triangulate(pts));
+    arrowIndexCount = tri.length;
+    arrowVao = gl.createVertexArray()!;
+    gl.bindVertexArray(arrowVao);
+    const vbo = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(loc.local);
+    gl.vertexAttribPointer(loc.local, 2, gl.FLOAT, false, 0, 0);
+    const ebo = gl.createBuffer()!;
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, tri, gl.STATIC_DRAW);
+    // No per-instance tint here (the pass draws with u_useTint = 0), so every
+    // tile's transform comes from one uninterrupted run of the buffer.
+    gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+    gl.enableVertexAttribArray(loc.m0);
+    gl.vertexAttribPointer(loc.m0, 3, gl.FLOAT, false, 24, 0);
+    gl.vertexAttribDivisor(loc.m0, 1);
+    gl.enableVertexAttribArray(loc.m1);
+    gl.vertexAttribPointer(loc.m1, 3, gl.FLOAT, false, 24, 12);
+    gl.vertexAttribDivisor(loc.m1, 1);
+    gl.bindVertexArray(null);
+  }
+
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   let typeFills = fills;
@@ -292,6 +328,13 @@ export function createGlTiles(
           gl.uniform1f(loc.useTint, 0);
           gl.drawArraysInstanced(gl.LINE_LOOP, 0, b.vertexCount, b.count);
         }
+      }
+      // Arrows last, so a claimed tile keeps its direction.
+      if (arrowVao && cam.scale > ARROW_MIN_SCALE) {
+        gl.bindVertexArray(arrowVao);
+        gl.uniform4f(loc.fill, scheme.ink[0], scheme.ink[1], scheme.ink[2], scheme.arrowAlpha);
+        gl.uniform1f(loc.useTint, 0);
+        gl.drawElementsInstanced(gl.TRIANGLES, arrowIndexCount, gl.UNSIGNED_SHORT, 0, n);
       }
       gl.bindVertexArray(null);
     },

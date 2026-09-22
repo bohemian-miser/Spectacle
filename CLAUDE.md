@@ -54,7 +54,8 @@ client/src/       Vite + React.
                   knobs (--tile-*, --board-*, --strand-darken).
   render.ts       Camera, tint sync, Canvas2D strand overlay.
   tiles-gl.ts     WebGL2 instanced tile layer. tiles-2d.ts: Canvas2D fallback.
-  tiles-layer.ts  TileLayer interface, typeFill palette, colour helpers.
+  tiles-layer.ts  TileLayer interface, typeFill palette, colour helpers,
+                  directionArrow (the dart that shows a tile's rotation).
 tests/            vitest. strand.test.ts pins the local walker against the
                   core's global analyze() — the most important test here.
                   resume.test.ts spawns the real server.
@@ -131,6 +132,18 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Player colours are the server's** (`hsl(h, 90%, 62%)`, bright for the dark
   board). The light board deepens them with `strandColor()` — HUD swatches too,
   so the board and the leaderboard agree.
+- **Hexagons all look alike.** Every hex tile is the same regular hexagon, so
+  only `directionArrow` (pointing at edge 0, which the rule numbers run from)
+  says which rotation one is in; TileThumb draws the same dart as the legend.
+  Spectres show their rotation in their outline and get none. Both layers draw
+  it above the claim tint and only past `ARROW_MIN_SCALE` — below that it is
+  speckle. In WebGL it is one instanced pass over the whole transform buffer
+  (the shape is identical for every leaf type).
+- **`tests/resume.test.ts` used to flake** (~1 in 5): the resume window only
+  opens once the *server's* close handler has detached the player, so a
+  reconnect fired straight after `ws.close()` legitimately got a new player.
+  The test waits for the closing handshake and a round-trip now; keep that if
+  you touch it.
 
 ## Verification bar before pushing
 
