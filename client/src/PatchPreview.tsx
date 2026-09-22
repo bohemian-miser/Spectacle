@@ -25,7 +25,8 @@ import {
 export interface PatchPreviewProps {
   readonly rule: PlayerRule;
   readonly level?: number;
-  readonly height?: number;
+  /** Largest edge of the picture, in px; it keeps the patch's own aspect. */
+  readonly size?: number;
 }
 
 function polyD(points: readonly Pt[], closed: boolean): string {
@@ -35,7 +36,7 @@ function polyD(points: readonly Pt[], closed: boolean): string {
   return closed ? `${d} Z` : d;
 }
 
-export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProps): JSX.Element {
+export function PatchPreview({ rule, level = 3, size = 520 }: PatchPreviewProps): JSX.Element {
   const key = ruleKey(rule);
   const [theme] = useTheme();
   // The patch wears the same tile colours as the arena board, so the preview
@@ -61,26 +62,42 @@ export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProp
     });
     const circuits = result.circuits.map((p) => ({ d: polyD(p.points, true), len: pathLength(p) }));
     const tails = result.tails.map((p) => ({ d: polyD(p.points, false), len: pathLength(p) }));
+    // Every strand's path in one `d` each: the casing under them is a single
+    // colour, so it costs two nodes instead of one per line.
+    const circuitD = circuits.map((c) => c.d).join(' ');
+    const tailD = tails.map((t) => t.d).join(' ');
     const longest = circuits.reduce((m, c) => Math.max(m, c.len), 0);
     const longestTail = tails.reduce((m, c) => Math.max(m, c.len), 0);
-    return { tiles, circuits, tails, longest, longestTail, view: `${minX - 1} ${minY - 1} ${maxX - minX + 2} ${maxY - minY + 2}`, count: instances.length };
+    const w = maxX - minX + 2;
+    const h = maxY - minY + 2;
+    return { tiles, circuits, tails, circuitD, tailD, longest, longestTail, view: `${minX - 1} ${minY - 1} ${w} ${h}`, aspect: `${w} / ${h}`, count: instances.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [key, level, board]);
 
   return (
     <div className="patch-preview">
-      <svg viewBox={model.view} height={height} className="patch-svg" role="img" aria-label={`Level ${level} patch under rule`}>
+      <svg
+        viewBox={model.view}
+        className="patch-svg"
+        style={{ maxWidth: size, maxHeight: size, aspectRatio: model.aspect }}
+        role="img"
+        aria-label={`Level ${level} patch under rule`}
+      >
         <g className="patch-tiles">
           {model.tiles.map((t, i) => (
             <path key={i} d={t.d} fill={t.fill} />
           ))}
         </g>
         <g fill="none" strokeLinecap="round" strokeLinejoin="round">
+          {/* Cased, because a strand has to read on a white Gamma and on a
+              yellow Xi alike, whatever colour its length gives it. */}
+          <path d={model.tailD} stroke={board.haloCss} strokeWidth={0.34} strokeDasharray="0.3 0.2" />
+          <path d={model.circuitD} stroke={board.haloCss} strokeWidth={0.4} />
           {model.tails.map((t, i) => (
-            <path key={`t${i}`} d={t.d} stroke={board.badCss} strokeWidth={0.14} strokeOpacity={0.8} strokeDasharray="0.3 0.2" />
+            <path key={`t${i}`} d={t.d} stroke={board.badCss} strokeWidth={0.2} strokeDasharray="0.3 0.2" />
           ))}
           {model.circuits.map((c, i) => (
-            <path key={`c${i}`} d={c.d} stroke={rgbToCss(circuitLengthRgb(c.len))} strokeWidth={0.18} />
+            <path key={`c${i}`} d={c.d} stroke={rgbToCss(circuitLengthRgb(c.len))} strokeWidth={0.24} />
           ))}
         </g>
       </svg>

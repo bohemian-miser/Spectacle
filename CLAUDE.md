@@ -134,6 +134,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the board does not. `Arena` hands the renderer the new `BoardTheme`, which
   re-fills the tile layer and invalidates the tints (their lift is per-scheme).
   A new colour on the board belongs in a token, not in a `.ts` literal.
+- **A strand over the palette needs a casing.** Tiles are saturated now, so a
+  line's own colour is not enough on its own: the arena haloes your line, and
+  the rule lab's patch preview strokes every circuit and tail twice — the
+  scheme's `haloCss` underneath (one joined `d` for all of them), the colour on
+  top. Anything new drawn over tiles wants the same treatment.
 - **Player colours are the server's** (`hsl(h, 90%, 62%)`, bright for the dark
   board). The light board deepens them with `strandColor()` — HUD swatches too,
   so the board and the leaderboard agree.
