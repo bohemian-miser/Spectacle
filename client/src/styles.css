@@ -212,6 +212,6 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
 .rule-hint { margin: -6px 0 0; font-size: 13px; }
 .patch-preview { display: grid; gap: 6px; }
-.patch-svg { width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
+.patch-svg { width: 100%; height: auto; justify-self: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
 .patch-tiles path { stroke: color-mix(in srgb, var(--text) 16%, transparent); stroke-width: 0.05; }
 .patch-stats { font-size: 13px; }
