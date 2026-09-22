@@ -1,15 +1,61 @@
+/* Colours are Spectre's explorer tokens (web/src/styles/widgets.css) ported
+   whole; the accents take the light-scheme values that explorer's stats page
+   defines (stats.css), so nothing turns pale on white. Light is the default
+   and `data-theme="dark"` on <html> flips it — see theme.ts, which also reads
+   the board knobs at the end of each block back out for the canvas. */
 :root {
-  --bg: #0b0d12;
-  --panel: #151922;
-  --panel-2: #1c2130;
-  --text: #e8ecf3;
-  --muted: #8b95a8;
-  --accent: #17c3b2;
-  --bad: #ff5c7a;
-  --good: #5be07a;
-  --border: #2a3142;
-  color-scheme: dark;
+  --bg: #f7f8fa;
+  --panel: #ffffff;
+  --panel-2: #eef1f6;
+  --text: #171a1f;
+  --muted: #5b6472;
+  --line: #d5dae2;
+  --accent: #2f6ed4;
+  --accent-ink: #ffffff;
+  --good: #1c8b50;
+  --bad: #c53a60;
+  --warn: #a96c07;
+  color-scheme: light;
+
+  /* The board: tile outlines, the halo on your own line, how far the tile
+     palette is sat back (1 = Spectre's colours as they are) and how far a
+     claimed tile's tint moves off its owner's colour. */
+  --board-line-alpha: 0.14;
+  --board-halo-alpha: 0.45;
+  --board-arrow-alpha: 0.22;
+  --tile-dim: 1;
+  --tile-lift: -30;
+  --tile-lift-closed: -55;
+  --strand-darken: 0.28;
+  /* The edge-class colours are pastel, so an unselected chip needs more of
+     itself on white than it does on the dark panel. */
+  --chip-off: 0.8;
 }
+
+:root[data-theme='dark'] {
+  --bg: #14161a;
+  --panel: #1e2127;
+  --panel-2: #262a32;
+  --text: #e7e9ee;
+  --muted: #9aa2b1;
+  --line: #363b45;
+  --accent: #6ea8fe;
+  --accent-ink: #081525;
+  --good: #7ddb8f;
+  --bad: #f58aa2;
+  --warn: #ffcc55;
+  color-scheme: dark;
+
+  --board-line-alpha: 0.1;
+  --board-halo-alpha: 0.55;
+  --board-arrow-alpha: 0.26;
+  --tile-dim: 0.52;
+  --tile-lift: 70;
+  --tile-lift-closed: 30;
+  --strand-darken: 0;
+  --chip-off: 0.55;
+}
+
 * { box-sizing: border-box; }
 html, body, #root { height: 100%; margin: 0; }
 body {
@@ -26,7 +72,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .btn {
   background: var(--panel-2);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 7px 12px;
   font: inherit;
@@ -34,12 +80,12 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 }
 .btn:hover { border-color: var(--accent); }
 .btn:disabled { opacity: 0.45; cursor: default; }
-.btn-accent { background: var(--accent); color: #04211e; border-color: transparent; font-weight: 600; }
+.btn-accent { background: var(--accent); color: var(--accent-ink); border-color: transparent; font-weight: 600; }
 .btn-big { padding: 12px 22px; font-size: 17px; }
 .input {
   background: var(--panel-2);
   color: var(--text);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 8px;
   padding: 10px 12px;
   font: inherit;
@@ -51,16 +97,22 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   padding: 2px 8px;
   border-radius: 999px;
   background: var(--panel-2);
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   font-size: 12px;
   color: var(--muted);
 }
-.tag-bad { color: var(--bad); border-color: rgba(255, 92, 122, 0.4); }
-.tag-good { color: var(--good); border-color: rgba(91, 224, 122, 0.4); }
+.tag-bad { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 40%, transparent); }
+.tag-good { color: var(--good); border-color: color-mix(in srgb, var(--good) 40%, transparent); }
+
+/* Theme toggle: a quiet button, wherever the screen has room for one. */
+.theme-toggle { display: inline-flex; align-items: center; gap: 6px; }
+.theme-toggle .theme-glyph { font-size: 14px; line-height: 1; }
 
 /* Lobby */
 .lobby { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 18px; }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 14px; padding: 18px; }
+.lobby-head { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
+.lobby-head > div { flex: 1 1 320px; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 18px; }
 .lobby-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
 
 /* Rule editor */
@@ -73,17 +125,25 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   border: 2px solid var(--chip);
   background: transparent; color: var(--chip);
   font: inherit; font-weight: 700; cursor: pointer;
-  opacity: 0.55;
+  opacity: var(--chip-off);
 }
-.chip.is-on { background: var(--chip); color: #0b0d12; opacity: 1; }
+/* The edge-class colours are pastel in both schemes, so a filled chip always
+   takes dark ink. */
+.chip.is-on { background: var(--chip); color: #171a1f; opacity: 1; }
 .rule-buttons { display: flex; gap: 6px; margin-left: auto; }
 .thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
-.thumb-card { background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; padding: 6px; display: grid; justify-items: center; gap: 2px; }
-.thumb-card.is-odd { border-color: rgba(255, 92, 122, 0.45); }
+.thumb-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 6px; display: grid; justify-items: center; gap: 2px; }
+.thumb-card.is-odd { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 .thumb { display: block; }
 .thumb.is-clickable { cursor: pointer; }
 .thumb.is-clickable:hover .thumb-outline { stroke: var(--accent); }
-.thumb-outline { stroke: rgba(255,255,255,0.28); stroke-width: 0.06; }
+.thumb-outline { stroke: color-mix(in srgb, var(--text) 26%, transparent); stroke-width: 0.06; }
+/* Unpaired dots are hollow: they wear the card under them, not a colour. */
+.thumb-dot circle.is-hollow { fill: var(--panel-2); }
+/* The stubs on an odd tile — the line that ends there. */
+.thumb-stub { stroke: var(--bad); }
+/* Which way the tile is turned; the board draws the same dart. */
+.thumb-arrow { fill: var(--text); opacity: 0.2; }
 .thumb-caption { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
 .rule-readout { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
@@ -93,8 +153,8 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .arena-tiles { pointer-events: none; }
 .hud {
   position: absolute;
-  background: rgba(15, 18, 26, 0.86);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  border: 1px solid var(--line);
   border-radius: 12px;
   padding: 10px 12px;
   backdrop-filter: blur(6px);
@@ -119,11 +179,11 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .hud-help { left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(92vw, 520px); display: grid; gap: 8px; }
 .toasts { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: grid; gap: 6px; pointer-events: none; }
-.toast { background: rgba(15, 18, 26, 0.92); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; font-size: 14px; animation: toast-in 0.2s ease-out; }
+.toast { background: color-mix(in srgb, var(--panel) 92%, transparent); border: 1px solid var(--line); border-radius: 10px; padding: 8px 14px; font-size: 14px; animation: toast-in 0.2s ease-out; }
 .toast.is-good { border-color: var(--good); }
 .toast.is-bad { border-color: var(--bad); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(11, 13, 18, 0.7); font-size: 20px; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); font-size: 20px; }
 
 @media (max-width: 640px) {
   .hud-board { display: none; }
@@ -133,10 +193,10 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 
 /* Mode / solo options */
 .mode-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-.btn.is-on { border-color: var(--accent); background: rgba(23, 195, 178, 0.15); }
+.btn.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .solo-row { display: flex; gap: 14px; align-items: end; flex-wrap: wrap; }
 .solo-row label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }
-.solo-row select, .solo-row input { background: var(--panel-2); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 15px; }
+.solo-row select, .solo-row input { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 15px; }
 .solo-row input[type='number'] { width: 80px; }
 .solo-row a { color: var(--accent); }
 
@@ -152,6 +212,6 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
 .rule-hint { margin: -6px 0 0; font-size: 13px; }
 .patch-preview { display: grid; gap: 6px; }
-.patch-svg { width: 100%; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; }
-.patch-tiles path { stroke: rgba(255,255,255,0.14); stroke-width: 0.05; }
+.patch-svg { width: 100%; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
+.patch-tiles path { stroke: color-mix(in srgb, var(--text) 16%, transparent); stroke-width: 0.05; }
 .patch-stats { font-size: 13px; }

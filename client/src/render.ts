@@ -8,9 +8,10 @@
 import type { Box, Field } from '../../shared/game/field';
 import type { Camera } from './camera';
 import type { ClientPath, Store } from './store';
+import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
-import { circuitDarkening, darkenCss, parseColor, typeFill, type TileLayer } from './tiles-layer';
+import { circuitDarkening, parseColor, strandColor, typeFill, type Rgb01, type TileLayer } from './tiles-layer';
 
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
@@ -24,6 +25,7 @@ export class Renderer {
   private lastFrameAt = 0;
   private lastGeometry = -1;
   private lastPlayersVersion = -1;
+  private board: BoardTheme = boardTheme();
 
   constructor(
     private readonly tileCanvas: HTMLCanvasElement,
@@ -41,18 +43,30 @@ export class Renderer {
     if (this.field === field) return;
     this.field = field;
     this.tiles?.dispose();
-    const fills = field.leafTypes.map((_, i) => typeFill(field.family, i));
+    const fills = this.fills(field);
     let layer: TileLayer | null = null;
     // `?gl=1` forces WebGL (even on a software renderer), `?gl=0` forbids it.
     const glParam = new URLSearchParams(location.search).get('gl');
     const force = glParam === '1' ? true : glParam === '0' ? false : undefined;
     try {
-      layer = createGlTiles(this.tileCanvas, field, fills, { force });
+      layer = createGlTiles(this.tileCanvas, field, fills, this.board, { force });
     } catch (err) {
       console.warn('WebGL tile layer failed, using Canvas2D', err);
     }
-    this.tiles = layer ?? createCanvasTiles(this.tileCanvas, field, fills);
+    this.tiles = layer ?? createCanvasTiles(this.tileCanvas, field, fills, this.board);
     this.tiles.resize(Math.round(this.width * this.dpr), Math.round(this.height * this.dpr));
+    this.lastGeometry = -1;
+  }
+
+  private fills(field: Field): Rgb01[] {
+    return field.leafTypes.map((type) => typeFill(type, this.board.tileDim));
+  }
+
+  /** Repaint in another scheme: new tile fills, ground and ink, and fresh tints. */
+  setTheme(board: BoardTheme): void {
+    this.board = board;
+    if (this.field) this.tiles?.setTheme(board, this.fills(this.field));
+    // The claim tint is mixed against the scheme's fills, so it has to go again.
     this.lastGeometry = -1;
   }
 
@@ -166,12 +180,14 @@ export class Renderer {
         rgb = parseColor(player.color);
         colors.set(pick.owner, rgb);
       }
-      // Lighten toward the colour: the tile "fades" and takes the owner's
-      // hue. A closed circuit's tiles darken with its length instead.
+      // The tile "fades" and takes the owner's hue, lifted off it so the claim
+      // reads against the ground — toward white on the dark board, the other
+      // way on the light one. A closed circuit's tiles darken with its length.
       const mine = pick.owner === store.you;
       const k = pick.status === 'closed' ? 1 - circuitDarkening(pick.steps.length) : 1;
-      const lift = pick.status === 'closed' ? 30 : 70;
-      tiles.setTint(tile, Math.min(255, (rgb[0] + lift) * k), Math.min(255, (rgb[1] + lift) * k), Math.min(255, (rgb[2] + lift) * k), mine ? 115 : 85);
+      const lift = pick.status === 'closed' ? this.board.liftClosed : this.board.lift;
+      const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
+      tiles.setTint(tile, ch(rgb[0]), ch(rgb[1]), ch(rgb[2]), mine ? 115 : 85);
     }
   }
 
@@ -225,11 +241,12 @@ export class Renderer {
         ctx.lineTo(ax, ay);
       }
       if (mine) {
-        ctx.strokeStyle = 'rgba(255,255,255,0.55)';
+        ctx.strokeStyle = this.board.haloCss;
         ctx.lineWidth = w + Math.max(2, 0.08 * s);
         ctx.stroke();
       }
-      ctx.strokeStyle = path.status === 'closed' ? darkenCss(owner.color, circuitDarkening(path.steps.length)) : owner.color;
+      const ink = strandColor(this.board, owner.color, path.status === 'closed' ? circuitDarkening(path.steps.length) : 0);
+      ctx.strokeStyle = ink;
       ctx.lineWidth = w;
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;
       ctx.stroke();
@@ -240,16 +257,16 @@ export class Renderer {
         const pulse = 1 + 0.35 * Math.sin(t / 160);
         ctx.beginPath();
         ctx.arc(hx, hy, Math.max(3, 0.22 * s) * pulse, 0, Math.PI * 2);
-        ctx.fillStyle = owner.color;
+        ctx.fillStyle = ink;
         ctx.fill();
         ctx.lineWidth = Math.max(1, 0.05 * s);
-        ctx.strokeStyle = '#fff';
+        ctx.strokeStyle = this.board.inkCss;
         ctx.stroke();
       }
       if (path.status === 'stuck' && inView(last.b.x, last.b.y)) {
         const [hx, hy] = toScreen(last.b.x, last.b.y);
         const r = Math.max(3, 0.18 * s);
-        ctx.strokeStyle = '#ff5c7a';
+        ctx.strokeStyle = this.board.badCss;
         ctx.lineWidth = Math.max(1.5, 0.06 * s);
         ctx.beginPath();
         ctx.moveTo(hx - r, hy - r);

@@ -3,13 +3,16 @@
  * zoom, tap to start a line) and the HUD.
  */
 
-import { useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { tileAt } from '../../shared/game/field';
 import { stepIntervalMs } from '../../shared/game/knobs';
 import { describeRule } from '../../shared/game/rule';
 import type { GameConnection } from './net';
 import { Renderer } from './render';
 import type { Store } from './store';
+import { boardTheme, useTheme } from './theme';
+import { strandColor } from './tiles-layer';
+import { ThemeToggle } from './ThemeToggle';
 import { useStore } from './useStore';
 
 export interface ArenaProps {
@@ -34,6 +37,10 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const pointers = useRef(new Map<number, PointerState>());
   const pinchDist = useRef(0);
   const [showHelp, setShowHelp] = useState(true);
+  const [theme] = useTheme();
+  // `theme` is the dep, not the source: the palette follows what is on <html>.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const scheme = useMemo(() => boardTheme(), [theme]);
   useStore(store);
 
   useEffect(() => {
@@ -67,6 +74,11 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   useEffect(() => {
     if (store.field && rendererRef.current) rendererRef.current.setField(store.field);
   }, [store.field]);
+
+  // The board is canvas, not CSS: hand the renderer the new scheme itself.
+  useEffect(() => {
+    rendererRef.current?.setTheme(scheme);
+  }, [scheme]);
 
   const tap = (sx: number, sy: number): void => {
     const r = rendererRef.current;
@@ -163,7 +175,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         onPointerCancel={onPointerUp}
       />
 
-      <div className="hud hud-me" style={{ ['--me' as string]: me?.color ?? '#fff' }}>
+      <div className="hud hud-me" style={{ ['--me' as string]: me ? strandColor(scheme, me.color) : 'var(--text)' }}>
         <div className="hud-name">
           <span className="swatch" /> {me?.name ?? '…'}
         </div>
@@ -185,6 +197,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
             New rule
           </button>
+          <ThemeToggle />
         </div>
       </div>
 
@@ -193,7 +206,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         <ol>
           {board.slice(0, 10).map((p) => (
             <li key={p.id} className={p.id === store.you ? 'is-me' : ''}>
-              <span className="swatch" style={{ background: p.color }} />
+              <span className="swatch" style={{ background: strandColor(scheme, p.color) }} />
               <span className="board-name">{p.name}</span>
               <span className="board-score">{p.score}</span>
             </li>

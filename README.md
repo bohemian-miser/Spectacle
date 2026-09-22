@@ -47,6 +47,27 @@ you.
    Closed circuits darken with their length on the board.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
+**Which way a tile is turned.** Every hexagon in the arena is the same regular
+hexagon, so nothing in its outline says which of the six rotations it is sitting
+in — while its edge classes are numbered from edge 0 round. Zoom in and each one
+wears a faint arrow pointing at that edge; the tiles in the rule lab wear the
+same arrow, so their numbers can be read straight off the board. (A Spectre's
+outline already shows its rotation, so it goes without.)
+
+**The colours are Spectre's.** Every tile type wears the colour it has in the
+[Spectre](https://github.com/bohemian-miser/Spectre) explorer's original table —
+Xi yellow, the Gammas white, Pi sky blue, Phi green — on the board, in the rule
+lab and in the patch preview alike, and the panels around them use the
+explorer's tokens, so the two sites look like one.
+
+**Light or dark.** The button in the lobby header (and in the arena HUD) flips
+the whole game, board included: outlines, the halo on your line and how far the
+tiles are sat back are part of the scheme, not just the panels. Light shows the
+tile colours as they are; dark dims them together — the hues never move — so the
+strands on top still carry. Light is the default; your choice is remembered in
+this browser, and `?theme=dark` / `?theme=light` forces one for a link or a
+screenshot.
+
 Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts);
 set any of them with `KNOB_<NAME>` environment variables
 (`KNOB_BASE_STEP_MS=250 KNOB_CROSSING_MODE=tile …`). Mechanics first, balance

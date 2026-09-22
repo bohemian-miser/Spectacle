@@ -8,21 +8,27 @@
 import { tilesInBox, type Box, type Field } from '../../shared/game/field';
 import { leafPts } from '../../shared/tiles';
 import type { Camera } from './camera';
-import { cssRgb, type Rgb01, type TileLayer } from './tiles-layer';
+import type { BoardTheme } from './theme';
+import { ARROW_MIN_SCALE, cssRgb, directionArrow, type Rgb01, type TileLayer } from './tiles-layer';
 
-export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills: readonly Rgb01[]): TileLayer {
+function polyPath(pts: readonly { x: number; y: number }[]): Path2D {
+  const p = new Path2D();
+  p.moveTo(pts[0].x, pts[0].y);
+  for (let i = 1; i < pts.length; i++) p.lineTo(pts[i].x, pts[i].y);
+  p.closePath();
+  return p;
+}
+
+export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills: readonly Rgb01[], board: BoardTheme): TileLayer {
   const ctx = canvas.getContext('2d')!;
   const back = document.createElement('canvas');
   const bctx = back.getContext('2d')!;
-  const paths = field.leafTypes.map((type) => {
-    const pts = leafPts(field.family, type);
-    const p = new Path2D();
-    p.moveTo(pts[0].x, pts[0].y);
-    for (let i = 1; i < pts.length; i++) p.lineTo(pts[i].x, pts[i].y);
-    p.closePath();
-    return p;
-  });
-  const css = fills.map(cssRgb);
+  const paths = field.leafTypes.map((type) => polyPath(leafPts(field.family, type)));
+  // Every hex tile is the same regular hexagon, so only the arrow says which
+  // way one is turned; a Spectre wears its rotation on its outline.
+  const arrow = field.family === 'hex' ? polyPath(directionArrow(leafPts(field.family, field.leafTypes[0]))) : null;
+  let css = fills.map(cssRgb);
+  let scheme = board;
   const tints = new Map<number, string>();
   let lastKey = '';
   const visible: number[] = [];
@@ -52,6 +58,11 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
         lastKey = '';
       }
     },
+    setTheme(next, nextFills) {
+      scheme = next;
+      css = nextFills.map(cssRgb);
+      lastKey = '';
+    },
     clearTints() {
       tints.clear();
     },
@@ -63,12 +74,12 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
       if (key !== lastKey) {
         lastKey = key;
         bctx.setTransform(1, 0, 0, 1, 0, 0);
-        bctx.fillStyle = '#0b0d12';
+        bctx.fillStyle = scheme.bgCss;
         bctx.fillRect(0, 0, back.width, back.height);
         tilesInBox(field, viewBox(cam, w, h), visible);
         const strokes = cam.scale > 4;
         bctx.lineWidth = 0.05;
-        bctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        bctx.strokeStyle = scheme.lineCss;
         for (const i of visible) {
           setTransform(bctx, i, cam, w, h, dpr);
           bctx.fillStyle = css[field.types[i]];
@@ -87,6 +98,16 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
         setTransform(ctx, tile, cam, w, h, dpr);
         ctx.fillStyle = color;
         ctx.fill(paths[field.types[tile]]);
+      }
+      // Arrows last, so a claimed tile keeps its direction. `visible` is the
+      // last tilesInBox result, which is this camera: it is refreshed above on
+      // every move.
+      if (arrow && cam.scale > ARROW_MIN_SCALE) {
+        ctx.fillStyle = scheme.arrowCss;
+        for (const i of visible) {
+          setTransform(ctx, i, cam, w, h, dpr);
+          ctx.fill(arrow);
+        }
       }
       ctx.setTransform(1, 0, 0, 1, 0, 0);
     },
