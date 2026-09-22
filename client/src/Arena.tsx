@@ -127,7 +127,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const findMe = (): void => {
     const r = rendererRef.current;
     const mine = store.myPaths();
-    const live = mine.find((p) => p.status === 'growing') ?? mine[mine.length - 1];
+    const live = [...mine].reverse().find((p) => p.status === 'growing') ?? mine[mine.length - 1];
     if (!r || !live) {
       store.toast('You have no line yet — tap a tile', 'info');
       return;
@@ -140,10 +140,15 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const board = [...store.players.values()].sort((a, b) => b.score - a.score);
   const rank = me ? board.findIndex((p) => p.id === me.id) + 1 : 0;
   const mine = store.myPaths();
-  const live = mine.find((p) => p.status === 'growing');
-  const stuck = mine.find((p) => p.status === 'stuck');
+  const growing = mine.filter((p) => p.status === 'growing');
+  const stuck = mine.filter((p) => p.status === 'stuck').length;
   const closed = mine.filter((p) => p.status === 'closed').length;
-  const status = live ? `growing · ${live.steps.length} tiles` : stuck ? `stuck at a tail · tap to start again` : closed ? `${closed} circuit${closed > 1 ? 's' : ''} on the board · tap to draw more` : 'tap a tile to start';
+  const tiles = mine.reduce((n, p) => n + p.steps.length, 0);
+  const parts: string[] = [];
+  if (growing.length) parts.push(`${growing.length} growing`);
+  if (stuck) parts.push(`${stuck} stuck`);
+  if (closed) parts.push(`${closed} circuit${closed > 1 ? 's' : ''}`);
+  const status = parts.length ? `${parts.join(' · ')} · ${tiles} tiles · tap to add a line` : 'tap a tile to start a line';
   const speed = me && store.knobs ? (1000 / stepIntervalMs(store.knobs, me.score)).toFixed(1) : '–';
 
   return (

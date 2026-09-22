@@ -29,10 +29,12 @@ you.
 4. **Circuits.** If the line arrives back at its first chord it closes. You get
    `combo × (circuitBase + lengthWeight × length + areaWeight × enclosedArea)`,
    and your combo multiplier steps up for the next one. Closed circuits stay on
-   the board (the last few).
+   the board.
 5. **Tails.** No continuation (an odd tile, a junction under `junctionPolicy:
-   'stop'`, or the edge of the field) leaves the line stuck. Tap again to start a
-   new one; the old one is dropped.
+   'stop'`, or the edge of the field) leaves the line stuck. Tap elsewhere to
+   start another: every tap adds a line, all of them grow at once, and nothing
+   you drew is dropped until someone cuts it (`maxLivePaths` and
+   `maxCompletedCircuits` cap this if you want; both default to unlimited).
 6. **Crossing.** When a line enters a tile where another player's chord crosses
    it (proper intersection, or a shared connection point — both are knobs),
    that player's whole path is wiped and their combo resets. Tapping straight

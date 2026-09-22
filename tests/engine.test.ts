@@ -179,4 +179,39 @@ describe('engine', () => {
       expect(d.subset).not.toEqual(fassRule(family).subset);
     }
   });
+
+  it('every tap adds a line; nothing is dropped, and circuits accumulate without limit', () => {
+    const e = make();
+    e.addPlayer('a', 'Ann', SEL15);
+    const table = chordTableFor(FIELD, SEL15);
+    // Five distinct loop tiles, each on its own circuit.
+    const starts: number[] = [];
+    const seen = new Set<number>();
+    for (let i = 0; i < FIELD.count && starts.length < 5; i++) {
+      if (tileChords(FIELD, table, i).length === 0 || seen.has(i)) continue;
+      const w = walkStrand(FIELD, table, i, 0, 1);
+      if (!w.closed) continue;
+      for (const s of w.steps) seen.add(s.tile);
+      starts.push(i);
+    }
+    expect(starts).toHaveLength(5);
+    for (const t of starts) expect(e.tap('a', t, tileCenter(FIELD, t)).result.ok).toBe(true);
+    const p = e.players.get('a')!;
+    expect(p.paths).toHaveLength(5);
+    expect(p.paths.every((q) => q.status === 'growing')).toBe(true);
+    runUntil(e, (all) => all.filter((x) => x.t === 'circuit').length >= 5);
+    expect(p.paths).toHaveLength(5);
+    expect(p.paths.every((q) => q.status === 'closed')).toBe(true);
+  });
+
+  it('maxLivePaths caps the lines in play, dropping the oldest', () => {
+    const e = make({ maxLivePaths: 1 });
+    e.addPlayer('a', 'Ann', SEL15);
+    const table = chordTableFor(FIELD, SEL15);
+    const tiles = [...Array(FIELD.count).keys()].filter((i) => tileChords(FIELD, table, i).length > 0).slice(0, 2);
+    e.tap('a', tiles[0], tileCenter(FIELD, tiles[0]));
+    const second = e.tap('a', tiles[1], tileCenter(FIELD, tiles[1]));
+    expect(second.events.some((x) => x.t === 'wipe' && x.by === undefined)).toBe(true);
+    expect(e.players.get('a')!.paths).toHaveLength(1);
+  });
 });

@@ -179,7 +179,7 @@ export class Store {
       case 'status': {
         const path = this.paths.get(ev.path);
         if (path) path.status = ev.status;
-        if (path && path.owner === this.you && ev.status === 'stuck') this.toast('Tail — your line ran out. Tap to start again.', 'bad');
+        if (path && path.owner === this.you && ev.status === 'stuck') this.toast('Tail — that line ran out. Tap elsewhere to start another.', 'bad');
         this.geometryVersion++;
         return;
       }

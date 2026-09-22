@@ -51,8 +51,10 @@ export interface Knobs {
   tapOntoOthers: boolean;
 
   // --- housekeeping --------------------------------------------------------
-  /** Closed circuits a player keeps on the board (oldest dropped first). */
+  /** Closed circuits a player keeps on the board, oldest dropped first (0 = unlimited). */
   maxCompletedCircuits: number;
+  /** Growing or stuck lines a player may have at once, oldest dropped first (0 = unlimited). */
+  maxLivePaths: number;
   /** Choosing a new rule wipes your paths; does it also reset the score? */
   resetScoreOnRule: boolean;
   maxPlayers: number;
@@ -81,7 +83,8 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   touchCounts: true,
   tapOntoOthers: true,
 
-  maxCompletedCircuits: 3,
+  maxCompletedCircuits: 0,
+  maxLivePaths: 0,
   resetScoreOnRule: true,
   maxPlayers: 200,
   maxNameLength: 16,
