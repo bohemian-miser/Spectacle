@@ -5,7 +5,7 @@
  * Environment:
  *   PORT          (8787)     HTTP + WebSocket port
  *   FIELD_FAMILY  (hex)      hex | spectre
- *   FIELD_LEVEL   (5)        substitution level (5 ≈ 35k tiles, 6 ≈ 270k)
+ *   FIELD_LEVEL   (6)        substitution level (hex: 5 ≈ 31k tiles, 6 ≈ 242k)
  *   FIELD_ROOT    (Delta)    root tile type
  *   BOTS          (0)        number of bot players
  *   SEED          (random)   RNG seed

@@ -3,7 +3,7 @@ import { Engine } from '../shared/game/engine';
 import { buildField, tileCenter } from '../shared/game/field';
 import { DEFAULT_KNOBS, stepIntervalMs, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
-import { defaultRule, ruleFromCombo, validateRule } from '../shared/game/rule';
+import { defaultRule, fassRule, oddTypes, ruleFromCombo, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { chordTableFor, tileChords, walkStrand } from '../shared/game/strand';
 
@@ -98,7 +98,7 @@ describe('engine', () => {
   it('a rival crossing your chord wipes your path (tile mode)', () => {
     const e = make({ crossingMode: 'tile' });
     e.addPlayer('a', 'Ann', SEL15);
-    e.addPlayer('b', 'Bob', defaultRule('spectre'));
+    e.addPlayer('b', 'Bob', fassRule('spectre'));
     const { tile } = loopTile();
     const ta = e.tap('a', tile, tileCenter(FIELD, tile));
     expect(ta.result.ok).toBe(true);
@@ -146,7 +146,7 @@ describe('engine', () => {
     e.addPlayer('a', 'Ann', SEL15);
     const { tile } = loopTile();
     e.tap('a', tile, tileCenter(FIELD, tile));
-    const ev = e.setRule('a', defaultRule('spectre'));
+    const ev = e.setRule('a', fassRule('spectre'));
     expect(ev.some((x) => x.t === 'wipe')).toBe(true);
     expect(ev.find((x) => x.t === 'rule')).toMatchObject({ id: 'a', score: 0 });
     expect(e.players.get('a')!.paths).toHaveLength(0);
@@ -168,6 +168,50 @@ describe('engine', () => {
     // Delta under 1278 has 4 points → matchings 0,1,2; index 1 is the crossing one.
     const bad = { family: 'spectre', subset: [1, 2, 7, 8], matching: [1, 0, 0, 0, 0, 0, 0, 0, 0, 0] };
     expect(validateRule(bad, 'spectre')).toBeNull();
-    expect(validateRule(defaultRule('spectre'), 'spectre')).toEqual(defaultRule('spectre'));
+    expect(validateRule(fassRule('spectre'), 'spectre')).toEqual(fassRule('spectre'));
+  });
+
+  it('the default rule is selection 15 — clean, and not the infinite-line rule', () => {
+    for (const family of ['hex', 'spectre'] as const) {
+      const d = defaultRule(family);
+      expect(d.subset).toEqual([1, 5]);
+      expect(oddTypes(d)).toEqual([]);
+      expect(d.subset).not.toEqual(fassRule(family).subset);
+    }
+  });
+
+  it('every tap adds a line; nothing is dropped, and circuits accumulate without limit', () => {
+    const e = make();
+    e.addPlayer('a', 'Ann', SEL15);
+    const table = chordTableFor(FIELD, SEL15);
+    // Five distinct loop tiles, each on its own circuit.
+    const starts: number[] = [];
+    const seen = new Set<number>();
+    for (let i = 0; i < FIELD.count && starts.length < 5; i++) {
+      if (tileChords(FIELD, table, i).length === 0 || seen.has(i)) continue;
+      const w = walkStrand(FIELD, table, i, 0, 1);
+      if (!w.closed) continue;
+      for (const s of w.steps) seen.add(s.tile);
+      starts.push(i);
+    }
+    expect(starts).toHaveLength(5);
+    for (const t of starts) expect(e.tap('a', t, tileCenter(FIELD, t)).result.ok).toBe(true);
+    const p = e.players.get('a')!;
+    expect(p.paths).toHaveLength(5);
+    expect(p.paths.every((q) => q.status === 'growing')).toBe(true);
+    runUntil(e, (all) => all.filter((x) => x.t === 'circuit').length >= 5);
+    expect(p.paths).toHaveLength(5);
+    expect(p.paths.every((q) => q.status === 'closed')).toBe(true);
+  });
+
+  it('maxLivePaths caps the lines in play, dropping the oldest', () => {
+    const e = make({ maxLivePaths: 1 });
+    e.addPlayer('a', 'Ann', SEL15);
+    const table = chordTableFor(FIELD, SEL15);
+    const tiles = [...Array(FIELD.count).keys()].filter((i) => tileChords(FIELD, table, i).length > 0).slice(0, 2);
+    e.tap('a', tiles[0], tileCenter(FIELD, tiles[0]));
+    const second = e.tap('a', tiles[1], tileCenter(FIELD, tiles[1]));
+    expect(second.events.some((x) => x.t === 'wipe' && x.by === undefined)).toBe(true);
+    expect(e.players.get('a')!.paths).toHaveLength(1);
   });
 });

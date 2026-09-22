@@ -1,70 +1,59 @@
 /**
- * Canvas2D arena renderer.
- *
- * Two layers on one canvas: the static tiling (redrawn only when the camera
- * moves, into an offscreen canvas) and the live layer — claimed tiles washed
- * with their owner's colour, every path as a polyline, a pulsing head on each
- * growing one. Tiles are drawn as one `Path2D` per leaf type under a
- * per-tile `setTransform`, so the per-frame cost is one fill per visible tile.
+ * Arena renderer: a tile layer in the bottom canvas (WebGL2 instanced, or
+ * Canvas2D where WebGL is missing) and a Canvas2D overlay on top for the
+ * live things — every path as a polyline, a pulsing head on each growing
+ * one, a cross on each stuck one. Claimed tiles are tinted in the tile layer.
  */
 
-import { tilesInBox, type Box, type Field } from '../../shared/game/field';
-import { leafPts, type TileFamilyId, type TileTypeId } from '../../shared/tiles';
+import type { Box, Field } from '../../shared/game/field';
+import type { Camera } from './camera';
 import type { ClientPath, Store } from './store';
-
-export interface Camera {
-  x: number;
-  y: number;
-  /** Screen pixels per world unit (CSS px). */
-  scale: number;
-}
-
-/** Muted per-type fills on a dark ground; claimed tiles get the owner's colour on top. */
-function typeFill(family: TileFamilyId, type: TileTypeId, index: number): string {
-  const h = family === 'hex' ? (index * 36 + 200) % 360 : (index * 33 + 180) % 360;
-  return `hsl(${h}, 13%, ${17 + (index % 3) * 2}%)`;
-}
+import { createCanvasTiles } from './tiles-2d';
+import { createGlTiles } from './tiles-gl';
+import { parseColor, typeFill, type TileLayer } from './tiles-layer';
 
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
   private ctx: CanvasRenderingContext2D;
-  private staticCanvas: HTMLCanvasElement;
-  private staticCtx: CanvasRenderingContext2D;
+  private tiles: TileLayer | null = null;
   private width = 1;
   private height = 1;
   private dpr = 1;
-  private paths2d = new Map<string, Path2D>();
-  private fills: string[] = [];
-  private lastCameraKey = '';
-  private lastGeometry = -1;
-  private visible: number[] = [];
   private field: Field | null = null;
   private frameHandle = 0;
   private lastFrameAt = 0;
+  private lastGeometry = -1;
+  private lastPlayersVersion = -1;
 
   constructor(
-    private readonly canvas: HTMLCanvasElement,
+    private readonly tileCanvas: HTMLCanvasElement,
+    private readonly overlay: HTMLCanvasElement,
     private readonly store: Store,
   ) {
-    this.ctx = canvas.getContext('2d')!;
-    this.staticCanvas = document.createElement('canvas');
-    this.staticCtx = this.staticCanvas.getContext('2d')!;
+    this.ctx = overlay.getContext('2d')!;
+  }
+
+  get layerKind(): 'webgl' | 'canvas2d' | 'none' {
+    return this.tiles?.kind ?? 'none';
   }
 
   setField(field: Field): void {
     if (this.field === field) return;
     this.field = field;
-    this.paths2d.clear();
-    this.fills = field.leafTypes.map((t, i) => typeFill(field.family, t, i));
-    for (const type of field.leafTypes) {
-      const pts = leafPts(field.family, type);
-      const p = new Path2D();
-      p.moveTo(pts[0].x, pts[0].y);
-      for (let i = 1; i < pts.length; i++) p.lineTo(pts[i].x, pts[i].y);
-      p.closePath();
-      this.paths2d.set(type, p);
+    this.tiles?.dispose();
+    const fills = field.leafTypes.map((_, i) => typeFill(field.family, i));
+    let layer: TileLayer | null = null;
+    // `?gl=1` forces WebGL (even on a software renderer), `?gl=0` forbids it.
+    const glParam = new URLSearchParams(location.search).get('gl');
+    const force = glParam === '1' ? true : glParam === '0' ? false : undefined;
+    try {
+      layer = createGlTiles(this.tileCanvas, field, fills, { force });
+    } catch (err) {
+      console.warn('WebGL tile layer failed, using Canvas2D', err);
     }
-    this.lastCameraKey = '';
+    this.tiles = layer ?? createCanvasTiles(this.tileCanvas, field, fills);
+    this.tiles.resize(Math.round(this.width * this.dpr), Math.round(this.height * this.dpr));
+    this.lastGeometry = -1;
   }
 
   fitToField(): void {
@@ -73,37 +62,27 @@ export class Renderer {
     this.camera.x = (b.minX + b.maxX) / 2;
     this.camera.y = (b.minY + b.maxY) / 2;
     const s = Math.min(this.width / (b.maxX - b.minX + 4), this.height / (b.maxY - b.minY + 4));
-    this.camera.scale = Math.max(0.2, s);
-    this.lastCameraKey = '';
+    this.camera.scale = Math.max(0.05, s);
   }
 
   resize(): void {
-    const rect = this.canvas.getBoundingClientRect();
+    const rect = this.overlay.getBoundingClientRect();
     this.dpr = Math.min(2, window.devicePixelRatio || 1);
     this.width = Math.max(1, rect.width);
     this.height = Math.max(1, rect.height);
     const pw = Math.round(this.width * this.dpr);
     const ph = Math.round(this.height * this.dpr);
-    if (this.canvas.width !== pw || this.canvas.height !== ph) {
-      this.canvas.width = pw;
-      this.canvas.height = ph;
-      this.staticCanvas.width = pw;
-      this.staticCanvas.height = ph;
+    if (this.overlay.width !== pw || this.overlay.height !== ph) {
+      this.overlay.width = pw;
+      this.overlay.height = ph;
     }
-    this.lastCameraKey = '';
+    this.tiles?.resize(pw, ph);
   }
 
   screenToWorld(sx: number, sy: number): { x: number; y: number } {
     return {
       x: (sx - this.width / 2) / this.camera.scale + this.camera.x,
       y: (sy - this.height / 2) / this.camera.scale + this.camera.y,
-    };
-  }
-
-  worldToScreen(wx: number, wy: number): { x: number; y: number } {
-    return {
-      x: (wx - this.camera.x) * this.camera.scale + this.width / 2,
-      y: (wy - this.camera.y) * this.camera.scale + this.height / 2,
     };
   }
 
@@ -115,7 +94,7 @@ export class Renderer {
 
   zoomAt(sx: number, sy: number, factor: number): void {
     const before = this.screenToWorld(sx, sy);
-    this.camera.scale = Math.max(0.15, Math.min(400, this.camera.scale * factor));
+    this.camera.scale = Math.max(0.05, Math.min(400, this.camera.scale * factor));
     const after = this.screenToWorld(sx, sy);
     this.camera.x += before.x - after.x;
     this.camera.y += before.y - after.y;
@@ -140,7 +119,6 @@ export class Renderer {
   start(): void {
     const loop = (t: number): void => {
       this.frameHandle = requestAnimationFrame(loop);
-      // Cap at ~60 fps; the live layer animates the head pulse so it always redraws.
       if (t - this.lastFrameAt < 15) return;
       this.lastFrameAt = t;
       this.draw(t);
@@ -150,6 +128,8 @@ export class Renderer {
 
   stop(): void {
     cancelAnimationFrame(this.frameHandle);
+    this.tiles?.dispose();
+    this.tiles = null;
   }
 
   private viewBox(): Box {
@@ -158,93 +138,60 @@ export class Renderer {
     return { minX: Math.min(a.x, b.x), minY: Math.min(a.y, b.y), maxX: Math.max(a.x, b.x), maxY: Math.max(a.y, b.y) };
   }
 
-  /** Canvas transform = camera ∘ tile transform (row-major affine from the field). */
-  private setTileTransform(ctx: CanvasRenderingContext2D, i: number): void {
-    const f = this.field!;
-    const m = f.xforms;
-    const o = i * 6;
-    const s = this.camera.scale * this.dpr;
-    ctx.setTransform(
-      m[o] * s,
-      m[o + 3] * s,
-      m[o + 1] * s,
-      m[o + 4] * s,
-      (m[o + 2] - this.camera.x) * s + (this.width * this.dpr) / 2,
-      (m[o + 5] - this.camera.y) * s + (this.height * this.dpr) / 2,
-    );
-  }
-
-  private drawStatic(): void {
-    const f = this.field!;
-    const ctx = this.staticCtx;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.fillStyle = '#0b0d12';
-    ctx.fillRect(0, 0, this.staticCanvas.width, this.staticCanvas.height);
-    const box = this.viewBox();
-    tilesInBox(f, box, this.visible);
-    const strokes = this.camera.scale > 4;
-    ctx.lineWidth = 0.05;
-    ctx.strokeStyle = 'rgba(255,255,255,0.10)';
-    for (const i of this.visible) {
-      const type = f.leafTypes[f.types[i]];
-      const p = this.paths2d.get(type)!;
-      this.setTileTransform(ctx, i);
-      ctx.fillStyle = this.fills[f.types[i]];
-      ctx.fill(p);
-      if (strokes) ctx.stroke(p);
+  /** Push the claimed-tile tints into the tile layer when paths or players changed. */
+  private syncTints(): void {
+    const tiles = this.tiles;
+    if (!tiles) return;
+    const store = this.store;
+    if (store.geometryVersion === this.lastGeometry && store.version === this.lastPlayersVersion) return;
+    this.lastGeometry = store.geometryVersion;
+    this.lastPlayersVersion = store.version;
+    tiles.clearTints();
+    const colors = new Map<string, [number, number, number]>();
+    for (const [tile, paths] of store.occupancy) {
+      // Your own claim wins the tint; otherwise the first owner on the tile.
+      let owner: string | null = null;
+      for (const p of paths) {
+        if (p.owner === store.you) {
+          owner = p.owner;
+          break;
+        }
+        if (owner === null) owner = p.owner;
+      }
+      if (owner === null) continue;
+      const player = store.players.get(owner);
+      if (!player) continue;
+      let rgb = colors.get(owner);
+      if (!rgb) {
+        rgb = parseColor(player.color);
+        colors.set(owner, rgb);
+      }
+      // Lighten toward the colour: the tile "fades" and takes the owner's hue.
+      const mine = owner === store.you;
+      tiles.setTint(tile, Math.min(255, rgb[0] + 70), Math.min(255, rgb[1] + 70), Math.min(255, rgb[2] + 70), mine ? 115 : 85);
     }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
   }
 
   private draw(t: number): void {
     const f = this.field;
-    if (!f) return;
-    const ctx = this.ctx;
-    const camKey = `${this.camera.x.toFixed(3)}|${this.camera.y.toFixed(3)}|${this.camera.scale.toFixed(4)}|${this.width}x${this.height}`;
-    if (camKey !== this.lastCameraKey) {
-      this.drawStatic();
-      this.lastCameraKey = camKey;
-    }
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.drawImage(this.staticCanvas, 0, 0);
-    this.drawLive(t);
-    this.lastGeometry = this.store.geometryVersion;
+    if (!f || !this.tiles) return;
+    this.syncTints();
+    // Both layers are cheap to call every frame: WebGL redraws in one pass,
+    // the 2D layer caches its tiles by camera and only re-blits.
+    this.tiles.draw(this.camera, this.width, this.height, this.dpr);
+    this.drawOverlay(t);
   }
 
-  private drawLive(t: number): void {
-    const f = this.field!;
+  private drawOverlay(t: number): void {
     const ctx = this.ctx;
     const store = this.store;
     const s = this.camera.scale * this.dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
     const box = this.viewBox();
     const pad = 4;
     const inView = (x: number, y: number): boolean =>
       x > box.minX - pad && x < box.maxX + pad && y > box.minY - pad && y < box.maxY + pad;
-
-    // 1. Claimed tiles: a wash of the owner's colour (the tapped tile "fades").
-    for (const [tile, paths] of store.occupancy) {
-      const cx = f.centers[tile * 2];
-      const cy = f.centers[tile * 2 + 1];
-      if (!inView(cx, cy)) continue;
-      const type = f.leafTypes[f.types[tile]];
-      const p = this.paths2d.get(type)!;
-      this.setTileTransform(ctx, tile);
-      // Fade the tile up first, then tint it with each owner's colour.
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = '#ffffff';
-      ctx.fill(p);
-      for (const path of paths) {
-        const owner = store.players.get(path.owner);
-        if (!owner) continue;
-        ctx.globalAlpha = path.owner === store.you ? 0.4 : 0.28;
-        ctx.fillStyle = owner.color;
-        ctx.fill(p);
-      }
-    }
-    ctx.globalAlpha = 1;
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
-
-    // 2. Paths.
     const toScreen = (x: number, y: number): [number, number] => [
       ((x - this.camera.x) * this.camera.scale + this.width / 2) * this.dpr,
       ((y - this.camera.y) * this.camera.scale + this.height / 2) * this.dpr,
@@ -253,13 +200,12 @@ export class Renderer {
     ctx.lineJoin = 'round';
     const drawPath = (path: ClientPath, mine: boolean): void => {
       const owner = store.players.get(path.owner);
-      if (!owner) return;
+      if (!owner || path.steps.length === 0) return;
       const w = Math.max(1.5, 0.14 * s) * (mine ? 1.35 : 1);
       ctx.beginPath();
       let pen = false;
       for (const st of path.steps) {
-        const vis = inView(st.a.x, st.a.y) || inView(st.b.x, st.b.y);
-        if (!vis) {
+        if (!(inView(st.a.x, st.a.y) || inView(st.b.x, st.b.y))) {
           pen = false;
           continue;
         }
@@ -270,7 +216,7 @@ export class Renderer {
         ctx.lineTo(bx, by);
         pen = true;
       }
-      if (path.status === 'closed') {
+      if (path.status === 'closed' && pen) {
         const first = path.steps[0];
         const [ax, ay] = toScreen(first.a.x, first.a.y);
         ctx.lineTo(ax, ay);
@@ -285,7 +231,6 @@ export class Renderer {
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;
       ctx.stroke();
       ctx.globalAlpha = 1;
-      // Head marker.
       const last = path.steps[path.steps.length - 1];
       if (path.status === 'growing' && inView(last.b.x, last.b.y)) {
         const [hx, hy] = toScreen(last.b.x, last.b.y);

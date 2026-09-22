@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildField, tileNeighbours } from '../shared/game/field';
-import { defaultRule, randomCleanRule, ruleFromCombo, type PlayerRule } from '../shared/game/rule';
+import { fassRule, randomCleanRule, ruleFromCombo, type PlayerRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { chordTableFor, tileChords, walkStrand } from '../shared/game/strand';
 import { analyze, flatten, buildSystem, pathLength, type TileFamilyId } from '../shared/tiles';
@@ -44,7 +44,7 @@ function compare(family: TileFamilyId, level: number, rule: PlayerRule) {
 
 describe('strand walking matches the global circuit analysis', () => {
   it('hex 128 FASS rule at level 3', () => {
-    const r = compare('hex', 3, defaultRule('hex'));
+    const r = compare('hex', 3, fassRule('hex'));
     expect(r.circuits + r.tails).toBeGreaterThan(0);
   });
   it('hex: a rule with circuits', () => {
@@ -53,7 +53,7 @@ describe('strand walking matches the global circuit analysis', () => {
     for (let k = 0; k < 4; k++) compare('hex', 3, randomCleanRule('hex', rng));
   });
   it('spectre 1278 FASS rule at level 3', () => {
-    compare('spectre', 3, defaultRule('spectre'));
+    compare('spectre', 3, fassRule('spectre'));
   });
   it('spectre selection 15 (finite circuits of length 3, 6, 9)', () => {
     const r = compare('spectre', 3, ruleFromCombo('spectre', '15', '0000000000'));

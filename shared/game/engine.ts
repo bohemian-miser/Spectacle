@@ -12,7 +12,8 @@
  *    on length and enclosed area;
  *  - a chord entering a tile where another player's chord crosses it wipes
  *    that player's whole path;
- *  - a tail (no continuation) leaves the path stuck; tap again to start over.
+ *  - a tail (no continuation) leaves the path stuck; tap elsewhere to start
+ *    another — every line a player draws stays until it is cut.
  */
 
 import type { Pt } from '../tiles';
@@ -159,9 +160,11 @@ export class Engine {
     const chord = nearestChord(this.field, p.table, tile, at);
     const exitEnd: 0 | 1 = this.rng.next() < 0.5 ? 0 : 1;
 
-    // One live path at a time: a tap abandons whatever was growing or stuck.
-    for (const path of [...p.paths]) {
-      if (path.status !== 'closed') this.dropPath(path, undefined, ev);
+    // Every tap starts another line; the old ones keep growing (or sit
+    // stuck) until they are cut. A cap on live lines, if set, drops the oldest.
+    if (this.knobs.maxLivePaths > 0) {
+      const live = p.paths.filter((q) => q.status !== 'closed');
+      while (live.length >= this.knobs.maxLivePaths) this.dropPath(live.shift()!, undefined, ev);
     }
 
     const path: Path = {
@@ -290,11 +293,10 @@ export class Engine {
     ev.push({ t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo });
     p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
     this.addScore(p, bonus, ev);
-    // Trim old trophies.
-    const closed = p.paths.filter((q) => q.status === 'closed');
-    while (closed.length > k.maxCompletedCircuits) {
-      const oldest = closed.shift()!;
-      this.dropPath(oldest, undefined, ev);
+    // Trim old trophies only when a cap is set.
+    if (k.maxCompletedCircuits > 0) {
+      const closed = p.paths.filter((q) => q.status === 'closed');
+      while (closed.length > k.maxCompletedCircuits) this.dropPath(closed.shift()!, undefined, ev);
     }
   }
 
