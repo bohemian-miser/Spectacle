@@ -40,7 +40,8 @@ you.
    `maxCompletedCircuits` cap this if you want; both default to unlimited).
 6. **Crossing.** When a line enters a tile where another player's chord crosses
    it (proper intersection, or a shared connection point — both are knobs),
-   that player's whole path is wiped, with its points, and their combo resets.
+   both lines die — the one that was hit and the one that hit it — each with
+   its points, and both combos reset (`mutualCut`; off makes it one-sided).
    You cannot *start* on a rival's line or inside a rival's closed circuit
    (`tapOntoOthers`, `tapInsideRivalCircuits`); you have to grow into them.
    Closed circuits darken with their length on the board.
@@ -96,8 +97,13 @@ Enable Pages with the source set to *GitHub Actions* once in the repo settings.
 The server is one always-on process while anyone is playing. Two GCP options
 ship in `deploy/gcp/`; pick by what you want to pay for idle time.
 
-**Cloud Run — scales to zero.** `./deploy/gcp/cloudrun.sh` builds the
-Dockerfile with Cloud Build and deploys one instance at most, none when idle.
+**Cloud Run — scales to zero.** Run `PROJECT=<gcp project> ./deploy/gcp/setup-ci.sh`
+once; it creates a deployer service account and prints the GitHub secret and
+variables to add. From then on every merge to `main` builds the image and
+deploys it (`.github/workflows/deploy-cloudrun.yml`) — nobody needs GCP
+credentials day to day, and the workflow is skipped until `GCP_PROJECT` is set.
+`./deploy/gcp/cloudrun.sh` does the same by hand from a laptop. Either way:
+one instance at most, none when idle.
 While people are connected you pay for one small instance; when the last one
 leaves it is retired after about fifteen idle minutes, and idle costs nothing.
 The free tier covers roughly fifty instance-hours a month. Cloud Run caps a

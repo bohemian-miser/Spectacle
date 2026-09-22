@@ -24,7 +24,7 @@ export interface TileLayer {
 /** Muted per-type fills on a dark ground; claimed tiles get the owner's colour on top. */
 export function typeFill(family: string, index: number): Rgb01 {
   const h = family === 'hex' ? (index * 36 + 200) % 360 : (index * 33 + 180) % 360;
-  return hslToRgb(h, 0.22, 0.24 + (index % 3) * 0.025);
+  return hslToRgb(h, 0.34, 0.31 + (index % 3) * 0.03);
 }
 
 export function hslToRgb(h: number, s: number, l: number): Rgb01 {
@@ -46,7 +46,7 @@ export function cssRgb(c: Rgb01): string {
  * `t` in [0, 1] is the darkening amount; the same curve serves lines and tints.
  */
 export function circuitDarkening(length: number): number {
-  return Math.min(0.65, 0.65 * (Math.log2(Math.max(1, length)) / 12));
+  return Math.min(0.42, 0.42 * (Math.log2(Math.max(1, length)) / 12));
 }
 
 export function darkenCss(css: string, t: number): string {

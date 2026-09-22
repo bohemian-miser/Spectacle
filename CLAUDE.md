@@ -1,0 +1,131 @@
+# Spectacle — working notes for Claude (and anyone else)
+
+Read this first. It is the map of the project, the decisions that are settled,
+and the traps. The README is the player/operator view; this is the engineer's.
+
+## What the game is
+
+A massively multiplayer strand-drawing game on hexagon and Spectre tilings,
+grown out of the [Spectre](https://github.com/bohemian-miser/Spectre) explorer
+(the Tails problem, edge classes, seams, matchings, FASS curves). Players
+build a *rule* — which edge classes carry a line, and how the lines pair up
+inside each tile type — then tap a tile; a line grows on its own following
+their rule tile to tile. Circuits score, tails stop you, collisions kill
+lines, and scoring is zero-sum (a line's points leave with it). Mechanics
+first; balance later, through knobs.
+
+## Layout
+
+```
+shared/tiles/     Spectre's web/src/core vendored VERBATIM (geom, families,
+                  edges, tiles, matchings, circuits, outline, colors, subsets).
+                  Never edit in place — re-copy from Spectre. Pure, no DOM.
+shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
+  field.ts        One finite substitution patch (flatten order = tile index).
+                  Vertex-neighbour CSR, hit grid, pointInPolygon, polygonArea.
+  rule.ts         PlayerRule = (subset, matching index per leaf type).
+                  validateRule (rejects crossing/out-of-range), defaultRule
+                  (selection 15), fassRule (tests only — see "settled"), random
+                  clean rules from the kernel.
+  strand.ts       Per-rule chord tables; stepForward/continuations (the local
+                  walk); chordsConflict; walkStrand (test oracle).
+  pairs.ts        Hand-drawn pairings ↔ matching index; topological crossing.
+  engine.ts       Authoritative simulation: players, paths, tap, tick, cuts,
+                  circuits, zero-sum points, tap restrictions. Deterministic
+                  given its Rng. No I/O.
+  bots.ts         Bots: random clean rules, tap when idle, aim beside rivals.
+  knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
+  protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
+                  events (step/wipe/circuit/score/status/join/leave/rule/refused).
+server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
+                  dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
+client/src/       Vite + React.
+  App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
+  net.ts          WebSocket GameConnection. local.ts: LocalConnection = the
+                  same engine + bots inside the tab (solo mode / Pages build).
+  store.ts        Applies events into plain mutable state; version counters.
+  Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
+                  numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze()).
+  Arena.tsx       Two stacked canvases + pointer handling + HUD.
+  render.ts       Camera, tint sync, Canvas2D strand overlay.
+  tiles-gl.ts     WebGL2 instanced tile layer. tiles-2d.ts: Canvas2D fallback.
+  tiles-layer.ts  TileLayer interface, typeFill palette, colour helpers.
+tests/            vitest. strand.test.ts pins the local walker against the
+                  core's global analyze() — the most important test here.
+                  resume.test.ts spawns the real server.
+scripts/smoke.ts  Headless Chromium round (needs PW_EXE or playwright browsers).
+deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh), e2-micro VM
+                  (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
+.github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
+                  solo), publish.yml (GHCR image), pages.yml (solo build),
+                  deploy-cloudrun.yml (skipped until GCP_PROJECT var is set).
+```
+
+## Commands
+
+```bash
+npm install
+npm run dev              # vite :5173 + server :8787 with 3 bots
+npm test                 # vitest (≈1.5 s)
+npm run typecheck
+npm run build            # → dist/, served by the server
+PORT=8787 BOTS=3 FIELD_LEVEL=5 npx tsx server/index.ts
+PW_EXE=/opt/pw-browsers/chromium npx tsx scripts/smoke.ts http://localhost:8787/ out.png
+PW_EXE=/opt/pw-browsers/chromium npx tsx scripts/smoke.ts "http://localhost:8787/?solo" out.png
+npm run bench:field      # build time / size per level
+```
+
+Push to a `claude/...` branch, open a PR; CI must be green. Merging to main
+publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
+
+## Settled decisions (don't relitigate without the owner)
+
+- **No FASS preset, no hint.** The infinite-line rules (hex `128`, spectre
+  `1278`) are for players to discover. `fassRule()` exists for tests only; the
+  README must not name them. Default rule is selection `15`.
+- **Server is authoritative**; clients only draw events. Field is
+  deterministic from (family, level, rootTile) so only the spec travels.
+- **Unlimited lines.** Every tap adds a line; nothing is dropped until cut.
+  `maxLivePaths` / `maxCompletedCircuits` exist as knobs, default 0.
+- **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
+- **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
+- **You can't start** on a rival's line or inside a rival's closed circuit.
+- **Solo mode** is the same engine in the tab; the Pages build is solo-only.
+- **Hosting**: GCP. Cloud Run (scale to zero) via CI is the intended path;
+  the free e2-micro VM is the alternative. Session resume covers Cloud Run's
+  hourly WebSocket cap.
+- **Vendored core** stays byte-identical to Spectre's.
+
+## Traps
+
+- **Software WebGL.** This sandbox and CI runners have no GPU; WebGL runs on
+  SwiftShader and 242k instances take seconds per frame. `tiles-gl.ts`
+  detects software renderers on a *throwaway* canvas and falls back to
+  Canvas2D. A canvas that ever had a WebGL context can't give a 2D one —
+  hence the throwaway. `?gl=1` forces WebGL for visual checks (use a small
+  solo level), `?gl=0` forbids it.
+- **Smoke test selectors.** Two stacked canvases: use
+  `.arena-canvas:not(.arena-tiles)` for pointer work. Scroll tiles into view
+  before dragging dots; the headless viewport is 800 px tall.
+- **`pkill` returns 144** and aborts a `&&` chain in the Bash tool; put it
+  last or on its own.
+- **Event order matters** for the resume test: `wipe` then `score` then `leave`.
+- **`tapOntoOthers` defaults false** — tests that tap onto a rival must set it.
+- **Bots compound.** Speed ∝ score and lines multiply; bots on the FASS rule
+  can run away. That's tuning, not a bug — see knobs.
+- **Point-in-polygon on the circuit's `a` points** decides "inside"; tiles the
+  loop passes through are tinted, the interior is not (yet).
+
+## Verification bar before pushing
+
+typecheck + tests + build + both smoke rounds locally; for renderer changes
+force `?gl=1` at solo level 3 and look at the screenshot. CI repeats the
+first four and builds the Docker image.
+
+## Next / open
+
+- Balance knobs: score→speed curve, circuit area vs length, steal share.
+- Wash circuit interiors with the owner's colour.
+- Shared growth budget across a player's lines.
+- Infinite field via Spectre's un-rooted engine; binary wire format;
+  persistence; rooms.

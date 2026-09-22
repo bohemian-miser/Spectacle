@@ -51,6 +51,8 @@ export interface Knobs {
   crossingMode: 'geometric' | 'tile';
   /** In geometric mode, does sharing a connection point count as a cross? */
   touchCounts: boolean;
+  /** A collision kills both lines: the one that was hit and the one that hit it. */
+  mutualCut: boolean;
   /** May a tap land on a tile that already carries someone else's path? */
   tapOntoOthers: boolean;
   /** May a tap land inside a rival's closed circuit? */
@@ -87,6 +89,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
 
   crossingMode: 'geometric',
   touchCounts: true,
+  mutualCut: true,
   tapOntoOthers: false,
   tapInsideRivalCircuits: false,
 

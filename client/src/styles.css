@@ -83,7 +83,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .thumb { display: block; }
 .thumb.is-clickable { cursor: pointer; }
 .thumb.is-clickable:hover .thumb-outline { stroke: var(--accent); }
-.thumb-outline { fill: #262c3b; stroke: #4a5470; stroke-width: 0.06; }
+.thumb-outline { stroke: rgba(255,255,255,0.28); stroke-width: 0.06; }
 .thumb-caption { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
 .rule-readout { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
@@ -153,5 +153,5 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .rule-hint { margin: -6px 0 0; font-size: 13px; }
 .patch-preview { display: grid; gap: 6px; }
 .patch-svg { width: 100%; background: var(--panel-2); border: 1px solid var(--border); border-radius: 12px; }
-.patch-tiles path { fill: #262c3b; stroke: #3a4258; stroke-width: 0.05; }
+.patch-tiles path { stroke: rgba(255,255,255,0.14); stroke-width: 0.05; }
 .patch-stats { font-size: 13px; }
