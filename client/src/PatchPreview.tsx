@@ -51,14 +51,13 @@ export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProp
     const result = analyze({ family, instances, selected: new Set(rule.subset), matchingIndexByType });
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    const order = leafOrder(family);
     const tiles = instances.map((inst) => {
       const pts = leafPts(family, inst.type).map((p) => transPt(inst.xform, p));
       for (const p of pts) {
         minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
         minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
       }
-      return { d: straightOutline(pts), fill: cssRgb(typeFill(family, order.indexOf(inst.type), board)) };
+      return { d: straightOutline(pts), fill: cssRgb(typeFill(inst.type, board.tileDim)) };
     });
     const circuits = result.circuits.map((p) => ({ d: polyD(p.points, true), len: pathLength(p) }));
     const tails = result.tails.map((p) => ({ d: polyD(p.points, false), len: pathLength(p) }));

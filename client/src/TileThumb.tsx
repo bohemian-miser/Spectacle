@@ -16,7 +16,6 @@ import {
   centroid,
   connectionPoints,
   edgeLabels,
-  leafOrder,
   leafPts,
   parseEdgeLabel,
   straightOutline,
@@ -48,7 +47,7 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
   // The thumb wears the board's own fill for this tile type, so subscribing to
   // the theme is what repaints it.
   useTheme();
-  const fill = cssRgb(typeFill(family, leafOrder(family).indexOf(type), boardTheme()));
+  const fill = cssRgb(typeFill(type, boardTheme().tileDim));
   const pts = leafPts(family, type);
   const labels = edgeLabels(family, type);
   const c = centroid(pts);

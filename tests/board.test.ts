@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { pointInPolygon, polygonArea } from '../shared/game/field';
-import { directionArrow } from '../client/src/tiles-layer';
-import { centroid, leafOrder, leafPts, transPt, type Affine, type Pt } from '../shared/tiles';
+import { directionArrow, typeFill } from '../client/src/tiles-layer';
+import { TILE_PALETTES, centroid, leafOrder, leafPts, transPt, type Affine, type Pt } from '../shared/tiles';
 
 const HEX = leafPts('hex', 'Delta');
 
@@ -60,5 +60,28 @@ describe('tile direction arrow', () => {
 
   it('has area to draw', () => {
     expect(polygonArea(directionArrow(HEX))).toBeGreaterThan(0.05);
+  });
+});
+
+describe('tile colours', () => {
+  it('are Spectre\'s own table', () => {
+    // The og colmap: Xi yellow, the Gammas white, Pi sky blue, Phi green.
+    expect(typeFill('Xi')).toEqual([1, 242 / 255, 0]);
+    expect(typeFill('Gamma')).toEqual([1, 1, 1]);
+    expect(typeFill('Gamma1')).toEqual([1, 1, 1]);
+    expect(typeFill('Gamma2')).toEqual([1, 1, 1]);
+    expect(typeFill('Pi')).toEqual([135 / 255, 206 / 255, 250 / 255]);
+    expect(typeFill('Phi')).toEqual([0, 1, 0]);
+    // Every leaf type of both families has one.
+    for (const family of ['hex', 'spectre'] as const) {
+      for (const type of leafOrder(family)) {
+        expect(TILE_PALETTES.bright[type], `${family}/${type}`).toBeDefined();
+      }
+    }
+  });
+
+  it('only darken with the scheme — the hues never move', () => {
+    const [r, g, b] = typeFill('Xi', 0.5);
+    expect([r, g, b]).toEqual([0.5, 242 / 255 / 2, 0]);
   });
 });

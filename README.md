@@ -54,12 +54,19 @@ wears a faint arrow pointing at that edge; the tiles in the rule lab wear the
 same arrow, so their numbers can be read straight off the board. (A Spectre's
 outline already shows its rotation, so it goes without.)
 
+**The colours are Spectre's.** Every tile type wears the colour it has in the
+[Spectre](https://github.com/bohemian-miser/Spectre) explorer's original table —
+Xi yellow, the Gammas white, Pi sky blue, Phi green — on the board, in the rule
+lab and in the patch preview alike, and the panels around them use the
+explorer's tokens, so the two sites look like one.
+
 **Light or dark.** The button in the lobby header (and in the arena HUD) flips
-the whole game, board included: tile fills, outlines and strand colours are part
-of the scheme, not just the panels. Light is the default; your choice is
-remembered in this browser, and `?theme=dark` / `?theme=light` forces one for a
-link or a screenshot. The colours are the [Spectre](https://github.com/bohemian-miser/Spectre)
-explorer's, so the two sites look like one.
+the whole game, board included: outlines, the halo on your line and how far the
+tiles are sat back are part of the scheme, not just the panels. Light shows the
+tile colours as they are; dark dims them together — the hues never move — so the
+strands on top still carry. Light is the default; your choice is remembered in
+this browser, and `?theme=dark` / `?theme=light` forces one for a link or a
+screenshot.
 
 Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts);
 set any of them with `KNOB_<NAME>` environment variables

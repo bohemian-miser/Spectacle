@@ -59,7 +59,7 @@ export class Renderer {
   }
 
   private fills(field: Field): Rgb01[] {
-    return field.leafTypes.map((_, i) => typeFill(field.family, i, this.board));
+    return field.leafTypes.map((type) => typeFill(type, this.board.tileDim));
   }
 
   /** Repaint in another scheme: new tile fills, ground and ink, and fresh tints. */

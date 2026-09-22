@@ -54,8 +54,8 @@ client/src/       Vite + React.
                   knobs (--tile-*, --board-*, --strand-darken).
   render.ts       Camera, tint sync, Canvas2D strand overlay.
   tiles-gl.ts     WebGL2 instanced tile layer. tiles-2d.ts: Canvas2D fallback.
-  tiles-layer.ts  TileLayer interface, typeFill palette, colour helpers,
-                  directionArrow (the dart that shows a tile's rotation).
+  tiles-layer.ts  TileLayer interface, typeFill (Spectre's own tile palette),
+                  colour helpers, directionArrow (a tile's rotation).
 tests/            vitest. strand.test.ts pins the local walker against the
                   core's global analyze() — the most important test here.
                   resume.test.ts spawns the real server.
@@ -101,6 +101,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the free e2-micro VM is the alternative. Session resume covers Cloud Run's
   hourly WebSocket cap.
 - **Vendored core** stays byte-identical to Spectre's.
+- **Tile colours are Spectre's own table** (`TILE_PALETTES.bright`, the
+  `colmap_orig` of the paper's figures): Xi yellow, the Gammas white. A type's
+  colour is the same on the board, in the thumbs and in the patch preview, and
+  the scheme only scales it (`--tile-dim`, 1 on light), so the hues never move.
+  Don't invent fills — look them up.
 - **Theme = Spectre's palette**, light by default. styles.css is the one place
   colours live; the canvas reads the `--tile-*` / `--board-*` / `--strand-darken`
   tokens through `readBoardTheme()` rather than keeping its own copy. Nothing

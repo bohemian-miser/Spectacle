@@ -5,7 +5,7 @@
  * moves (`tiles-2d.ts`).
  */
 
-import type { Pt } from '../../shared/tiles';
+import { TILE_PALETTES, type Pt, type Rgb, type TileTypeId } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { BoardTheme } from './theme';
 
@@ -25,14 +25,21 @@ export interface TileLayer {
   dispose(): void;
 }
 
+/** Anything the palette has no entry for (there is nothing, today). */
+const UNKNOWN_TILE: Rgb = [200, 200, 200];
+
 /**
- * Muted per-type fills under the strands; claimed tiles get the owner's colour
- * on top. The hues are the tiling's own, the scheme only says how dark they sit
- * (deep on the dark board, pastel on the light one).
+ * A tile type's colour: Spectre's original table (`config.colmap_orig`, the
+ * explorer's `bright` scheme) — Xi yellow, the Gammas white, Pi sky blue.
+ * A type is its colour across the whole project, board and rule lab alike.
+ *
+ * `dim` scales it toward black for the scheme: the light board shows the
+ * colours as they are, the dark board sits them back so the strands on top
+ * still carry. It is a plain multiply, so the hues never move.
  */
-export function typeFill(family: string, index: number, board: BoardTheme): Rgb01 {
-  const h = family === 'hex' ? (index * 36 + 200) % 360 : (index * 33 + 180) % 360;
-  return hslToRgb(h, board.tileSat, board.tileLight + (index % 3) * 0.03);
+export function typeFill(type: TileTypeId, dim = 1): Rgb01 {
+  const c = TILE_PALETTES.bright[type] ?? UNKNOWN_TILE;
+  return [(c[0] / 255) * dim, (c[1] / 255) * dim, (c[2] / 255) * dim];
 }
 
 /**

@@ -17,16 +17,16 @@
   --warn: #a96c07;
   color-scheme: light;
 
-  /* The board: tile outlines, the halo on your own line, the per-type fills
-     and how far a claimed tile's tint moves off its owner's colour. */
+  /* The board: tile outlines, the halo on your own line, how far the tile
+     palette is sat back (1 = Spectre's colours as they are) and how far a
+     claimed tile's tint moves off its owner's colour. */
   --board-line-alpha: 0.14;
   --board-halo-alpha: 0.45;
   --board-arrow-alpha: 0.22;
-  --tile-sat: 0.3;
-  --tile-light: 0.84;
+  --tile-dim: 1;
   --tile-lift: -30;
   --tile-lift-closed: -55;
-  --strand-darken: 0.22;
+  --strand-darken: 0.28;
   /* The edge-class colours are pastel, so an unselected chip needs more of
      itself on white than it does on the dark panel. */
   --chip-off: 0.8;
@@ -49,8 +49,7 @@
   --board-line-alpha: 0.1;
   --board-halo-alpha: 0.55;
   --board-arrow-alpha: 0.26;
-  --tile-sat: 0.34;
-  --tile-light: 0.31;
+  --tile-dim: 0.52;
   --tile-lift: 70;
   --tile-lift-closed: 30;
   --strand-darken: 0;

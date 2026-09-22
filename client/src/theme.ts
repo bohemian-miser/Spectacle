@@ -113,9 +113,8 @@ export interface BoardTheme {
   readonly arrowCss: string;
   /** The cross on a stuck line. */
   readonly badCss: string;
-  /** Per-type tile fills: saturation, and the lightness the first type takes. */
-  readonly tileSat: number;
-  readonly tileLight: number;
+  /** How far the tile palette is sat back for this scheme; 1 is as-is. */
+  readonly tileDim: number;
   /**
    * How far a claimed tile's tint moves off the owner's colour, in 0..255
    * channels: toward white on the dark board, the other way on the light one,
@@ -178,10 +177,9 @@ function readTokens(name: ThemeName): BoardTheme {
     arrowAlpha,
     arrowCss: rgba(ink, arrowAlpha),
     badCss: str('--bad', dark ? '#f58aa2' : '#c53a60'),
-    tileSat: num('--tile-sat', dark ? 0.34 : 0.4),
-    tileLight: num('--tile-light', dark ? 0.31 : 0.76),
+    tileDim: num('--tile-dim', dark ? 0.52 : 1),
     lift: num('--tile-lift', dark ? 70 : -30),
     liftClosed: num('--tile-lift-closed', dark ? 30 : -55),
-    strandDarken: num('--strand-darken', dark ? 0 : 0.22),
+    strandDarken: num('--strand-darken', dark ? 0 : 0.28),
   };
 }
