@@ -109,7 +109,7 @@ export function polygonArea(pts: readonly Pt[]): number {
   return Math.abs(s) / 2;
 }
 
-function pointInPolygon(p: Pt, poly: readonly Pt[]): boolean {
+export function pointInPolygon(p: Pt, poly: readonly Pt[]): boolean {
   let inside = false;
   const n = poly.length;
   for (let i = 0, j = n - 1; i < n; j = i++) {

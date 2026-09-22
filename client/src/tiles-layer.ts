@@ -24,7 +24,7 @@ export interface TileLayer {
 /** Muted per-type fills on a dark ground; claimed tiles get the owner's colour on top. */
 export function typeFill(family: string, index: number): Rgb01 {
   const h = family === 'hex' ? (index * 36 + 200) % 360 : (index * 33 + 180) % 360;
-  return hslToRgb(h, 0.13, 0.17 + (index % 3) * 0.02);
+  return hslToRgb(h, 0.22, 0.24 + (index % 3) * 0.025);
 }
 
 export function hslToRgb(h: number, s: number, l: number): Rgb01 {
@@ -38,6 +38,21 @@ export function hslToRgb(h: number, s: number, l: number): Rgb01 {
 
 export function cssRgb(c: Rgb01): string {
   return `rgb(${Math.round(c[0] * 255)},${Math.round(c[1] * 255)},${Math.round(c[2] * 255)})`;
+}
+
+/**
+ * A closed circuit's colour: the owner's colour, darkened with the length of
+ * the loop — short loops stay bright, a loop of thousands of tiles goes deep.
+ * `t` in [0, 1] is the darkening amount; the same curve serves lines and tints.
+ */
+export function circuitDarkening(length: number): number {
+  return Math.min(0.65, 0.65 * (Math.log2(Math.max(1, length)) / 12));
+}
+
+export function darkenCss(css: string, t: number): string {
+  const [r, g, b] = parseColor(css);
+  const k = 1 - t;
+  return `rgb(${Math.round(r * k)},${Math.round(g * k)},${Math.round(b * k)})`;
 }
 
 /** Parse `hsl(h, s%, l%)` or `#rrggbb` into 0..255 channels. */

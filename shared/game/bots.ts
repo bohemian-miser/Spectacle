@@ -6,7 +6,7 @@
  */
 
 import type { Engine } from './engine';
-import { tileCenter } from './field';
+import { tileCenter, tileNeighbours } from './field';
 import type { GameEvent } from './protocol';
 import { randomCleanRule } from './rule';
 import type { Rng } from './rng';
@@ -67,7 +67,14 @@ export class Bots {
         const r = rivals[this.rng.int(rivals.length)];
         const path = r.paths[this.rng.int(r.paths.length)];
         const step = path.steps[this.rng.int(path.steps.length)];
-        if (step && tileChords(field, table, step.tile).length > 0) return step.tile;
+        if (step) {
+          // Next to the rival's line (a tap on it is refused), on a free tile.
+          const nbrs = tileNeighbours(field, step.tile);
+          for (let k = 0; k < nbrs.length; k++) {
+            const t = nbrs[(k + this.rng.int(nbrs.length)) % nbrs.length];
+            if (tileChords(field, table, t).length > 0 && this.engine.pathsOn(t).length === 0) return t;
+          }
+        }
       }
     }
     for (let tries = 0; tries < 50; tries++) {
