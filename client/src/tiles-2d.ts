@@ -8,9 +8,10 @@
 import { tilesInBox, type Box, type Field } from '../../shared/game/field';
 import { leafPts } from '../../shared/tiles';
 import type { Camera } from './camera';
+import type { BoardTheme } from './theme';
 import { cssRgb, type Rgb01, type TileLayer } from './tiles-layer';
 
-export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills: readonly Rgb01[]): TileLayer {
+export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills: readonly Rgb01[], board: BoardTheme): TileLayer {
   const ctx = canvas.getContext('2d')!;
   const back = document.createElement('canvas');
   const bctx = back.getContext('2d')!;
@@ -22,7 +23,8 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
     p.closePath();
     return p;
   });
-  const css = fills.map(cssRgb);
+  let css = fills.map(cssRgb);
+  let scheme = board;
   const tints = new Map<number, string>();
   let lastKey = '';
   const visible: number[] = [];
@@ -52,6 +54,11 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
         lastKey = '';
       }
     },
+    setTheme(next, nextFills) {
+      scheme = next;
+      css = nextFills.map(cssRgb);
+      lastKey = '';
+    },
     clearTints() {
       tints.clear();
     },
@@ -63,12 +70,12 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
       if (key !== lastKey) {
         lastKey = key;
         bctx.setTransform(1, 0, 0, 1, 0, 0);
-        bctx.fillStyle = '#0b0d12';
+        bctx.fillStyle = scheme.bgCss;
         bctx.fillRect(0, 0, back.width, back.height);
         tilesInBox(field, viewBox(cam, w, h), visible);
         const strokes = cam.scale > 4;
         bctx.lineWidth = 0.05;
-        bctx.strokeStyle = 'rgba(255,255,255,0.10)';
+        bctx.strokeStyle = scheme.lineCss;
         for (const i of visible) {
           setTransform(bctx, i, cam, w, h, dpr);
           bctx.fillStyle = css[field.types[i]];

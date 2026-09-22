@@ -47,6 +47,11 @@ client/src/       Vite + React.
   Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
                   numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze()).
   Arena.tsx       Two stacked canvases + pointer handling + HUD.
+  theme.ts        Light/dark: data-theme on <html>, localStorage, ?theme=,
+                  and readBoardTheme() — the canvas half of the scheme, read
+                  back out of the CSS tokens. ThemeToggle.tsx is the button.
+  styles.css      Spectre's explorer tokens, both schemes, incl. the board
+                  knobs (--tile-*, --board-*, --strand-darken).
   render.ts       Camera, tint sync, Canvas2D strand overlay.
   tiles-gl.ts     WebGL2 instanced tile layer. tiles-2d.ts: Canvas2D fallback.
   tiles-layer.ts  TileLayer interface, typeFill palette, colour helpers.
@@ -95,6 +100,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the free e2-micro VM is the alternative. Session resume covers Cloud Run's
   hourly WebSocket cap.
 - **Vendored core** stays byte-identical to Spectre's.
+- **Theme = Spectre's palette**, light by default. styles.css is the one place
+  colours live; the canvas reads the `--tile-*` / `--board-*` / `--strand-darken`
+  tokens through `readBoardTheme()` rather than keeping its own copy. Nothing
+  auto-switches on `prefers-color-scheme` — the toggle decides.
 
 ## Traps
 
@@ -115,11 +124,19 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   can run away. That's tuning, not a bug — see knobs.
 - **Point-in-polygon on the circuit's `a` points** decides "inside"; tiles the
   loop passes through are tinted, the interior is not (yet).
+- **A theme change has to reach the canvas.** CSS restyles the DOM by itself;
+  the board does not. `Arena` hands the renderer the new `BoardTheme`, which
+  re-fills the tile layer and invalidates the tints (their lift is per-scheme).
+  A new colour on the board belongs in a token, not in a `.ts` literal.
+- **Player colours are the server's** (`hsl(h, 90%, 62%)`, bright for the dark
+  board). The light board deepens them with `strandColor()` — HUD swatches too,
+  so the board and the leaderboard agree.
 
 ## Verification bar before pushing
 
 typecheck + tests + build + both smoke rounds locally; for renderer changes
-force `?gl=1` at solo level 3 and look at the screenshot. CI repeats the
+force `?gl=1` at solo level 3 and look at the screenshot — in both schemes
+(`?theme=dark`, `?theme=light`) when colours are involved. CI repeats the
 first four and builds the Docker image.
 
 ## Next / open

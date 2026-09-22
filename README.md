@@ -47,6 +47,13 @@ you.
    Closed circuits darken with their length on the board.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
+**Light or dark.** The button in the lobby header (and in the arena HUD) flips
+the whole game, board included: tile fills, outlines and strand colours are part
+of the scheme, not just the panels. Light is the default; your choice is
+remembered in this browser, and `?theme=dark` / `?theme=light` forces one for a
+link or a screenshot. The colours are the [Spectre](https://github.com/bohemian-miser/Spectre)
+explorer's, so the two sites look like one.
+
 Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts);
 set any of them with `KNOB_<NAME>` environment variables
 (`KNOB_BASE_STEP_MS=250 KNOB_CROSSING_MODE=tile …`). Mechanics first, balance

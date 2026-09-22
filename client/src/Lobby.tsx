@@ -5,6 +5,7 @@ import { ONLINE_URL, SOLO_ONLY, type Mode } from './App';
 import { SOLO_LEVELS, type SoloOptions } from './local';
 import { RuleEditor } from './RuleEditor';
 import type { Store } from './store';
+import { ThemeToggle } from './ThemeToggle';
 
 export interface LobbyProps {
   readonly store: Store;
@@ -32,16 +33,20 @@ export function Lobby(props: LobbyProps): JSX.Element {
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
   const ready = rule.subset.length > 0 && name.trim().length > 0 && drafting.length === 0;
-  const color = store.me?.color ?? '#17c3b2';
+  // Before the server hands out a player colour, the chords wear Spectre's accent.
+  const color = store.me?.color ?? '#6ea8fe';
 
   return (
     <div className="lobby">
       <header className="lobby-head">
-        <h1>Spectacle</h1>
-        <p className="muted">
-          A massively multiplayer strand-drawing game on {hello ? FAMILY_DISPLAY_NAMES[hello.field.family].toLowerCase() : 'tiles'}.
-          {hello && mode === 'online' ? ` ${hello.tiles.toLocaleString()} tiles, ${hello.players} playing.` : ''}
-        </p>
+        <div>
+          <h1>Spectacle</h1>
+          <p className="muted">
+            A massively multiplayer strand-drawing game on {hello ? FAMILY_DISPLAY_NAMES[hello.field.family].toLowerCase() : 'tiles'}.
+            {hello && mode === 'online' ? ` ${hello.tiles.toLocaleString()} tiles, ${hello.players} playing.` : ''}
+          </p>
+        </div>
+        <ThemeToggle />
       </header>
 
       {!inArena && (

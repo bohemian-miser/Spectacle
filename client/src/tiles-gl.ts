@@ -10,6 +10,7 @@
 import type { Field } from '../../shared/game/field';
 import { leafPts, type Pt } from '../../shared/tiles';
 import type { Camera } from './camera';
+import type { BoardTheme } from './theme';
 import type { Rgb01, TileLayer } from './tiles-layer';
 
 const VS = `#version 300 es
@@ -101,7 +102,8 @@ interface TypeBatch {
   readonly vertexCount: number;
   readonly first: number;
   readonly count: number;
-  readonly fill: Rgb01;
+  /** Index into the fills array, which the theme can swap out under us. */
+  readonly type: number;
 }
 
 /**
@@ -135,7 +137,13 @@ function webglUsable(force: boolean | undefined): boolean {
   return ok;
 }
 
-export function createGlTiles(canvas: HTMLCanvasElement, field: Field, fills: readonly Rgb01[], opts: GlOptions = {}): TileLayer | null {
+export function createGlTiles(
+  canvas: HTMLCanvasElement,
+  field: Field,
+  fills: readonly Rgb01[],
+  board: BoardTheme,
+  opts: GlOptions = {},
+): TileLayer | null {
   if (!webglUsable(opts.force)) return null;
   const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, premultipliedAlpha: false });
   if (!gl) return null;
@@ -218,11 +226,13 @@ export function createGlTiles(canvas: HTMLCanvasElement, field: Field, fills: re
     gl.vertexAttribPointer(loc.tint, 4, gl.UNSIGNED_BYTE, true, 4, firstOf[t] * 4);
     gl.vertexAttribDivisor(loc.tint, 1);
     gl.bindVertexArray(null);
-    batches.push({ vao, indexCount: tri.length, vertexCount: pts.length, first: firstOf[t], count: perType[t], fill: fills[t] });
+    batches.push({ vao, indexCount: tri.length, vertexCount: pts.length, first: firstOf[t], count: perType[t], type: t });
   }
 
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  let typeFills = fills;
+  let scheme = board;
   let tintsDirty = false;
   const tinted: number[] = [];
 
@@ -233,6 +243,10 @@ export function createGlTiles(canvas: HTMLCanvasElement, field: Field, fills: re
         canvas.width = pw;
         canvas.height = ph;
       }
+    },
+    setTheme(next, nextFills) {
+      scheme = next;
+      typeFills = nextFills;
     },
     clearTints() {
       for (const s of tinted) {
@@ -260,7 +274,7 @@ export function createGlTiles(canvas: HTMLCanvasElement, field: Field, fills: re
         tintsDirty = false;
       }
       gl.viewport(0, 0, canvas.width, canvas.height);
-      gl.clearColor(0.043, 0.051, 0.071, 1);
+      gl.clearColor(scheme.bg[0], scheme.bg[1], scheme.bg[2], 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
       gl.useProgram(prog);
       gl.uniform2f(loc.cam, cam.x, cam.y);
@@ -269,11 +283,12 @@ export function createGlTiles(canvas: HTMLCanvasElement, field: Field, fills: re
       const outlines = cam.scale > 4;
       for (const b of batches) {
         gl.bindVertexArray(b.vao);
-        gl.uniform4f(loc.fill, b.fill[0], b.fill[1], b.fill[2], 1);
+        const c = typeFills[b.type];
+        gl.uniform4f(loc.fill, c[0], c[1], c[2], 1);
         gl.uniform1f(loc.useTint, 1);
         gl.drawElementsInstanced(gl.TRIANGLES, b.indexCount, gl.UNSIGNED_SHORT, 0, b.count);
         if (outlines) {
-          gl.uniform4f(loc.fill, 1, 1, 1, 0.1);
+          gl.uniform4f(loc.fill, scheme.ink[0], scheme.ink[1], scheme.ink[2], scheme.lineAlpha);
           gl.uniform1f(loc.useTint, 0);
           gl.drawArraysInstanced(gl.LINE_LOOP, 0, b.vertexCount, b.count);
         }

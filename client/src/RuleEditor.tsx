@@ -43,7 +43,7 @@ function withSubset(family: TileFamilyId, subset: readonly number[], prev: reado
   return { family, subset: [...subset].sort((a, b) => a - b), matching };
 }
 
-export function RuleEditor({ family, rule, color = '#ffffff', onChange, onDrafting }: RuleEditorProps): JSX.Element {
+export function RuleEditor({ family, rule, color = 'currentColor', onChange, onDrafting }: RuleEditorProps): JSX.Element {
   const majors = familyMajors(family);
   const order = leafOrder(family);
   const selected = useMemo(() => new Set(rule.subset), [rule.subset]);

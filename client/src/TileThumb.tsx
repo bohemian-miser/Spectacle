@@ -9,6 +9,7 @@
 
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Pair } from '../../shared/game/pairs';
+import { boardTheme, useTheme } from './theme';
 import { cssRgb, typeFill } from './tiles-layer';
 import {
   EDGE_CLASS_COLORS,
@@ -43,7 +44,11 @@ const DOT_R = 0.16;
 const HIT_R = 0.34;
 
 export function TileThumb(props: TileThumbProps): JSX.Element {
-  const { family, type, subset, pairs, size = 110, color = '#ffffff', showNumbers = true, title, onToggleClass, onPair, onUnpair } = props;
+  const { family, type, subset, pairs, size = 110, color = 'currentColor', showNumbers = true, title, onToggleClass, onPair, onUnpair } = props;
+  // The thumb wears the board's own fill for this tile type, so subscribing to
+  // the theme is what repaints it.
+  useTheme();
+  const fill = cssRgb(typeFill(family, leafOrder(family).indexOf(type), boardTheme()));
   const pts = leafPts(family, type);
   const labels = edgeLabels(family, type);
   const c = centroid(pts);
@@ -129,7 +134,7 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
       data-pairs={JSON.stringify(pairs)}
     >
       <title>{title ?? type}</title>
-      <path d={straightOutline(pts)} className="thumb-outline" fill={cssRgb(typeFill(family, leafOrder(family).indexOf(type)))} />
+      <path d={straightOutline(pts)} className="thumb-outline" fill={fill} />
 
       {/* Edges: clickable, with their class number outside. */}
       {labels.map((raw, i) => {
@@ -176,7 +181,7 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
       {/* Odd tiles: stubs that never meet. */}
       {!even &&
         cps.map((cp, i) => (
-          <line key={`t${i}`} x1={cp.pt.x} y1={cp.pt.y} x2={cp.pt.x + (c.x - cp.pt.x) * 0.35} y2={cp.pt.y + (c.y - cp.pt.y) * 0.35} stroke="#ff5c7a" strokeWidth={0.12} strokeDasharray="0.15 0.12" />
+          <line key={`t${i}`} className="thumb-stub" x1={cp.pt.x} y1={cp.pt.y} x2={cp.pt.x + (c.x - cp.pt.x) * 0.35} y2={cp.pt.y + (c.y - cp.pt.y) * 0.35} strokeWidth={0.12} strokeDasharray="0.15 0.12" />
         ))}
 
       {/* Dots (drawn last so they sit on top; hollow when unpaired). */}
@@ -189,7 +194,8 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
               cx={cp.pt.x}
               cy={cp.pt.y}
               r={DOT_R}
-              fill={isPaired || !even ? EDGE_CLASS_COLORS[cp.edge.major] : '#0b0d12'}
+              className={isPaired || !even ? undefined : 'is-hollow'}
+              fill={EDGE_CLASS_COLORS[cp.edge.major]}
               stroke={EDGE_CLASS_COLORS[cp.edge.major]}
               strokeWidth={0.06}
             />

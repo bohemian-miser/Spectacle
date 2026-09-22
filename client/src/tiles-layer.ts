@@ -6,6 +6,7 @@
  */
 
 import type { Camera } from './camera';
+import type { BoardTheme } from './theme';
 
 /** Colour channels in 0..1. */
 export type Rgb01 = readonly [number, number, number];
@@ -14,6 +15,8 @@ export interface TileLayer {
   readonly kind: 'webgl' | 'canvas2d';
   /** Physical pixel size. */
   resize(pw: number, ph: number): void;
+  /** Re-colour for another scheme; the renderer owns the field, so it hands over the fills. */
+  setTheme(board: BoardTheme, fills: readonly Rgb01[]): void;
   clearTints(): void;
   /** 0..255 channels; `a` is the tint strength. */
   setTint(tile: number, r: number, g: number, b: number, a: number): void;
@@ -21,10 +24,14 @@ export interface TileLayer {
   dispose(): void;
 }
 
-/** Muted per-type fills on a dark ground; claimed tiles get the owner's colour on top. */
-export function typeFill(family: string, index: number): Rgb01 {
+/**
+ * Muted per-type fills under the strands; claimed tiles get the owner's colour
+ * on top. The hues are the tiling's own, the scheme only says how dark they sit
+ * (deep on the dark board, pastel on the light one).
+ */
+export function typeFill(family: string, index: number, board: BoardTheme): Rgb01 {
   const h = family === 'hex' ? (index * 36 + 200) % 360 : (index * 33 + 180) % 360;
-  return hslToRgb(h, 0.34, 0.31 + (index % 3) * 0.03);
+  return hslToRgb(h, board.tileSat, board.tileLight + (index % 3) * 0.03);
 }
 
 export function hslToRgb(h: number, s: number, l: number): Rgb01 {
@@ -47,6 +54,15 @@ export function cssRgb(c: Rgb01): string {
  */
 export function circuitDarkening(length: number): number {
   return Math.min(0.42, 0.42 * (Math.log2(Math.max(1, length)) / 12));
+}
+
+/**
+ * A player's colour as this board should draw it: deepened where the ground is
+ * pale, and darkened further by `extra` (a closed circuit's length).
+ */
+export function strandColor(board: BoardTheme, css: string, extra = 0): string {
+  const t = 1 - (1 - board.strandDarken) * (1 - extra);
+  return t > 0.001 ? darkenCss(css, t) : css;
 }
 
 export function darkenCss(css: string, t: number): string {

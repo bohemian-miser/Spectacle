@@ -6,6 +6,7 @@
 
 import { useMemo } from 'react';
 import { ruleKey, type PlayerRule } from '../../shared/game/rule';
+import { boardTheme, useTheme } from './theme';
 import { cssRgb, typeFill } from './tiles-layer';
 import {
   analyze,
@@ -36,6 +37,11 @@ function polyD(points: readonly Pt[], closed: boolean): string {
 
 export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProps): JSX.Element {
   const key = ruleKey(rule);
+  const [theme] = useTheme();
+  // The patch wears the same tile colours as the arena board, so the preview
+  // looks like what you are about to play on.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const board = useMemo(() => boardTheme(), [theme]);
   const model = useMemo(() => {
     const family = rule.family;
     const root = buildSystem(family, level)['Delta'];
@@ -52,7 +58,7 @@ export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProp
         minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
         minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
       }
-      return { d: straightOutline(pts), fill: cssRgb(typeFill(family, order.indexOf(inst.type))) };
+      return { d: straightOutline(pts), fill: cssRgb(typeFill(family, order.indexOf(inst.type), board)) };
     });
     const circuits = result.circuits.map((p) => ({ d: polyD(p.points, true), len: pathLength(p) }));
     const tails = result.tails.map((p) => ({ d: polyD(p.points, false), len: pathLength(p) }));
@@ -60,7 +66,7 @@ export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProp
     const longestTail = tails.reduce((m, c) => Math.max(m, c.len), 0);
     return { tiles, circuits, tails, longest, longestTail, view: `${minX - 1} ${minY - 1} ${maxX - minX + 2} ${maxY - minY + 2}`, count: instances.length };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [key, level]);
+  }, [key, level, board]);
 
   return (
     <div className="patch-preview">
@@ -72,7 +78,7 @@ export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProp
         </g>
         <g fill="none" strokeLinecap="round" strokeLinejoin="round">
           {model.tails.map((t, i) => (
-            <path key={`t${i}`} d={t.d} stroke="#ff5c7a" strokeWidth={0.14} strokeOpacity={0.8} strokeDasharray="0.3 0.2" />
+            <path key={`t${i}`} d={t.d} stroke={board.badCss} strokeWidth={0.14} strokeOpacity={0.8} strokeDasharray="0.3 0.2" />
           ))}
           {model.circuits.map((c, i) => (
             <path key={`c${i}`} d={c.d} stroke={rgbToCss(circuitLengthRgb(c.len))} strokeWidth={0.18} />
