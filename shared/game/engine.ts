@@ -12,7 +12,8 @@
  *    on length and enclosed area;
  *  - a chord entering a tile where another player's chord crosses it wipes
  *    that player's whole path, and the points it had earned with it (a knob
- *    can hand a fraction of them to the cutter);
+ *    can hand a fraction of them to the cutter); with `mutualCut` the line
+ *    that did the hitting dies too, so a collision costs both sides;
  *  - a tap may not land on a rival's line nor inside a rival's closed
  *    circuit (both knobs);
  *  - a tail (no continuation) leaves the path stuck; tap elsewhere to start
@@ -67,7 +68,7 @@ export type TapResult = { ok: true; path: number } | { ok: false; reason: string
 /** Evenly spread, saturated player colours (golden-angle hue walk). */
 export function playerColor(index: number): string {
   const h = (index * 137.50776405003785) % 360;
-  return `hsl(${h.toFixed(1)}, 85%, 55%)`;
+  return `hsl(${h.toFixed(1)}, 90%, 62%)`;
 }
 
 export class Engine {
@@ -234,14 +235,24 @@ export class Engine {
       this.setStatus(path, 'stuck', ev);
       return;
     }
-    this.addStep(p, path, s, ev);
+    if (!this.addStep(p, path, s, ev)) return; // died in a collision
     if (this.knobs.maxPathLength > 0 && path.steps.length >= this.knobs.maxPathLength) {
       this.setStatus(path, 'stuck', ev);
     }
   }
 
-  private addStep(p: Player, path: Path, s: WalkStep, ev: GameEvent[]): void {
-    this.cutRivals(p, s, ev);
+  /** Extend `path` by one step. Returns false when the step was a fatal collision. */
+  private addStep(p: Player, path: Path, s: WalkStep, ev: GameEvent[]): boolean {
+    const hitOwner = this.cutRivals(p, s, ev);
+    if (hitOwner !== null && this.knobs.mutualCut) {
+      // The collision is drawn (so both players see where it happened), then
+      // the line that caused it goes too, with everything it had earned.
+      path.steps.push(s);
+      ev.push({ t: 'step', path: path.id, owner: p.id, step: s });
+      p.combo = this.knobs.comboStart;
+      this.dropPath(path, hitOwner, ev);
+      return false;
+    }
     path.steps.push(s);
     let occ = this.occupancy.get(s.tile);
     if (!occ) {
@@ -252,12 +263,17 @@ export class Engine {
     ev.push({ t: 'step', path: path.id, owner: p.id, step: s });
     path.points += this.knobs.pointsPerTile;
     this.addScore(p, this.knobs.pointsPerTile, ev);
+    return true;
   }
 
-  /** Wipe every rival path whose chord on this tile conflicts with `s`. */
-  private cutRivals(p: Player, s: WalkStep, ev: GameEvent[]): void {
+  /**
+   * Wipe every rival path whose chord on this tile conflicts with `s`.
+   * Returns the owner of the last path cut, or null when nothing was hit.
+   */
+  private cutRivals(p: Player, s: WalkStep, ev: GameEvent[]): string | null {
     const occ = this.occupancy.get(s.tile);
-    if (!occ) return;
+    if (!occ) return null;
+    let hitOwner: string | null = null;
     const mine: [Pt, Pt] = [s.a, s.b];
     for (const other of [...occ]) {
       if (other.owner === p.id) continue;
@@ -278,8 +294,10 @@ export class Engine {
         const rival = this.players.get(other.owner);
         if (rival) rival.combo = this.knobs.comboStart;
         this.dropPath(other, p.id, ev);
+        hitOwner = other.owner;
       }
     }
+    return hitOwner;
   }
 
   private closeCircuit(p: Player, path: Path, ev: GameEvent[]): void {

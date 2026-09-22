@@ -104,10 +104,15 @@ describe('engine', () => {
     expect(ta.result.ok).toBe(true);
     const tb = e.tap('b', tile, tileCenter(FIELD, tile));
     expect(tb.result.ok).toBe(true);
-    const wipe = tb.events.find((x) => x.t === 'wipe');
-    expect(wipe).toMatchObject({ owner: 'a', by: 'b' });
+    const wipes = tb.events.filter((x) => x.t === 'wipe');
+    expect(wipes).toHaveLength(2);
+    expect(wipes[0]).toMatchObject({ owner: 'a', by: 'b' });
+    expect(wipes[1]).toMatchObject({ owner: 'b', by: 'a' });
+    // Mutual: both lines are gone.
     expect(e.players.get('a')!.paths).toHaveLength(0);
-    expect(e.players.get('b')!.paths).toHaveLength(1);
+    expect(e.players.get('b')!.paths).toHaveLength(0);
+    expect(e.players.get('b')!.score).toBe(0);
+    expect(e.pathsOn(tile)).toHaveLength(0);
   });
 
   it('geometric mode: identical rules on the same chord conflict, disjoint chords do not', () => {
@@ -215,6 +220,18 @@ describe('engine', () => {
     expect(e.players.get('a')!.paths).toHaveLength(1);
   });
 
+  it('mutualCut off: only the line that was hit dies', () => {
+    const e = make({ crossingMode: 'tile', tapOntoOthers: true, mutualCut: false });
+    e.addPlayer('a', 'Ann', SEL15);
+    e.addPlayer('b', 'Bob', SEL15);
+    const { tile } = loopTile();
+    e.tap('a', tile, tileCenter(FIELD, tile));
+    const tb = e.tap('b', tile, tileCenter(FIELD, tile));
+    expect(tb.events.filter((x) => x.t === 'wipe')).toHaveLength(1);
+    expect(e.players.get('a')!.paths).toHaveLength(0);
+    expect(e.players.get('b')!.paths).toHaveLength(1);
+  });
+
   it('zero sum: a cut line takes its points with it, and a knob hands a share to the cutter', () => {
     const e = make({ crossingMode: 'tile', tapOntoOthers: true, stealFraction: 0.5 });
     e.addPlayer('a', 'Ann', SEL15);
@@ -229,7 +246,8 @@ describe('engine', () => {
     e.tap('b', tile, tileCenter(FIELD, tile));
     expect(a.score).toBe(0);
     expect(a.paths).toHaveLength(0);
-    expect(e.players.get('b')!.score).toBe(Math.floor(held * 0.5) + DEFAULT_KNOBS.pointsPerTile);
+    // Bob's own colliding line died too, so only the stolen share remains.
+    expect(e.players.get('b')!.score).toBe(Math.floor(held * 0.5));
   });
 
   it('a new rule loses every point the old lines held', () => {

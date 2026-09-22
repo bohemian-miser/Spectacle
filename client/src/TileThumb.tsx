@@ -9,11 +9,13 @@
 
 import { useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import type { Pair } from '../../shared/game/pairs';
+import { cssRgb, typeFill } from './tiles-layer';
 import {
   EDGE_CLASS_COLORS,
   centroid,
   connectionPoints,
   edgeLabels,
+  leafOrder,
   leafPts,
   parseEdgeLabel,
   straightOutline,
@@ -127,7 +129,7 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
       data-pairs={JSON.stringify(pairs)}
     >
       <title>{title ?? type}</title>
-      <path d={straightOutline(pts)} className="thumb-outline" />
+      <path d={straightOutline(pts)} className="thumb-outline" fill={cssRgb(typeFill(family, leafOrder(family).indexOf(type)))} />
 
       {/* Edges: clickable, with their class number outside. */}
       {labels.map((raw, i) => {

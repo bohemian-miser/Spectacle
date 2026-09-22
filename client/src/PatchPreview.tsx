@@ -6,6 +6,7 @@
 
 import { useMemo } from 'react';
 import { ruleKey, type PlayerRule } from '../../shared/game/rule';
+import { cssRgb, typeFill } from './tiles-layer';
 import {
   analyze,
   buildSystem,
@@ -44,13 +45,14 @@ export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProp
     const result = analyze({ family, instances, selected: new Set(rule.subset), matchingIndexByType });
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const order = leafOrder(family);
     const tiles = instances.map((inst) => {
       const pts = leafPts(family, inst.type).map((p) => transPt(inst.xform, p));
       for (const p of pts) {
         minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
         minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
       }
-      return straightOutline(pts);
+      return { d: straightOutline(pts), fill: cssRgb(typeFill(family, order.indexOf(inst.type))) };
     });
     const circuits = result.circuits.map((p) => ({ d: polyD(p.points, true), len: pathLength(p) }));
     const tails = result.tails.map((p) => ({ d: polyD(p.points, false), len: pathLength(p) }));
@@ -64,8 +66,8 @@ export function PatchPreview({ rule, level = 3, height = 260 }: PatchPreviewProp
     <div className="patch-preview">
       <svg viewBox={model.view} height={height} className="patch-svg" role="img" aria-label={`Level ${level} patch under rule`}>
         <g className="patch-tiles">
-          {model.tiles.map((d, i) => (
-            <path key={i} d={d} />
+          {model.tiles.map((t, i) => (
+            <path key={i} d={t.d} fill={t.fill} />
           ))}
         </g>
         <g fill="none" strokeLinecap="round" strokeLinejoin="round">

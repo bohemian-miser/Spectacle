@@ -197,8 +197,8 @@ export class Store {
         }
         if (ev.by !== undefined) {
           const by = this.players.get(ev.by)?.name ?? 'someone';
-          if (ev.owner === this.you) this.toast(`${by} cut your line!`, 'bad');
-          else if (ev.by === this.you) this.toast(`You cut ${this.players.get(ev.owner)?.name ?? 'someone'}'s line`, 'good');
+          if (ev.owner === this.you) this.toast(`Collided with ${by} — your line is gone`, 'bad');
+          else if (ev.by === this.you) this.toast(`You took out ${this.players.get(ev.owner)?.name ?? 'someone'}'s line`, 'good');
         }
         this.geometryVersion++;
         return;
