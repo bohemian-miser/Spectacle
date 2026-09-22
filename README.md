@@ -119,10 +119,13 @@ The server is one always-on process while anyone is playing. Two GCP options
 ship in `deploy/gcp/`; pick by what you want to pay for idle time.
 
 **Cloud Run — scales to zero.** Run `PROJECT=<gcp project> ./deploy/gcp/setup-ci.sh`
-once; it creates a deployer service account and prints the GitHub secret and
-variables to add. From then on every merge to `main` builds the image and
-deploys it (`.github/workflows/deploy-cloudrun.yml`) — nobody needs GCP
-credentials day to day, and the workflow is skipped until `GCP_PROJECT` is set.
+once; it creates a deployer service account, a Workload Identity pool that only
+this repo may use, and prints the GitHub variables to add. Nothing it prints is
+secret — GitHub's OIDC token is swapped for a short-lived GCP one at deploy
+time, so there is no key to leak or rotate. From then on every merge to `main`
+builds the image and deploys it (`.github/workflows/deploy-cloudrun.yml`) —
+nobody needs GCP credentials day to day, and the workflow is skipped until
+`GCP_PROJECT` is set.
 `./deploy/gcp/cloudrun.sh` does the same by hand from a laptop. Either way:
 one instance at most, none when idle.
 While people are connected you pay for one small instance; when the last one

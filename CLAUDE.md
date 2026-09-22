@@ -97,9 +97,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit.
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
-- **Hosting**: GCP. Cloud Run (scale to zero) via CI is the intended path;
-  the free e2-micro VM is the alternative. Session resume covers Cloud Run's
-  hourly WebSocket cap.
+- **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
+  and most players are in North America). Cloud Run (scale to zero) via CI is
+  the intended path; the free e2-micro VM is the alternative. Session resume
+  covers Cloud Run's hourly WebSocket cap.
+- **CI auth is Workload Identity Federation, never a key.** The org enforces
+  `constraints/iam.disableServiceAccountKeyCreation`, so a service-account key
+  cannot be created at all — and shouldn't be. `setup-ci.sh` builds a pool
+  whose attribute condition pins the trust to `bohemian-miser/Spectacle`;
+  the deploy job needs `id-token: write` to mint the OIDC token. Everything
+  `setup-ci.sh` prints is a *variable*, not a secret.
 - **Vendored core** stays byte-identical to Spectre's.
 - **Tile colours are Spectre's own table** (`TILE_PALETTES.bright`, the
   `colmap_orig` of the paper's figures): Xi yellow, the Gammas white. A type's
