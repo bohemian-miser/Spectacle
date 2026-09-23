@@ -116,6 +116,13 @@ export class LocalConnection implements GameConnection {
         this.pending.push(...e.setRule(YOU, rule));
         return;
       }
+      case 'swap': {
+        const rule = validateRule(msg.rule, e.field.family);
+        const r = rule ? e.swapPattern(YOU, Number(msg.index), rule) : { ok: false as const, reason: 'invalid rule' };
+        if (!r.ok) this.deliver({ t: 'events', ev: [{ t: 'refused', reason: r.reason }] });
+        else this.pending.push(...r.events);
+        return;
+      }
       case 'pattern':
         this.pending.push(...e.setActive(YOU, Number(msg.index)));
         return;

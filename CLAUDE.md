@@ -147,7 +147,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the active pattern is sketched on the board. A path carries its own
   `rule`/`table` — use `path.table`, never the owner's, for anything about
   a path's chords (collisions, turning round). UI: sticky tabs on the left
-  wall, bottom left; the active one is longer; keys 1–9.
+  wall, bottom left; the active one is longer; keys 1–9. A captured slot
+  can be swapped for a rule of the player's own (`swapPattern`, client
+  `swap`): its lines are wiped (no `by`, points leave with them), then a
+  `swap` event replaces the pattern in place — same index, same colour, same
+  head — so path indices stay valid. Slot 0 never swaps; that is `setRule`.
+  A rule held in another slot is refused.
 - **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,

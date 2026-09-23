@@ -136,6 +136,14 @@ export function App(): JSX.Element {
     setScreen('arena');
   };
 
+  /** Put the edited rule in captured slot `index` instead of restarting on it. */
+  const swap = (index: number): void => {
+    const conn = connRef.current;
+    if (!rule || !conn || !joined.current) return;
+    conn.send({ t: 'swap', index, rule });
+    setScreen('arena');
+  };
+
   if (screen === 'arena' && (store.you || rejoin.current) && connRef.current) {
     return <Arena store={store} conn={connRef.current} onNewRule={() => setScreen('lobby')} />;
   }
@@ -152,6 +160,7 @@ export function App(): JSX.Element {
       onRule={setRule}
       onName={setName}
       onEnter={enter}
+      onSwap={swap}
       onCancel={() => setScreen('arena')}
     />
   );

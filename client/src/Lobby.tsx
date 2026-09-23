@@ -20,6 +20,8 @@ export interface LobbyProps {
   onRule(rule: PlayerRule): void;
   onName(name: string): void;
   onEnter(): void;
+  /** Swap captured pattern `index` for this rule (its lines and their points go). */
+  onSwap(index: number): void;
   onCancel(): void;
 }
 
@@ -28,13 +30,15 @@ function tileCount(family: TileFamilyId, level: number): number {
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, rule, name, inArena, onMode, onSolo, onRule, onName, onEnter, onCancel } = props;
+  const { store, mode, solo, rule, name, inArena, onMode, onSolo, onRule, onName, onEnter, onSwap, onCancel } = props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
   const ready = rule.subset.length > 0 && name.trim().length > 0 && drafting.length === 0;
   // Before the server hands out a player colour, the chords wear Spectre's accent.
   const color = store.me?.color ?? '#6ea8fe';
+  // Captured slots (each worth a head) can take this rule instead of a restart.
+  const slots = inArena && store.me ? store.me.patterns.map((q, i) => ({ q, i })).filter(({ i }) => i > 0) : [];
 
   return (
     <div className="lobby">
@@ -142,8 +146,25 @@ export function Lobby(props: LobbyProps): JSX.Element {
         <button type="button" className="btn btn-accent btn-big" disabled={!ready || !hello} onClick={onEnter}>
           {inArena ? 'Restart with this rule' : SOLO_ONLY ? 'Play' : mode === 'solo' ? 'Play solo' : 'Enter the arena'}
         </button>
+        {slots.map(({ q, i }) => (
+          <button
+            key={i}
+            type="button"
+            className="btn"
+            disabled={!ready || !hello}
+            title="Keeps the slot and its head; every line drawn with that pattern goes, with its points"
+            onClick={() => onSwap(i)}
+          >
+            <span className="swatch" style={{ background: q.color }} /> Swap for {q.from === undefined ? `pattern ${i + 1}` : `${q.fromName || 'someone'}'s pattern`}
+          </button>
+        ))}
         {drafting.length > 0 && <span className="tag tag-bad">finish pairing {drafting.join(', ')} first</span>}
-        {inArena && <span className="muted">Restarting wipes your lines{store.knobs?.resetScoreOnRule ? ' and score' : ''}.</span>}
+        {inArena && (
+          <span className="muted">
+            Restarting wipes your lines{store.knobs?.resetScoreOnRule ? ' and score' : ''}
+            {slots.length > 0 ? '; swapping a pattern wipes only its lines, and the points they earned' : ''}.
+          </span>
+        )}
       </footer>
     </div>
   );

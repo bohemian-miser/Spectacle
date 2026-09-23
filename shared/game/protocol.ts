@@ -73,6 +73,8 @@ export type ClientMessage =
   | { readonly t: 'rule'; readonly rule: PlayerRule }
   /** Choose which of your patterns the next tap draws with. */
   | { readonly t: 'pattern'; readonly index: number }
+  /** Swap captured pattern `index` (≥ 1) for `rule`: that pattern's lines, and their points, go. */
+  | { readonly t: 'swap'; readonly index: number; readonly rule: PlayerRule }
   | { readonly t: 'ping'; readonly n: number };
 
 // --- server → client ---------------------------------------------------------
@@ -86,6 +88,11 @@ export type GameEvent =
   | { readonly t: 'step'; readonly path: number; readonly owner: string; readonly step: PathStepWire; readonly pattern?: number }
   /** `id` closed a circuit round a rival's line and took its pattern (appended to their patterns). */
   | { readonly t: 'capture'; readonly id: string; readonly pattern: PatternPublic }
+  /**
+   * `id` swapped captured pattern `index` for a rule of their own: its lines
+   * were wiped just before (`wipe` without `by`), and `pattern` replaces it in place.
+   */
+  | { readonly t: 'swap'; readonly id: string; readonly index: number; readonly pattern: PatternPublic }
   /** `id` switched the pattern their taps draw with. */
   | { readonly t: 'active'; readonly id: string; readonly active: number }
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }

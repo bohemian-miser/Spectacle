@@ -35,7 +35,9 @@
  *  - closing a circuit round a rival's line takes that line's pattern: it
  *    joins your patterns, draws in a colour 2/3 yours and 1/3 theirs, and
  *    you choose which pattern a tap draws with. Holding a captured pattern
- *    lifts your head limit to `headsWithCapture`.
+ *    lifts your head limit to `headsWithCapture`. A captured pattern's slot
+ *    can be swapped for a rule of your own: every line drawn with it goes,
+ *    and the points they had earned go with them.
  */
 
 import type { Pt, Segment } from '../tiles';
@@ -224,6 +226,28 @@ export class Engine {
   /** How many lines `p` may have growing at once (0 = unlimited). */
   headLimit(p: Player): number {
     return headLimit(this.knobs, p.patterns.length);
+  }
+
+  /**
+   * Swap captured pattern `index` (never 0 — that is `setRule`) for `rule`,
+   * keeping the slot (and so the head it gives) and its colour. Every line
+   * drawn with the old pattern is wiped, and its points leave with it. A rule
+   * already held in another slot is refused; the same rule again is a no-op.
+   */
+  swapPattern(id: string, index: number, rule: PlayerRule): { ok: true; events: GameEvent[] } | { ok: false; reason: string } {
+    const p = this.players.get(id);
+    if (!p) return { ok: false, reason: 'not in the arena' };
+    if (!Number.isInteger(index) || index < 1 || index >= p.patterns.length) return { ok: false, reason: 'no such pattern to swap' };
+    if (rule.family !== this.field.spec.family) return { ok: false, reason: 'invalid rule' };
+    const old = p.patterns[index];
+    if (sameRule(old.rule, rule)) return { ok: true, events: [] };
+    if (p.patterns.some((q) => sameRule(q.rule, rule))) return { ok: false, reason: 'you already hold that pattern' };
+    const ev: GameEvent[] = [];
+    for (const path of p.paths.filter((q) => q.pattern === index)) this.dropPath(path, undefined, ev);
+    const pattern: Pattern = { rule, table: chordTableFor(this.field, rule), color: old.color };
+    p.patterns[index] = pattern;
+    ev.push({ t: 'swap', id, index, pattern: patternPublic(pattern) });
+    return { ok: true, events: ev };
   }
 
   /** Choose which pattern `id`'s taps draw with. */

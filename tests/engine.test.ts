@@ -476,6 +476,48 @@ describe('engine', () => {
       expect(e.headLimit(a)).toBe(1);
     });
 
+    it('a captured slot can be swapped for another rule: its lines and their points go', () => {
+      const { e } = enclose();
+      const a = e.players.get('a')!;
+      const slotColor = a.patterns[1].color;
+      // One line on the captured pattern, grown a little.
+      e.setActive('a', 1);
+      const table = chordTableFor(FIELD, SMALL);
+      let started = false;
+      for (let i = 0; i < FIELD.count && !started; i++) {
+        if (tileChords(FIELD, table, i).length === 0 || e.pathsOn(i).length > 0 || e.insideRivalCircuit('a', tileCenter(FIELD, i))) continue;
+        started = e.tap('a', i, tileCenter(FIELD, i)).result.ok;
+      }
+      expect(started).toBe(true);
+      e.tick(200);
+      const own = a.paths.filter((q) => q.pattern === 0);
+      const captured = a.paths.filter((q) => q.pattern === 1);
+      expect(captured.length).toBeGreaterThan(0);
+      const lost = captured.reduce((n, q) => n + q.points, 0);
+      expect(lost).toBeGreaterThan(0);
+      const before = a.score;
+
+      // A rule already held elsewhere is refused; the slot's own rule is a no-op.
+      expect(e.swapPattern('a', 1, BIG)).toEqual({ ok: false, reason: 'you already hold that pattern' });
+      expect(e.swapPattern('a', 1, SMALL)).toEqual({ ok: true, events: [] });
+      expect(e.swapPattern('a', 0, SEL15)).toMatchObject({ ok: false });
+      expect(e.swapPattern('a', 2, SEL15)).toMatchObject({ ok: false });
+
+      const r = e.swapPattern('a', 1, SEL15);
+      expect(r.ok).toBe(true);
+      if (!r.ok) return;
+      const wipes = r.events.filter((x) => x.t === 'wipe');
+      expect(wipes.map((x) => (x as { path: number }).path).sort()).toEqual(captured.map((q) => q.id).sort());
+      expect(wipes.every((x) => !('by' in x))).toBe(true);
+      expect(r.events.at(-1)).toEqual({ t: 'swap', id: 'a', index: 1, pattern: { rule: SEL15, color: slotColor } });
+      expect(a.score).toBe(Math.max(0, before - lost));
+      // Own lines stay; the slot (and its head) stays, now drawing SEL15.
+      expect(a.paths).toEqual(own);
+      expect(a.patterns.map((q) => q.rule)).toEqual([BIG, SEL15]);
+      expect(e.headLimit(a)).toBe(2);
+      expect(a.active).toBe(1);
+    });
+
     it('captureOnEnclose off: a circuit takes nothing', () => {
       const { e, ev } = enclose({ captureOnEnclose: false });
       expect(ev.some((x) => x.t === 'capture')).toBe(false);

@@ -81,7 +81,11 @@ you.
    lines growing at once, from any mix of your patterns
    (`captureOnEnclose`, `maxCapturedPatterns`).
 8. **New rule** = restart: your lines and captured patterns go, and (by
-   default) your score too.
+   default) your score too. Once you hold a captured pattern, the rule
+   screen also offers **Swap for …**: the rule you just built takes that
+   pattern's slot (and its head, and its colour), and every line drawn with
+   the old pattern goes — with the points it had earned. Your own rule, its
+   lines and your other patterns stay.
 
 **Which way a tile is turned.** Every hexagon in the arena is the same regular
 hexagon, so nothing in its outline says which of the six rotations it is sitting
