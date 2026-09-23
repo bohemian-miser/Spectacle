@@ -304,3 +304,149 @@ export function tilesInsidePolygon(field: Field, poly: readonly Pt[]): number[] 
   }
   return out;
 }
+
+function pointSegDist2(p: Pt, a: Pt, b: Pt): number {
+  const vx = b.x - a.x;
+  const vy = b.y - a.y;
+  const len2 = vx * vx + vy * vy;
+  let t = len2 > 0 ? ((p.x - a.x) * vx + (p.y - a.y) * vy) / len2 : 0;
+  t = Math.max(0, Math.min(1, t));
+  const dx = a.x + vx * t - p.x;
+  const dy = a.y + vy * t - p.y;
+  return dx * dx + dy * dy;
+}
+
+/**
+ * Is `p` (a point on the outline of tile `i`) on the edge of the field — no
+ * other tile touches it? A line that dies there ran off the board, rather than
+ * into a tail of its rule.
+ */
+export function onFieldBoundary(field: Field, i: number, p: Pt): boolean {
+  const eps2 = 1e-6;
+  for (const n of tileNeighbours(field, i)) {
+    const poly = tilePolygon(field, n);
+    for (let k = 0, j = poly.length - 1; k < poly.length; j = k++) {
+      if (pointSegDist2(p, poly[j], poly[k]) < eps2) return false;
+    }
+  }
+  return true;
+}
+
+const outlineCache = new WeakMap<Field, readonly Pt[]>();
+
+/**
+ * The field's outer boundary as one closed polygon: the tile edges that belong
+ * to a single tile, chained end to end. Where the outline pinches into several
+ * loops the longest (the outer one) wins. Built once per field, on demand.
+ */
+export function fieldOutline(field: Field): readonly Pt[] {
+  const hit = outlineCache.get(field);
+  if (hit) return hit;
+  // Vertices get small integer ids so an edge packs into one numeric key.
+  const ids = new Map<number, number>();
+  const pos: Pt[] = [];
+  const idOf = (p: Pt): number => {
+    const k = vkey(p.x, p.y);
+    let id = ids.get(k);
+    if (id === undefined) {
+      id = pos.length;
+      ids.set(k, id);
+      pos.push(p);
+    }
+    return id;
+  };
+  const count = new Map<number, number>();
+  for (let i = 0; i < field.count; i++) {
+    const poly = tilePolygon(field, i);
+    let prev = idOf(poly[poly.length - 1]);
+    for (const p of poly) {
+      const cur = idOf(p);
+      const key = prev < cur ? prev * 0x4000000 + cur : cur * 0x4000000 + prev;
+      count.set(key, (count.get(key) ?? 0) + 1);
+      prev = cur;
+    }
+  }
+  const adj = new Map<number, number[]>();
+  const link = (u: number, v: number): void => {
+    const list = adj.get(u);
+    if (list) list.push(v);
+    else adj.set(u, [v]);
+  };
+  for (const [key, c] of count) {
+    if (c !== 1) continue;
+    const u = Math.floor(key / 0x4000000);
+    const v = key % 0x4000000;
+    link(u, v);
+    link(v, u);
+  }
+  const edgeKey = (u: number, v: number): number => (u < v ? u * 0x4000000 + v : v * 0x4000000 + u);
+  const used = new Set<number>();
+  let best: number[] = [];
+  for (const start of adj.keys()) {
+    const loop: number[] = [start];
+    let cur = start;
+    for (;;) {
+      const next = adj.get(cur)!.find((n) => !used.has(edgeKey(cur, n)));
+      if (next === undefined) break;
+      used.add(edgeKey(cur, next));
+      if (next === start) break;
+      loop.push(next);
+      cur = next;
+    }
+    if (loop.length > best.length) best = loop;
+  }
+  const out = best.map((k) => pos[k]);
+  outlineCache.set(field, out);
+  return out;
+}
+
+/**
+ * A line that runs from the field's edge to the field's edge cuts the board in
+ * two; the smaller side is the region it claims. `line` is the line's points in
+ * order, first and last on the outline. Returns the region's polygon (the line,
+ * then the outline back to its start), or null when an end is off the outline.
+ */
+export function boundaryRegion(field: Field, line: readonly Pt[]): Pt[] | null {
+  const ring = fieldOutline(field);
+  const n = ring.length;
+  if (n < 3 || line.length < 2) return null;
+  const edgeOf = (p: Pt): number => {
+    let best = -1;
+    let bestD = 1e-4;
+    for (let k = 0; k < n; k++) {
+      const d = pointSegDist2(p, ring[k], ring[(k + 1) % n]);
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    return best;
+  };
+  const start = line[0];
+  const end = line[line.length - 1];
+  const es = edgeOf(start);
+  const ee = edgeOf(end);
+  if (es < 0 || ee < 0) return null;
+  // Walk the ring from the end back to the start, both ways round. Both ends on
+  // one edge: one way is direct, the other goes all the way round.
+  const t = (p: Pt, k: number): number => {
+    const a = ring[k];
+    const b = ring[(k + 1) % n];
+    return (p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y);
+  };
+  const endFirst = es === ee && t(end, ee) < t(start, es);
+  const fwdSteps = (es - ee + n) % n || (es === ee && !endFirst ? n : 0);
+  const backSteps = (ee - es + n) % n || (es === ee && endFirst ? n : 0);
+  const forward: Pt[] = [];
+  for (let j = 0; j < fwdSteps; j++) forward.push(ring[(ee + 1 + j) % n]);
+  const backward: Pt[] = [];
+  for (let j = 0; j < backSteps; j++) backward.push(ring[(ee - j + n) % n]);
+  const a = [...line, ...forward];
+  const b = [...line, ...backward];
+  return polygonArea(a) <= polygonArea(b) ? a : b;
+}
+
+/** The polygon a closed path encloses: its own loop, or the region it claims against the edge. */
+export function pathPolygon(path: { readonly steps: readonly { readonly a: Pt }[]; readonly region?: readonly Pt[] }): readonly Pt[] {
+  return path.region ?? path.steps.map((s) => s.a);
+}

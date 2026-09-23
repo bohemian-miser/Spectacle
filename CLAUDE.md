@@ -101,7 +101,14 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **One bot on the server** (`BOTS=1` everywhere it is deployed).
 - **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
-- **You can't start** on a rival's line or inside a rival's closed circuit.
+- **You can't start** on a rival's line or inside a rival's closed circuit —
+  nor on your own line. The one exception: tapping the first tile of your stuck
+  line that ran off the field's edge turns it round (`reverse` event; steps
+  flip, it grows again). A line that runs edge to edge closes as a circuit
+  whose polygon is the line plus the smaller arc of `fieldOutline` (`region`
+  on the path, the `circuit` event and `PathWire`); use `pathPolygon()` for
+  any "inside" test so both kinds of circuit count.
+- **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
   and most players are in North America). Cloud Run (scale to zero) via CI is
@@ -166,6 +173,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   it above the claim tint and only past `ARROW_MIN_SCALE` — below that it is
   speckle. In WebGL it is one instanced pass over the whole transform buffer
   (the shape is identical for every leaf type).
+- **`fieldOutline` is ~1.5 s at hex level 6.** The server and solo build it at
+  startup so the first edge-to-edge claim doesn't stall a tick.
+- **Your own circuits vary** (`ownCircuitColor` / `ownCircuitDarkening`, keyed
+  on the path id): a hue lean of up to ±22° and a wider darkening range.
+  Rivals' circuits keep `circuitDarkening`. Interior washes stack with
+  Porter–Duff "over", outermost first, so nesting reads deeper.
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
   the old one dies (only its SHA-256 is kept server-side). A resume can take
   over a player whose old socket is still open — a refresh usually beats the

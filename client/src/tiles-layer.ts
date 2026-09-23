@@ -110,6 +110,37 @@ export function circuitDarkening(length: number): number {
 }
 
 /**
+ * Your own circuits, told apart: each one leans its hue a little off your
+ * colour (up to ±`OWN_HUE_SPREAD`°, fixed per circuit) and darkens over a
+ * wider range than a rival's — with length, plus a per-circuit nudge — so a
+ * board full of your loops reads as a family rather than one flat colour.
+ */
+const OWN_HUE_SPREAD = 22;
+
+/** A stable 0..1 per circuit (golden-ratio walk over the path id). */
+function circuitJitter(id: number): number {
+  return (id * 0.6180339887498949) % 1;
+}
+
+export function ownCircuitColor(css: string, id: number): string {
+  return shiftHue(css, (circuitJitter(id) * 2 - 1) * OWN_HUE_SPREAD);
+}
+
+export function ownCircuitDarkening(length: number, id: number): number {
+  const byLength = 0.62 * Math.min(1, Math.log2(Math.max(1, length)) / 10);
+  const nudge = (circuitJitter(id * 7 + 3) - 0.5) * 0.2;
+  return Math.max(0.05, Math.min(0.7, byLength + nudge));
+}
+
+/** Turn an `hsl(…)` colour round the wheel by `deg`; any other form comes back as is. */
+export function shiftHue(css: string, deg: number): string {
+  const m = /hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)/.exec(css);
+  if (!m) return css;
+  const h = (((Number(m[1]) + deg) % 360) + 360) % 360;
+  return `hsl(${h.toFixed(1)}, ${m[2]}%, ${m[3]}%)`;
+}
+
+/**
  * A player's colour as this board should draw it: deepened where the ground is
  * pale, and darkened further by `extra` (a closed circuit's length).
  */

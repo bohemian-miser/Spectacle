@@ -74,8 +74,6 @@ await page.waitForTimeout(300);
 await page.mouse.click(cx + 40, cy + 30);
 await page.waitForTimeout(1500);
 console.log((await page.locator('.hud-me').innerText()).replace(/\n/g, ' | '));
-await page.getByRole('button', { name: 'Find my line' }).click();
-await page.getByRole('button', { name: 'Whole arena' }).click();
 await page.waitForTimeout(300);
 await page.screenshot({ path: out.replace('.png', '-whole.png') });
 console.log('errors:', errors);
