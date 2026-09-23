@@ -170,7 +170,9 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .hud-me { left: 12px; top: 12px; border-left: 4px solid var(--me); }
 .hud-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .hud-name .swatch { background: var(--me); }
+.hud-score-row { display: flex; align-items: baseline; gap: 8px; }
 .hud-score { font-size: 34px; font-weight: 700; line-height: 1.1; }
+.hud-heads { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud-line { font-size: 13px; color: var(--muted); }
 .hud-status { color: var(--text); }
 .hud-rule { margin-top: 4px; }

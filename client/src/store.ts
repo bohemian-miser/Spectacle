@@ -103,19 +103,26 @@ export class Store {
   quietRefusalsUntil = 0;
 
   /**
-   * Whether a tap now could start a line as far as heads go: the engine's
-   * `headLimit` against your growing lines. The server still
+   * Your heads: how many more lines you could start now (`free`) out of the
+   * engine's `headLimit` (`total`; 0 = unlimited, `free` then Infinity).
+   */
+  heads(): { free: number; total: number } {
+    const k = this.knobs;
+    const me = this.me;
+    if (!k || !me) return { free: 0, total: 0 };
+    const total = headLimit(k, me.patterns.length);
+    if (total === 0) return { free: Infinity, total };
+    let growing = 0;
+    for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing') growing++;
+    return { free: Math.max(0, total - growing), total };
+  }
+
+  /**
+   * Whether a tap now could start a line as far as heads go. The server still
    * decides; this only keeps a drag from sending taps it would refuse.
    */
   hasFreeHead(): boolean {
-    const k = this.knobs;
-    const me = this.me;
-    if (!k || !me) return false;
-    const limit = headLimit(k, me.patterns.length);
-    if (limit === 0) return true;
-    let growing = 0;
-    for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing') growing++;
-    return growing < limit;
+    return this.heads().free > 0;
   }
 
   /** At most two at once; a repeat of one still showing just refreshes it. */
