@@ -78,8 +78,10 @@ you.
    the active pattern is sketched on the tiles no rival has touched (your own
    included). Holding a captured
    pattern also gives you a second head (`headsWithCapture`, default 2): two
-   lines growing at once, from any mix of your patterns
-   (`captureOnEnclose`, `maxCapturedPatterns`).
+   lines growing at once, from any mix of your patterns. Every further kind
+   of line you capture adds another head, up to 12 (`headPerCapture`,
+   `maxHeadsTotal`; `KNOB_HEAD_PER_CAPTURE=0` turns it off)
+   (`captureOnEnclose`, `maxCapturedPatterns`, default 11).
 8. **New rule** = restart: your lines and captured patterns go, and (by
    default) your score too.
 

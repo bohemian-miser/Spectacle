@@ -35,7 +35,8 @@
  *  - closing a circuit round a rival's line takes that line's pattern: it
  *    joins your patterns, draws in a colour 2/3 yours and 1/3 theirs, and
  *    you choose which pattern a tap draws with. Holding a captured pattern
- *    lifts your head limit to `headsWithCapture`.
+ *    lifts your head limit to `headsWithCapture`, and (`headPerCapture`)
+ *    each further one adds a head, up to `maxHeadsTotal`.
  */
 
 import type { Pt, Segment } from '../tiles';

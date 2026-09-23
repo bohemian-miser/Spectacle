@@ -105,7 +105,9 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
 - **One head, unlimited lines.** A player has one growing line at a time
-  (`maxHeads: 1`) until they capture a pattern (then `headsWithCapture: 2`);
+  (`maxHeads: 1`) until they capture a pattern (then `headsWithCapture: 2`,
+  plus one per further captured pattern up to `maxHeadsTotal: 12` while
+  `headPerCapture` is on — `KNOB_HEAD_PER_CAPTURE=0` restores the flat 2);
   a tap past the limit is refused. Finished lines (stuck or
   closed) stay until cut — `maxLivePaths` / `maxCompletedCircuits` exist as
   knobs, default 0. Losing the head in a collision blocks the next tap for
