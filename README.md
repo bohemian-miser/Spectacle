@@ -43,6 +43,10 @@ you.
    edge of the field: that turns it round to grow out of its other end. A
    line that runs edge to edge cuts the field in two and closes like a
    circuit, claiming the smaller side (scored on that side's area).
+   A growing line that runs into another of your own lines stops there —
+   unless it meets that line's loose end on the same chord: then the two join
+   into one line (nothing is scored twice). Two lines that each ran off the
+   edge join into one edge-to-edge line and claim their side.
    Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
    next tap lands.
 6. **Crossing.** When a line enters a tile where another player's chord crosses
@@ -60,7 +64,8 @@ you.
    in a colour two thirds yours and one third theirs. Your patterns sit as
    tabs on the left wall, bottom left — the one sticking out furthest is
    active, and your next tap draws with it (click a tab, or press 1–9). Only
-   the active pattern is sketched on the free tiles. Holding a captured
+   the active pattern is sketched on the tiles no rival has touched (your own
+   included). Holding a captured
    pattern also gives you a second head (`headsWithCapture`, default 2): two
    lines growing at once, from any mix of your patterns
    (`captureOnEnclose`, `maxCapturedPatterns`).
