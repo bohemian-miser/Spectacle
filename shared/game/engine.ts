@@ -18,7 +18,9 @@
  *    circuit (both knobs);
  *  - a tail (no continuation) leaves the path stuck; tap elsewhere to start
  *    another — every line a player draws stays until it is cut;
- *  - a tap may not land on your own line, with one exception: tapping the
+ *  - a tap starts on the nearest chord of the tile that no line is on or
+ *    crosses (lines block chords, not whole tiles); it may not start on your
+ *    own line, with one exception: tapping the
  *    start of a line that ran off the edge of the field turns it round to
  *    grow the other way. A line that runs edge to edge closes like a circuit
  *    and claims the smaller side of the board it cuts off;
@@ -34,7 +36,7 @@
  *    lifts your head limit to `headsWithCapture`.
  */
 
-import type { Pt } from '../tiles';
+import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, type Field } from './field';
 import { stepIntervalMs, type Knobs } from './knobs';
@@ -122,6 +124,10 @@ function sameRule(a: PlayerRule, b: PlayerRule): boolean {
 
 function samePt(a: Pt, b: Pt): boolean {
   return Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
+}
+
+function sameSeg(a: Segment, b: Segment): boolean {
+  return (samePt(a[0], b[0]) && samePt(a[1], b[1])) || (samePt(a[0], b[1]) && samePt(a[1], b[0]));
 }
 
 export class Engine {
@@ -253,13 +259,17 @@ export class Engine {
     if (!Number.isInteger(tile) || tile < 0 || tile >= this.field.count) {
       return { result: { ok: false, reason: 'no such tile' }, events: ev };
     }
-    const turn = p.paths.find((q) => q.status === 'stuck' && q.steps[0].tile === tile && this.canTurn(q));
+    // Turning round is per chord too: the tap has to be nearest the line's first chord.
+    const turn = p.paths.find(
+      (q) =>
+        q.status === 'stuck' &&
+        q.steps[0].tile === tile &&
+        nearestChord(this.field, q.table, tile, at) === q.steps[0].chord &&
+        this.canTurn(q),
+    );
     if (turn) {
       this.turnRound(turn, ev);
       return { result: { ok: true, path: turn.id }, events: ev };
-    }
-    if (this.occupancy.get(tile) && [...this.occupancy.get(tile)!].some((path) => path.owner === id)) {
-      return { result: { ok: false, reason: "that's your own line" }, events: ev };
     }
     const pattern = p.patterns[p.active] ?? p.patterns[0];
     if (tileChords(this.field, pattern.table, tile).length === 0) {
@@ -268,16 +278,13 @@ export class Engine {
         events: ev,
       };
     }
-    if (!this.knobs.tapOntoOthers) {
-      const occ = this.occupancy.get(tile);
-      if (occ && [...occ].some((path) => path.owner !== id)) {
-        return { result: { ok: false, reason: "that's someone else's line" }, events: ev };
-      }
-    }
+    // Lines block chords, not tiles: a tap on a tile some line already runs
+    // through starts on the nearest chord of it that no line is on or crosses.
+    const chord = this.freeChord(id, pattern.table, tile, at);
+    if (typeof chord === 'string') return { result: { ok: false, reason: chord }, events: ev };
     if (!this.knobs.tapInsideRivalCircuits && this.insideRivalCircuit(id, tileCenter(this.field, tile))) {
       return { result: { ok: false, reason: "that's inside someone else's circuit" }, events: ev };
     }
-    const chord = nearestChord(this.field, pattern.table, tile, at);
     const exitEnd: 0 | 1 = this.rng.next() < 0.5 ? 0 : 1;
 
     // Every tap starts another line; the old ones sit stuck or closed (or keep
@@ -303,6 +310,55 @@ export class Engine {
     this.pathsById.set(path.id, path);
     this.addStep(p, path, startStep(this.field, pattern.table, tile, chord, exitEnd), ev);
     return { result: { ok: true, path: path.id }, events: ev };
+  }
+
+  /**
+   * The chord of `tile` nearest `at` that player `id` may start on: none of
+   * their own lines on it or crossing it, nor a rival's unless `tapOntoOthers`.
+   * When every chord is blocked, the reason (for the chord nearest `at`).
+   */
+  private freeChord(id: string, table: ChordTable, tile: number, at: Pt): number | string {
+    // Nearest first: the chord under the finger, then the rest by midpoint.
+    const near = nearestChord(this.field, table, tile, at);
+    const dist = (c: number): number => {
+      if (c === near) return -1;
+      const [a, b] = worldChord(this.field, table, tile, c);
+      return Math.hypot((a.x + b.x) / 2 - at.x, (a.y + b.y) / 2 - at.y);
+    };
+    const order = tileChords(this.field, table, tile).map((_, c) => c).sort((x, y) => dist(x) - dist(y));
+    let reason: string | null = null;
+    for (const c of order) {
+      const why = this.chordBlocked(id, tile, worldChord(this.field, table, tile, c));
+      if (why === null) return c;
+      reason ??= why;
+    }
+    return reason ?? 'no free line on this tile';
+  }
+
+  /** Why player `id` may not start on segment `seg` of `tile`, or null when they may. */
+  private chordBlocked(id: string, tile: number, seg: Segment): string | null {
+    const occ = this.occupancy.get(tile);
+    if (!occ) return null;
+    let rival = false;
+    for (const other of occ) {
+      const mine = other.owner === id;
+      if (!mine && this.knobs.tapOntoOthers) continue;
+      if (!this.pathMeets(other, tile, seg)) continue;
+      if (mine) return "that's your own line";
+      rival = true;
+    }
+    return rival ? "that's someone else's line" : null;
+  }
+
+  /** Does `path` run along or conflict with segment `seg` on `tile`? */
+  private pathMeets(path: Path, tile: number, seg: Segment): boolean {
+    if (this.knobs.crossingMode === 'tile') return true;
+    for (const q of path.steps) {
+      if (q.tile !== tile) continue;
+      const other = worldChord(this.field, path.table, q.tile, q.chord);
+      if (sameSeg(seg, other) || chordsConflict(seg, other, this.knobs.touchCounts)) return true;
+    }
+    return false;
   }
 
   // --- time ----------------------------------------------------------------
@@ -383,7 +439,6 @@ export class Engine {
     const occ = this.occupancy.get(s.tile);
     if (!occ) return null;
     const mine: [Pt, Pt] = [s.a, s.b];
-    let met = false;
     for (const other of occ) {
       if (other.owner !== p.id || other === path) continue;
       if (other.status !== 'closed' && sameRule(other.rule, path.rule)) {
@@ -399,13 +454,7 @@ export class Engine {
           return { other, tail };
         }
       }
-      if (this.knobs.crossingMode === 'tile') met = true;
-      for (const q of other.steps) {
-        if (met) break;
-        if (q.tile !== s.tile) continue;
-        met = chordsConflict(mine, worldChord(this.field, other.table, q.tile, q.chord), this.knobs.touchCounts);
-      }
-      if (met) return 'stop';
+      if (this.pathMeets(other, s.tile, mine)) return 'stop';
     }
     return null;
   }

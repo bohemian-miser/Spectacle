@@ -39,7 +39,9 @@ you.
    refused, and once it closes, sticks or dies you tap again to start the next.
    Nothing you drew is dropped until someone cuts it (`maxLivePaths` and
    `maxCompletedCircuits` cap this if you want; both default to unlimited).
-   You cannot tap your own line — except its first tile when it ran off the
+   Lines block chords, not tiles: a tap on a tile a line already runs
+   through starts on the nearest chord of it that no line is on or crosses.
+   You cannot start on your own line — except its first chord when it ran off the
    edge of the field: that turns it round to grow out of its other end. A
    line that runs edge to edge cuts the field in two and closes like a
    circuit, claiming the smaller side (scored on that side's area).

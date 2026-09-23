@@ -5,7 +5,7 @@ import { DEFAULT_KNOBS, stepIntervalMs, type Knobs } from '../shared/game/knobs'
 import type { GameEvent } from '../shared/game/protocol';
 import { defaultRule, fassRule, oddTypes, randomCleanRule, ruleFromCombo, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
-import { chordTableFor, tileChords, walkStrand, worldChord } from '../shared/game/strand';
+import { chordTableFor, chordsConflict, tileChords, walkStrand, worldChord } from '../shared/game/strand';
 import { mixHsl } from '../shared/game/color';
 
 const FIELD = buildField({ family: 'spectre', level: 3, rootTile: 'Delta' });
@@ -293,11 +293,61 @@ describe('engine', () => {
     const e = make();
     e.addPlayer('a', 'Ann', SEL15);
     e.addPlayer('b', 'Bob', SEL15);
-    const { tile } = loopTile();
+    const table = chordTableFor(FIELD, SEL15);
+    // A tile whose only chord a's line takes.
+    let tile = -1;
+    for (let i = 0; i < FIELD.count && tile < 0; i++) if (tileChords(FIELD, table, i).length === 1) tile = i;
     e.tap('a', tile, tileCenter(FIELD, tile));
     const r = e.tap('b', tile, tileCenter(FIELD, tile));
     expect(r.result).toEqual({ ok: false, reason: "that's someone else's line" });
   });
+
+  it('lines block chords, not tiles: a free chord on a tile a line runs through can be started', () => {
+    const table = chordTableFor(FIELD, SEL15);
+    const mid = (tile: number, c: number) => {
+      const [a, b] = worldChord(FIELD, table, tile, c);
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    };
+    const setup = () => {
+      const e = make({ tapInsideRivalCircuits: true });
+      e.addPlayer('a', 'Ann', SEL15);
+      e.addPlayer('b', 'Bob', SEL15);
+      return e;
+    };
+    // Ann's line runs through one chord of a two-chord tile (not its first
+    // tile, which would turn it round) and leaves the other free — they
+    // neither cross nor touch. A tap right on Ann's chord, by Ann or by Bob,
+    // starts on the free one.
+    let checked = 0;
+    for (let start = 0; start < FIELD.count && checked < 3; start++) {
+      if (tileChords(FIELD, table, start).length === 0) continue;
+      const probe = setup();
+      const first = probe.tap('a', start, tileCenter(FIELD, start)).result;
+      if (!first.ok) continue;
+      runUntil(probe, () => probe.getPath(first.path)?.status !== 'growing');
+      const line = probe.getPath(first.path);
+      if (!line) continue;
+      const hit = line.steps.slice(1).find((q) => {
+        if (tileChords(FIELD, table, q.tile).length !== 2) return false;
+        if (line.steps.filter((x) => x.tile === q.tile).length !== 1) return false;
+        return !chordsConflict(worldChord(FIELD, table, q.tile, 0), worldChord(FIELD, table, q.tile, 1), true);
+      });
+      if (!hit) continue;
+      for (const who of ['a', 'b']) {
+        const e = setup();
+        const again = e.tap('a', start, tileCenter(FIELD, start)).result;
+        if (!again.ok) throw new Error('replay refused');
+        runUntil(e, () => e.getPath(again.path)?.status !== 'growing');
+        const r = e.tap(who, hit.tile, mid(hit.tile, hit.chord)).result;
+        expect(r.ok).toBe(true);
+        if (r.ok) expect(e.getPath(r.path)!.steps[0]).toMatchObject({ tile: hit.tile, chord: 1 - hit.chord });
+      }
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+
 
   it("a tap inside a rival's closed circuit is refused", () => {
     // Find, on either family and over a handful of clean rules, a closed loop
