@@ -22,10 +22,11 @@ you.
    random clean rule (one from the family's kernel, so every tile pairs up).
    The rules that draw one endless line exist; finding them is the game.
 2. **Tap a tile.** It fades and takes your colour, and the chord nearest your tap
-   starts growing out of one end, picked at random. Or **drag** (finger or
-   mouse): every tile you pass over becomes the next start, tapped as soon as
-   you have a head free — sweep across an area you hold to keep filling it in.
-   Pan with two fingers, or a right-, middle- or shift-drag; wheel or pinch zooms.
+   starts growing out of one end, picked at random. Or **press and hold**
+   (finger or mouse) for a moment, then drag: every tile you pass over becomes
+   the next start, tapped as soon as you have a head free — sweep across an
+   area you hold to keep filling it in. A plain drag pans (so do two fingers,
+   or a right-, middle- or shift-drag); wheel or pinch zooms.
 3. **It grows.** One tile per step; the step interval shrinks with your score
    (`baseStepMs / (1 + score × speedPerPoint)`, floored at `minStepMs`). Each tile
    entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
