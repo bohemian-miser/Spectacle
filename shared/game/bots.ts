@@ -48,7 +48,7 @@ export class Bots {
       const p = this.engine.players.get(bot.id);
       if (!p) continue;
       const heads = this.engine.headLimit(p);
-      if (heads > 0 && p.paths.filter((path) => path.status === 'growing').length >= heads) continue;
+      if (heads > 0 && this.engine.headsInUse(p) >= heads) continue;
       if (now < bot.nextTapAt) continue;
       bot.nextTapAt = now + 1000 + this.rng.int(3000);
       // A bot holding captured patterns draws with any of them.

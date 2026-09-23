@@ -140,6 +140,20 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   mode), a growing line entering a tile where another of your lines conflicts (same test as a
   rival hit) goes `stuck` — no cut — and your own lines block taps per chord.
   Tests that pin the older mode set `overlapOwnLines: false`.
+- **Flip, don't layer, across your own patterns** (`flipOwnLines: true`, the
+  default, on top of `overlapOwnLines`). Your lines of different patterns
+  never share a tile: a line you started (growing, or its tap) reaching a tile
+  one of your lines of another pattern is on removes that whole line (`wipe`,
+  no `by`; its points fold into the flipper — zero-sum, nothing re-scored),
+  redraws every tile it was on with the flipper's chords (`sprout`: every
+  chord there no line meets, strung into runs) and each run becomes a
+  `spawned` line (`step.spawned`, `PathWire.spawned`) that grows outward from
+  both ends (`twoWay`: turns round once when its head stops). Spawned lines
+  don't count against heads (`headsInUse`) or trigger respawn delay, and they
+  never flip anything — they stop at another of your patterns. That is what
+  keeps it from cascading: a soak with flipping pieces ran to ~80k pieces in
+  five minutes on hex. Same-pattern meetings (joins, running over) are
+  unchanged. Tests that pin layering set `flipOwnLines: false`.
 - **Captured patterns.** Closing a circuit (loop or edge-to-edge region)
   round a rival's line — every step's midpoint inside — takes that line's
   rule into your `patterns` (index 0 is always your own rule; captures are

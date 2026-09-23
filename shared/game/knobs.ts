@@ -88,6 +88,16 @@ export interface Knobs {
    * A rival must cut each layered line.
    */
   overlapOwnLines: boolean;
+  /**
+   * Your lines of different patterns never share a tile. On: a line (growing,
+   * or a tap) that reaches a tile one of your lines of another pattern is on
+   * flips that whole line to its own pattern — the old line goes, every tile
+   * it was on is redrawn with the new pattern's chords, and those pieces grow
+   * outward from both ends (they don't use up your heads). The pieces stop at
+   * another of your patterns rather than flip it, so flips don't cascade.
+   * Off: `overlapOwnLines` decides, as before.
+   */
+  flipOwnLines: boolean;
 
   // --- housekeeping --------------------------------------------------------
   /** Closed circuits a player keeps on the board, oldest dropped first (0 = unlimited). */
@@ -132,6 +142,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   tapOntoOthers: false,
   tapInsideRivalCircuits: false,
   overlapOwnLines: true,
+  flipOwnLines: true,
 
   maxCompletedCircuits: 0,
   maxLivePaths: 0,

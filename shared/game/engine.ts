@@ -40,7 +40,14 @@
  *  - (`takeEnclosed`) the lines themselves change hands too: every rival
  *    line wholly inside the circuit — loops, edge-to-edge claims, lines still
  *    growing — becomes yours, drawn with the captured pattern, and its points
- *    come with it (zero-sum: the rival loses them).
+ *    come with it (zero-sum: the rival loses them);
+ *  - (`flipOwnLines`) your lines of different patterns never share a tile: a
+ *    line reaching a tile one of your lines of another pattern is on flips
+ *    that line to its own pattern. The old line goes (its points fold into
+ *    the flipping line), every tile it was on is redrawn with the new
+ *    pattern's chords, and those pieces grow outward from both ends without
+ *    using up a head. The pieces themselves flip nothing: they stop at
+ *    another of your patterns, so a flip never cascades.
  */
 
 import type { Pt, Segment } from '../tiles';
@@ -52,6 +59,7 @@ import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
 import {
   chordTableFor,
+  type ChordEnd,
   chordsConflict,
   continuations,
   nearestChord,
@@ -81,6 +89,10 @@ export interface Path {
   readonly table: ChordTable;
   /** Index of that pattern in the owner's `patterns`. */
   pattern: number;
+  /** Made by a flip, not a tap: it doesn't count against the owner's heads. */
+  spawned?: boolean;
+  /** When its head stops, it turns round once and grows out of its other end (a flip's pieces). */
+  twoWay?: boolean;
 }
 
 /** A rule a player can draw with, and the colour its lines take. */
@@ -232,6 +244,13 @@ export class Engine {
     return headLimit(this.knobs, p.patterns.length);
   }
 
+  /** Lines of `p`'s that are growing and take up a head (a flip's pieces don't). */
+  headsInUse(p: Player): number {
+    let n = 0;
+    for (const q of p.paths) if (q.status === 'growing' && !q.spawned) n++;
+    return n;
+  }
+
   /** Choose which pattern `id`'s taps draw with. */
   setActive(id: string, index: number): GameEvent[] {
     const p = this.players.get(id);
@@ -248,6 +267,7 @@ export class Engine {
         const wire: { -readonly [K in keyof PathWire]: PathWire[K] } = { id: path.id, owner: path.owner, status: path.status, steps: path.steps };
         if (path.region) wire.region = path.region;
         if (path.pattern !== 0) wire.pattern = path.pattern;
+        if (path.spawned) wire.spawned = true;
         paths.push(wire);
       }
     }
@@ -263,7 +283,7 @@ export class Engine {
       return { result: { ok: false, reason: 'still recovering from that collision' }, events: ev };
     }
     const heads = this.headLimit(p);
-    if (heads > 0 && p.paths.filter((q) => q.status === 'growing').length >= heads) {
+    if (heads > 0 && this.headsInUse(p) >= heads) {
       return { result: { ok: false, reason: heads > 1 ? 'your lines are still growing' : 'your line is still growing' }, events: ev };
     }
     if (!Number.isInteger(tile) || tile < 0 || tile >= this.field.count) {
@@ -326,7 +346,8 @@ export class Engine {
    * The chord of `tile` nearest `at` that player `id` may start on with
    * `pattern`: none of their own lines on it or crossing it (with
    * `overlapOwnLines`, none of their lines of the same pattern on it, and none
-   * of another pattern on the tile at all), nor a rival's unless
+   * of another pattern on the tile at all — unless `flipOwnLines`, when the
+   * tap flips those), nor a rival's unless
    * `tapOntoOthers`. When every chord is blocked, the reason (for the chord
    * nearest `at`).
    */
@@ -359,6 +380,8 @@ export class Engine {
     let rival = false;
     for (const other of occ) {
       const mine = other.owner === id;
+      // A line of another of your patterns gets flipped by the tap.
+      if (mine && this.knobs.flipOwnLines && !sameRule(other.rule, rule)) continue;
       if (mine && this.knobs.overlapOwnLines) {
         // Your lines of the same pattern block only the chord they are on;
         // one of another pattern keeps the whole tile.
@@ -429,7 +452,7 @@ export class Engine {
     }
     if (out.kind === 'dead' && this.joinBehind(p, path, ev)) return;
     if (out.kind === 'dead' || out.kind === 'junction') {
-      this.setStatus(path, 'stuck', ev);
+      this.stop(path, ev);
       return;
     }
     const s = out.step;
@@ -440,12 +463,12 @@ export class Engine {
     }
     if (path.steps.some((q) => q.tile === s.tile && q.chord === s.chord)) {
       // Re-entered the middle of ourselves (only possible via a junction).
-      this.setStatus(path, 'stuck', ev);
+      this.stop(path, ev);
       return;
     }
     const own = this.meetOwn(p, path, s);
     if (own === 'stop') {
-      this.setStatus(path, 'stuck', ev);
+      this.stop(path, ev);
       return;
     }
     if (own) this.join(p, path, own, ev);
@@ -453,6 +476,23 @@ export class Engine {
     if (this.knobs.maxPathLength > 0 && path.steps.length >= this.knobs.maxPathLength) {
       this.setStatus(path, 'stuck', ev);
     }
+  }
+
+  /**
+   * The head of `path` can go no further. A flip's piece (`twoWay`) turns
+   * round, once, to grow out of its other end; anything else is stuck.
+   */
+  private stop(path: Path, ev: GameEvent[]): void {
+    if (path.twoWay) {
+      path.twoWay = false;
+      const s = path.steps[0];
+      const back = continuations(this.field, path.table, s.tile, s.chord, s.a);
+      if (back.some((o) => !path.steps.some((q) => q.tile === o.tile && q.chord === o.chord))) {
+        this.turnRound(path, ev);
+        return;
+      }
+    }
+    this.setStatus(path, 'stuck', ev);
   }
 
   /**
@@ -469,6 +509,12 @@ export class Engine {
     const mine: [Pt, Pt] = [s.a, s.b];
     for (const other of occ) {
       if (other.owner !== p.id || other === path) continue;
+      // Another pattern's line is flipped as the step lands (`addStep`) — by a
+      // line you started; a flip's own pieces stop there, or flips would cascade.
+      if (this.knobs.flipOwnLines && !sameRule(other.rule, path.rule)) {
+        if (path.spawned) return 'stop';
+        continue;
+      }
       if (other.status !== 'closed' && sameRule(other.rule, path.rule)) {
         const first = other.steps[0];
         const last = other.steps[other.steps.length - 1];
@@ -522,6 +568,7 @@ export class Engine {
 
   /** Extend `path` by one step. Returns false when the step was a fatal collision. */
   private addStep(p: Player, path: Path, s: WalkStep, ev: GameEvent[]): boolean {
+    const flipped = this.knobs.flipOwnLines && !path.spawned ? this.flipOwn(p, path, s.tile, ev) : null;
     const hitOwner = this.cutRivals(p, s, ev);
     if (hitOwner !== null && this.knobs.mutualCut) {
       // The collision is drawn (so both players see where it happened), then
@@ -530,6 +577,7 @@ export class Engine {
       path.steps.push(s);
       p.combo = this.knobs.comboStart;
       this.dropPath(path, hitOwner, ev, chordMid(s));
+      if (flipped) this.sprout(p, path, flipped, ev);
       return false;
     }
     const stepEv = this.stepEvent(p, path, s);
@@ -543,14 +591,142 @@ export class Engine {
     ev.push(stepEv);
     path.points += this.knobs.pointsPerTile;
     this.addScore(p, this.knobs.pointsPerTile, ev);
+    if (flipped) this.sprout(p, path, flipped, ev);
     return true;
+  }
+
+  /**
+   * `path` is about to step onto `tile`: every line of its owner's of another
+   * pattern on that tile goes, its points folded into `path` (nothing is lost
+   * or scored twice). Returns the tiles those lines were on, or null when
+   * there were none.
+   */
+  private flipOwn(p: Player, path: Path, tile: number, ev: GameEvent[]): Set<number> | null {
+    const occ = this.occupancy.get(tile);
+    if (!occ) return null;
+    let tiles: Set<number> | null = null;
+    for (const other of [...occ]) {
+      if (other.owner !== p.id || other === path || sameRule(other.rule, path.rule)) continue;
+      tiles ??= new Set();
+      for (const q of other.steps) tiles.add(q.tile);
+      path.points += other.points;
+      other.points = 0;
+      this.dropPath(other, undefined, ev);
+    }
+    return tiles;
+  }
+
+  /**
+   * Redraw flipped `tiles` with `path`'s pattern: each of its chords there
+   * that no line is on or meets, strung into runs along the strand. Each run
+   * becomes a line of `p`'s that grows outward from both ends (a run that
+   * already closes is a circuit on the spot). Placing them scores nothing —
+   * the tiles were already paid for.
+   */
+  private sprout(p: Player, path: Path, tiles: ReadonlySet<number>, ev: GameEvent[]): void {
+    const { field } = this;
+    const table = path.table;
+    const key = (t: number, c: number): number => t * 64 + c;
+    const free = new Set<number>();
+    for (const t of tiles) {
+      tileChords(field, table, t).forEach((_, c) => {
+        if (!this.sproutBlocked(p, path.rule, t, worldChord(field, table, t, c))) free.add(key(t, c));
+      });
+    }
+    const used = new Set<number>();
+    const next = (cur: WalkStep): WalkStep | ChordEnd | null => {
+      const o = continuations(field, table, cur.tile, cur.chord, cur.b).find((e) => free.has(key(e.tile, e.chord)));
+      if (!o) return null;
+      if (used.has(key(o.tile, o.chord))) return o;
+      used.add(key(o.tile, o.chord));
+      const seg = worldChord(field, table, o.tile, o.chord);
+      return { tile: o.tile, chord: o.chord, a: seg[o.end], b: seg[1 - o.end] };
+    };
+    const isStep = (x: WalkStep | ChordEnd): x is WalkStep => 'a' in x;
+    for (const k of free) {
+      if (used.has(k)) continue;
+      used.add(k);
+      const seed = startStep(field, table, Math.floor(k / 64), k % 64, 1);
+      const fwd: WalkStep[] = [seed];
+      let closed = false;
+      for (;;) {
+        const n = next(fwd[fwd.length - 1]);
+        if (!n) break;
+        if (!isStep(n)) {
+          closed = key(n.tile, n.chord) === k;
+          break;
+        }
+        fwd.push(n);
+      }
+      const back: WalkStep[] = [];
+      if (!closed) {
+        let cur: WalkStep = { tile: seed.tile, chord: seed.chord, a: seed.b, b: seed.a };
+        for (;;) {
+          const n = next(cur);
+          if (!n || !isStep(n)) break;
+          back.push(n);
+          cur = n;
+        }
+      }
+      const steps = [...back.reverse().map((q) => ({ tile: q.tile, chord: q.chord, a: q.b, b: q.a })), ...fwd];
+      const piece: Path = {
+        id: this.nextPathId++,
+        owner: p.id,
+        status: 'growing',
+        steps: [],
+        progress: 0,
+        points: 0,
+        rule: path.rule,
+        table,
+        pattern: path.pattern,
+        spawned: true,
+        twoWay: !closed,
+      };
+      p.paths.push(piece);
+      this.pathsById.set(piece.id, piece);
+      for (const q of steps) {
+        ev.push(this.stepEvent(p, piece, q));
+        piece.steps.push(q);
+        let occ = this.occupancy.get(q.tile);
+        if (!occ) {
+          occ = new Set();
+          this.occupancy.set(q.tile, occ);
+        }
+        occ.add(piece);
+      }
+      if (closed) this.closeCircuit(p, piece, ev);
+    }
+  }
+
+  /** May a flip's piece be laid on segment `seg` of `tile`? Not over or across any line. */
+  private sproutBlocked(p: Player, rule: PlayerRule, tile: number, seg: Segment): boolean {
+    const occ = this.occupancy.get(tile);
+    if (!occ) return false;
+    for (const other of occ) {
+      if (other.owner === p.id) {
+        // One pattern's chords never cross each other; another's keeps its tile.
+        if (!sameRule(other.rule, rule)) return true;
+        if (other.steps.some((q) => q.tile === tile && sameSeg(seg, worldChord(this.field, other.table, tile, q.chord)))) return true;
+      } else if (this.pathMeets(other, tile, seg)) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** A path's step event; the first one says which pattern drew it. */
   private stepEvent(p: Player, path: Path, s: WalkStep): GameEvent {
-    return path.steps.length === 0 && path.pattern !== 0
-      ? { t: 'step', path: path.id, owner: p.id, step: s, pattern: path.pattern }
-      : { t: 'step', path: path.id, owner: p.id, step: s };
+    const e: { -readonly [K in keyof Extract<GameEvent, { t: 'step' }>]: Extract<GameEvent, { t: 'step' }>[K] } = {
+      t: 'step',
+      path: path.id,
+      owner: p.id,
+      step: s,
+    };
+    if (path.steps.length === 0) {
+      if (path.pattern !== 0) e.pattern = path.pattern;
+      if (path.spawned) e.spawned = true;
+    }
+    return e;
   }
 
   /**
@@ -749,7 +925,7 @@ export class Engine {
   private dropPath(path: Path, by: string | undefined, ev: GameEvent[], at?: Pt): void {
     const p = this.players.get(path.owner);
     // A head lost in a collision (either side of it) costs a moment before the next.
-    if (p && by !== undefined && path.status === 'growing') p.respawnAt = this.now + this.knobs.respawnDelayMs;
+    if (p && by !== undefined && path.status === 'growing' && !path.spawned) p.respawnAt = this.now + this.knobs.respawnDelayMs;
     // A dropped path must not grow again: `tick` may be mid-way through its
     // steps for this tick, and one more would resurrect it as a ghost.
     path.status = 'stuck';

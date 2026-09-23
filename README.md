@@ -58,6 +58,13 @@ you.
    line and claim their side. `overlapOwnLines` off (`KNOB_OVERLAP_OWN_LINES=0`)
    is the older mode: a line that runs into your own stops there, and your own
    lines block only the chords they are on, like a rival's.
+   Your lines of *different* patterns never pile up on one tile, though: a
+   line you start that reaches one of your lines of another pattern flips it.
+   The old line goes (its points come with the new one), every tile it was on
+   is redrawn in the new pattern, and those pieces grow outward from both ends
+   on their own, without taking up a head. They don't flip anything
+   themselves; they stop at your other patterns. `flipOwnLines` off
+   (`KNOB_FLIP_OWN_LINES=0`) layers them instead.
    Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
    next tap lands.
 6. **Crossing.** When a line enters a tile where another player's chord crosses

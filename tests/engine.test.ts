@@ -531,7 +531,8 @@ describe('engine', () => {
        * Returns the loop and the second line once it stops growing.
        */
       function second(knobs: Partial<Knobs>, start: number) {
-        const e = make({ ...knobs, maxHeads: 1, headsWithCapture: 1 });
+        // These pin layering; the flip has its own tests below.
+        const e = make({ flipOwnLines: false, ...knobs, maxHeads: 1, headsWithCapture: 1 });
         e.addPlayer('a', 'Ann', BIG);
         const a = e.players.get('a')!;
         const loop = e.tap('a', 57, chordMid(BIG, 57)).result;
@@ -582,7 +583,7 @@ describe('engine', () => {
           return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
         };
         const setup = () => {
-          const e = make({ overlapOwnLines: true, maxHeads: 1, headsWithCapture: 1 });
+          const e = make({ overlapOwnLines: true, flipOwnLines: false, maxHeads: 1, headsWithCapture: 1 });
           e.addPlayer('a', 'Ann', BIG);
           const loop = e.tap('a', 57, chordMid(BIG, 57)).result;
           if (!loop.ok) throw new Error('loop refused');
@@ -631,6 +632,95 @@ describe('engine', () => {
           return;
         }
         throw new Error('no shared tile found');
+      });
+
+      describe('flipOwnLines', () => {
+        const small = chordTableFor(FIELD, SMALL);
+
+        /** Tiles Ann has lines of more than one pattern on. */
+        const mixed = (e: Engine) => {
+          const rules = new Map<number, Set<string>>();
+          for (const q of e.players.get('a')!.paths) {
+            for (const s of q.steps) {
+              let set = rules.get(s.tile);
+              if (!set) rules.set(s.tile, (set = new Set()));
+              set.add(q.table.key);
+            }
+          }
+          return [...rules.values()].filter((x) => x.size > 1).length;
+        };
+        const settle = (e: Engine) =>
+          runUntil(e, () => !e.players.get('a')!.paths.some((q) => q.status === 'growing'), 20000);
+
+        /** Ann's closed BIG loop, with SMALL held and active. */
+        function withLoop(knobs: Partial<Knobs> = {}) {
+          const e = make({ flipOwnLines: true, maxHeads: 1, headsWithCapture: 1, ...knobs });
+          e.addPlayer('a', 'Ann', BIG);
+          const a = e.players.get('a')!;
+          const loop = e.tap('a', 57, chordMid(BIG, 57)).result;
+          if (!loop.ok) throw new Error('loop refused');
+          runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+          a.patterns.push({ rule: SMALL, table: small, color: a.color });
+          e.setActive('a', 1);
+          return { e, a, loop: e.getPath(loop.path)! };
+        }
+
+        /** A tile off the loop whose SMALL line grows into it. */
+        function grownIn(): number {
+          for (let t = 0; t < FIELD.count; t++) {
+            if (tileChords(FIELD, small, t).length === 0) continue;
+            const probe = second({ overlapOwnLines: true }, t);
+            if (!probe.line || !meets(probe.loop, probe.line) || probe.loop.steps.some((q) => q.tile === t)) continue;
+            return t;
+          }
+          throw new Error('no SMALL line runs into the loop');
+        }
+
+        /** A tile of the loop SMALL draws on. */
+        function onLoop(): number {
+          const { loop } = withLoop();
+          return loop.steps.map((q) => q.tile).find((x) => tileChords(FIELD, small, x).length > 0)!;
+        }
+
+        it('a line reaching another of your patterns flips it: the old line goes, its tiles sprout the new pattern', () => {
+          const t = grownIn();
+          const { e, a, loop } = withLoop();
+          const loopTiles = new Set(loop.steps.map((q) => q.tile));
+          expect(e.tap('a', t, tileCenter(FIELD, t)).result.ok).toBe(true);
+          const all = runUntil(e, () => e.getPath(loop.id) === undefined);
+          expect(all.some((x) => x.t === 'wipe' && x.path === loop.id && x.by === undefined)).toBe(true);
+          const pieces = a.paths.filter((q) => q.spawned);
+          expect(pieces.length).toBeGreaterThan(0);
+          expect(pieces.every((q) => q.pattern === 1 && q.table.key === small.key)).toBe(true);
+          expect(pieces.some((q) => q.steps.some((s) => loopTiles.has(s.tile)))).toBe(true);
+          expect(all.some((x) => x.t === 'step' && x.spawned === true && x.pattern === 1)).toBe(true);
+          settle(e);
+          expect(mixed(e)).toBe(0);
+          // Nothing lost or scored twice: the score is exactly what Ann's lines carry.
+          expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
+        });
+
+        it('a tap onto another of your patterns flips it instead of being refused', () => {
+          const tile = onLoop();
+          const { e, loop } = withLoop();
+          expect(e.tap('a', tile, tileCenter(FIELD, tile)).result.ok).toBe(true);
+          expect(e.getPath(loop.id)).toBeUndefined();
+          settle(e);
+          expect(mixed(e)).toBe(0);
+        });
+
+        it("a flip's pieces grow without taking up a head", () => {
+          const tile = onLoop();
+          const { e, a } = withLoop();
+          const r = e.tap('a', tile, tileCenter(FIELD, tile)).result;
+          if (!r.ok) throw new Error(r.reason);
+          runUntil(e, () => e.getPath(r.path)?.status !== 'growing');
+          expect(e.headsInUse(a)).toBe(0);
+          const far = [...Array(FIELD.count).keys()].find(
+            (x) => tileChords(FIELD, small, x).length > 0 && e.pathsOn(x).length === 0 && !e.insideRivalCircuit('a', tileCenter(FIELD, x)),
+          )!;
+          expect(e.tap('a', far, tileCenter(FIELD, far)).result.ok).toBe(true);
+        });
       });
     });
   });
