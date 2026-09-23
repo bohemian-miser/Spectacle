@@ -318,7 +318,7 @@ describe('engine', () => {
       return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     };
     const setup = () => {
-      const e = make({ tapInsideRivalCircuits: true });
+      const e = make({ tapInsideRivalCircuits: true, overlapOwnLines: false });
       e.addPlayer('a', 'Ann', SEL15);
       e.addPlayer('b', 'Bob', SEL15);
       return e;
@@ -522,7 +522,7 @@ describe('engine', () => {
           const on = second({ overlapOwnLines: true }, t);
           if (!on.line || !meets(on.loop, on.line)) continue;
           // The same tap with the knob off stops short of Ann's loop.
-          const off = second({}, t);
+          const off = second({ overlapOwnLines: false }, t);
           expect(off.line).not.toBeNull();
           expect(off.line!.status).toBe('stuck');
           expect(meets(off.loop, off.line!)).toBe(false);

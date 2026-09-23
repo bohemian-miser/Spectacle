@@ -60,7 +60,7 @@ describe('the field edge', () => {
   });
 
   it('a tap on your own line is refused', () => {
-    const e = new Engine(FIELD, { ...DEFAULT_KNOBS }, mulberry32(1));
+    const e = new Engine(FIELD, { ...DEFAULT_KNOBS, overlapOwnLines: false }, mulberry32(1));
     e.addPlayer('a', 'Ann', FASS);
     const { tile, chord } = edgeToEdge();
     tapChord(e, 'a', tile, chord);
@@ -146,7 +146,7 @@ describe('the field edge', () => {
 
   it('a line stops as soon as it runs into another of your lines', () => {
     const { rng, exit } = steered();
-    const e = new Engine(FIELD, { ...DEFAULT_KNOBS, junctionPolicy: 'stop', crossingMode: 'tile' }, rng);
+    const e = new Engine(FIELD, { ...DEFAULT_KNOBS, junctionPolicy: 'stop', crossingMode: 'tile', overlapOwnLines: false }, rng);
     e.addPlayer('a', 'Ann', FASS);
     // A tile with two chords on different strands; B's approach avoids A's strand.
     let setup: { t: number; bTile: number; bChord: number; toward: { x: number; y: number } } | null = null;
