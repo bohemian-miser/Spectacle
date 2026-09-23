@@ -137,7 +137,8 @@ leaves it is retired after about fifteen idle minutes, and idle costs nothing.
 The free tier covers roughly fifty instance-hours a month. Cloud Run caps a
 request, and so a WebSocket, at an hour; the client reconnects and resumes the
 same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 90 s), so
-nobody notices. Cold start is a few seconds for the first arrival.
+nobody notices. A page refresh does the same: the tab keeps its resume ticket
+in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
 
 **A free `e2-micro` VM — always on.** One `e2-micro` in `us-west1`,
 `us-central1` or `us-east1` is in the always-free tier, so idle is free

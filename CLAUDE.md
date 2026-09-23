@@ -41,6 +41,8 @@ server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
                   dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
+  session.ts      The tab's resume ticket (sessionStorage) and the
+                  once-per-browser help flag (localStorage).
   net.ts          WebSocket GameConnection. local.ts: LocalConnection = the
                   same engine + bots inside the tab (solo mode / Pages build).
   store.ts        Applies events into plain mutable state; version counters.
@@ -164,6 +166,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   it above the claim tint and only past `ARROW_MIN_SCALE` — below that it is
   speckle. In WebGL it is one instanced pass over the whole transform buffer
   (the shape is identical for every leaf type).
+- **Resume tokens are single use.** Every `welcome` carries a fresh token and
+  the old one dies (only its SHA-256 is kept server-side). A resume can take
+  over a player whose old socket is still open — a refresh usually beats the
+  old page's close — so `tryResume` renames the old client before closing it,
+  or its close handler would unhook the new one. The ticket lives in
+  `sessionStorage`: per tab, gone with the tab, never sent as a cookie.
 - **`tests/resume.test.ts` used to flake** (~1 in 5): the resume window only
   opens once the *server's* close handler has detached the player, so a
   reconnect fired straight after `ws.close()` legitimately got a new player.

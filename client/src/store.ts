@@ -85,6 +85,7 @@ export class Store {
     this.paths.clear();
     this.occupancy.clear();
     this.you = '';
+    this.resume = null;
     this.geometryVersion++;
     this.emit();
   }
