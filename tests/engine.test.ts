@@ -5,7 +5,8 @@ import { DEFAULT_KNOBS, stepIntervalMs, type Knobs } from '../shared/game/knobs'
 import type { GameEvent } from '../shared/game/protocol';
 import { defaultRule, fassRule, oddTypes, randomCleanRule, ruleFromCombo, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
-import { chordTableFor, tileChords, walkStrand } from '../shared/game/strand';
+import { chordTableFor, tileChords, walkStrand, worldChord } from '../shared/game/strand';
+import { mixHsl } from '../shared/game/color';
 
 const FIELD = buildField({ family: 'spectre', level: 3, rootTile: 'Delta' });
 const SEL15 = ruleFromCombo('spectre', '15', '0000000000');
@@ -339,5 +340,87 @@ describe('engine', () => {
     expect(r.result).toEqual({ ok: false, reason: "that's inside someone else's circuit" });
     // The owner may still start inside their own circuit.
     expect(e.tap('a', found.inside, tileCenter(found.field, found.inside)).result.ok).toBe(true);
+  });
+
+  describe('capturing a pattern', () => {
+    // On this board a 105-step loop of BIG encloses a 3-step loop of SMALL.
+    const BIG = validateRule({ family: 'spectre', subset: [0, 3, 5, 6], matching: [2, 0, 0, 0, 0, 0, 0, 0, 0, 0] }, 'spectre')!;
+    const SMALL = validateRule({ family: 'spectre', subset: [2, 5, 7, 8], matching: [0, 2, 2, 2, 0, 0, 2, 0, 0, 0] }, 'spectre')!;
+    const chordMid = (rule: typeof BIG, tile: number) => {
+      const [a, b] = worldChord(FIELD, chordTableFor(FIELD, rule), tile, 0);
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    };
+
+    /** Bea closes her small loop, then Ann closes hers round it. */
+    function enclose(knobs: Partial<Knobs> = {}) {
+      const e = make(knobs);
+      e.addPlayer('a', 'Ann', BIG);
+      e.addPlayer('b', 'Bea', SMALL);
+      expect(e.tap('b', 125, chordMid(SMALL, 125)).result.ok).toBe(true);
+      runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+      expect(e.tap('a', 57, chordMid(BIG, 57)).result.ok).toBe(true);
+      const ev = runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+      return { e, ev };
+    }
+
+    it('closing a circuit round a rival line takes its pattern, coloured 2/3 yours', () => {
+      const { e, ev } = enclose();
+      const a = e.players.get('a')!;
+      const b = e.players.get('b')!;
+      const cap = ev.find((x) => x.t === 'capture');
+      expect(cap).toMatchObject({ t: 'capture', id: 'a', pattern: { from: 'b', fromName: 'Bea', rule: SMALL } });
+      expect(ev.findIndex((x) => x.t === 'capture')).toBeGreaterThan(ev.findIndex((x) => x.t === 'circuit'));
+      expect(a.patterns.map((q) => q.rule)).toEqual([BIG, SMALL]);
+      expect(a.patterns[1].color).toBe(mixHsl(a.color, b.color, 1 / 3));
+      expect(a.active).toBe(0);
+      // Bea keeps her line.
+      expect(b.paths).toHaveLength(1);
+      expect(e.publicOf(a)).toMatchObject({ active: 0, patterns: [{ rule: BIG, color: a.color }, { rule: SMALL, from: 'b' }] });
+    });
+
+    it('a captured pattern gives a second head, and taps draw with the active pattern', () => {
+      const { e } = enclose();
+      const a = e.players.get('a')!;
+      expect(e.headLimit(a)).toBe(2);
+      expect(e.setActive('a', 1)).toEqual([{ t: 'active', id: 'a', active: 1 }]);
+      expect(e.setActive('a', 1)).toEqual([]);
+      expect(e.setActive('a', 5)).toEqual([]);
+      // Two heads, both on the captured pattern: free tiles SMALL draws on.
+      const table = chordTableFor(FIELD, SMALL);
+      const free: number[] = [];
+      for (let i = 0; i < FIELD.count && free.length < 2; i++) {
+        if (tileChords(FIELD, table, i).length === 0 || e.pathsOn(i).length > 0 || e.insideRivalCircuit('a', tileCenter(FIELD, i))) continue;
+        if (free.some((t) => Math.hypot(tileCenter(FIELD, t).x - tileCenter(FIELD, i).x, tileCenter(FIELD, t).y - tileCenter(FIELD, i).y) < 30)) continue;
+        const r = e.tap('a', i, tileCenter(FIELD, i));
+        if (!r.result.ok) continue;
+        free.push(i);
+        const step = r.events.find((x) => x.t === 'step');
+        expect(step).toMatchObject({ owner: 'a', pattern: 1 });
+      }
+      expect(free).toHaveLength(2);
+      const growing = a.paths.filter((q) => q.status === 'growing');
+      expect(growing).toHaveLength(2);
+      expect(growing.every((q) => q.pattern === 1 && q.rule === a.patterns[1].rule)).toBe(true);
+      const third = e.tap('a', 0, tileCenter(FIELD, 0)).result;
+      expect(third).toEqual({ ok: false, reason: 'your lines are still growing' });
+      expect(e.snapshot().paths.filter((q) => q.owner === 'a' && q.pattern === 1)).toHaveLength(2);
+    });
+
+    it('a new rule drops captured patterns and the extra head', () => {
+      const { e } = enclose();
+      const a = e.players.get('a')!;
+      expect(a.patterns).toHaveLength(2);
+      const ev = e.setRule('a', SEL15);
+      expect(ev.at(-1)).toMatchObject({ t: 'rule', id: 'a' });
+      expect(a.patterns.map((q) => q.rule)).toEqual([SEL15]);
+      expect(a.active).toBe(0);
+      expect(e.headLimit(a)).toBe(1);
+    });
+
+    it('captureOnEnclose off: a circuit takes nothing', () => {
+      const { e, ev } = enclose({ captureOnEnclose: false });
+      expect(ev.some((x) => x.t === 'capture')).toBe(false);
+      expect(e.players.get('a')!.patterns).toHaveLength(1);
+    });
   });
 });

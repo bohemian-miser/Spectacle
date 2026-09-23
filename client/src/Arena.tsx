@@ -92,6 +92,19 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     rendererRef.current?.setSettings(settings);
   }, [settings]);
 
+  // 1–9 pick a pattern, like clicking its tab.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      if (e.ctrlKey || e.metaKey || e.altKey || e.target instanceof HTMLInputElement) return;
+      const n = Number(e.key);
+      const me = store.me;
+      if (!me || !Number.isInteger(n) || n < 1 || n > me.patterns.length) return;
+      if (n - 1 !== me.active) conn.send({ t: 'pattern', index: n - 1 });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [store, conn]);
+
   const tap = (sx: number, sy: number): void => {
     const r = rendererRef.current;
     if (!r || !store.field) return;
@@ -163,6 +176,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const status = parts.length ? `${parts.join(' · ')} · ${tiles} tiles` : '';
   const top = board.slice(0, 8);
   const meRow = me && rank > top.length ? board[rank - 1] : null;
+  const active = me ? (me.patterns[me.active] ?? me.patterns[0]) : undefined;
   const speed = me && store.knobs ? (1000 / stepIntervalMs(store.knobs, me.score)).toFixed(1) : '–';
 
   return (
@@ -187,7 +201,8 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         </div>
         {status && <div className="hud-line hud-status">{status}</div>}
         <div className="hud-line hud-rule">
-          <code>{me ? describeRule(me.rule) : ''}</code>
+          <code>{active ? describeRule(active.rule) : ''}</code>
+          {active?.from !== undefined && <> · {active.fromName}'s</>}
         </div>
         <div className="hud-actions">
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
@@ -212,10 +227,32 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         </ol>
       </div>
 
+      {me && me.patterns.length > 1 && (
+        <div className="pattern-tabs" role="tablist" aria-label="Patterns">
+          {me.patterns.map((q, i) => {
+            const label = q.from === undefined ? 'Your pattern' : `${q.fromName || 'Someone'}'s pattern`;
+            return (
+              <button
+                key={i}
+                type="button"
+                role="tab"
+                aria-selected={i === me.active}
+                aria-label={label}
+                title={`${label} (${i + 1})`}
+                className={`pattern-tab${i === me.active ? ' is-active' : ''}`}
+                style={{ background: strandColor(scheme, q.color) }}
+                onClick={() => i !== me.active && conn.send({ t: 'pattern', index: i })}
+              />
+            );
+          })}
+        </div>
+      )}
+
       {showHelp && (
         <div className="hud hud-help">
           <b>Tap a tile</b> to start a line along your rule. It grows on its own, faster as you score.
           Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
+          Loop round someone's line to take its pattern.
           <div className="muted">Drag to pan · wheel or pinch to zoom</div>
           <button type="button" className="btn" onClick={hideHelp}>
             Got it

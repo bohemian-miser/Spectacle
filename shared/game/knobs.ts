@@ -39,6 +39,12 @@ export interface Knobs {
   minStepMs: number;
   /** Growing lines ("heads") a player may have at once; a tap beyond it is refused (0 = unlimited). */
   maxHeads: number;
+  /** Head limit once a player holds a captured pattern (never below `maxHeads`; 0 = unlimited). */
+  headsWithCapture: number;
+  /** Close a circuit round a rival's line and you take its pattern. */
+  captureOnEnclose: boolean;
+  /** Captured patterns a player may hold; later captures are ignored (0 = unlimited). */
+  maxCapturedPatterns: number;
   /** After losing a head in a collision, how long before a tap may start a new one. */
   respawnDelayMs: number;
   /** Stop growing after this many tiles (0 = unlimited). */
@@ -89,6 +95,9 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   speedPerPoint: 0.015,
   minStepMs: 10,
   maxHeads: 1,
+  headsWithCapture: 2,
+  captureOnEnclose: true,
+  maxCapturedPatterns: 8,
   respawnDelayMs: 500,
   maxPathLength: 0,
   junctionPolicy: 'random',

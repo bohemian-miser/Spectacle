@@ -33,10 +33,13 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   engine.ts       Authoritative simulation: players, paths, tap, tick, cuts,
                   circuits, zero-sum points, tap restrictions. Deterministic
                   given its Rng. No I/O.
-  bots.ts         Bots: random clean rules, tap when idle, aim beside rivals.
+  bots.ts         Bots: random clean rules, tap with a head to spare, aim
+                  beside rivals, draw with any captured pattern.
+  color.ts        mixHsl — a captured pattern's colour.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
-                  events (step/wipe/circuit/score/status/join/leave/rule/refused).
+                  events (step/wipe/circuit/score/status/join/leave/rule/
+                  capture/active/refused). Client → server adds `pattern`.
 server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
                   dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
 client/src/       Vite + React.
@@ -97,7 +100,8 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
 - **One head, unlimited lines.** A player has one growing line at a time
-  (`maxHeads: 1`); a tap while it grows is refused. Finished lines (stuck or
+  (`maxHeads: 1`) until they capture a pattern (then `headsWithCapture: 2`);
+  a tap past the limit is refused. Finished lines (stuck or
   closed) stay until cut — `maxLivePaths` / `maxCompletedCircuits` exist as
   knobs, default 0. Losing the head in a collision blocks the next tap for
   `respawnDelayMs` (500 ms, engine clock = summed tick dt).
@@ -111,6 +115,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   whose polygon is the line plus the smaller arc of `fieldOutline` (`region`
   on the path, the `circuit` event and `PathWire`); use `pathPolygon()` for
   any "inside" test so both kinds of circuit count.
+- **Captured patterns.** Closing a circuit (loop or edge-to-edge region)
+  round a rival's line — every step's midpoint inside — takes that line's
+  rule into your `patterns` (index 0 is always your own rule; captures are
+  only appended, so a path's `pattern` index stays valid; a new rule clears
+  them). The rival keeps the line. A captured pattern draws in
+  `mixHsl(yours, theirs, 1/3)`. `active` picks what a tap draws with; only
+  the active pattern is sketched on the board. A path carries its own
+  `rule`/`table` — use `path.table`, never the owner's, for anything about
+  a path's chords (collisions, turning round). UI: sticky tabs on the left
+  wall, bottom left; the active one is longer; keys 1–9.
 - **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,

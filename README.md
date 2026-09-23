@@ -55,7 +55,17 @@ you.
    long ones deep, the hue walking round from the owner's colour as they grow
    — and wash the tiles they enclose in it. The washes stack and each level of
    nesting sinks deeper, so a circuit inside a circuit stands apart.
-7. **New rule** = restart: your lines go, and (by default) your score too.
+7. **Capture.** Close a circuit round a rival's line and you take its pattern
+   (the rule that drew it; they keep the line). It becomes yours to draw with,
+   in a colour two thirds yours and one third theirs. Your patterns sit as
+   tabs on the left wall, bottom left — the one sticking out furthest is
+   active, and your next tap draws with it (click a tab, or press 1–9). Only
+   the active pattern is sketched on the free tiles. Holding a captured
+   pattern also gives you a second head (`headsWithCapture`, default 2): two
+   lines growing at once, from any mix of your patterns
+   (`captureOnEnclose`, `maxCapturedPatterns`).
+8. **New rule** = restart: your lines and captured patterns go, and (by
+   default) your score too.
 
 **Which way a tile is turned.** Every hexagon in the arena is the same regular
 hexagon, so nothing in its outline says which of the six rotations it is sitting

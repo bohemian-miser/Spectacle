@@ -186,6 +186,17 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .board-gap { justify-content: center; color: var(--muted); line-height: 0.8; }
 .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .hud-help { left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(92vw, 520px); display: grid; gap: 8px; }
+/* Patterns: sticky tabs on the left wall, bottom up; the active one sticks out further. */
+.pattern-tabs { position: absolute; left: 0; bottom: 24px; display: flex; flex-direction: column-reverse; gap: 6px; pointer-events: auto; }
+.pattern-tab {
+  width: 22px; height: 30px; padding: 0; cursor: pointer;
+  border: 1px solid var(--line); border-left: 0; border-radius: 0 5px 5px 0;
+  box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 18%, transparent);
+  transition: width 0.15s ease-out;
+}
+.pattern-tab:hover { width: 28px; }
+.pattern-tab.is-active { width: 44px; border-color: var(--text); }
+.pattern-tab:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .toasts { position: absolute; left: 50%; top: 10px; transform: translateX(-50%); display: grid; justify-items: center; gap: 3px; pointer-events: none; }
 .toast { background: color-mix(in srgb, var(--panel) 88%, transparent); border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 12px; line-height: 1.4; animation: toast-in 0.2s ease-out; }
 .toast.is-good { border-color: var(--good); }

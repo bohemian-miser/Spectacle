@@ -261,6 +261,11 @@ wss.on('connection', (ws) => {
         pending.push(...engine.setRule(client.id, rule));
         return;
       }
+      case 'pattern': {
+        if (!client.joined) return;
+        pending.push(...engine.setActive(client.id, Number(msg.index)));
+        return;
+      }
       case 'ping':
         send(ws, { t: 'pong', n: msg.n });
         return;

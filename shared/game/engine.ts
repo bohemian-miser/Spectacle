@@ -23,13 +23,18 @@
  *    grow the other way. A line that runs edge to edge closes like a circuit
  *    and claims the smaller side of the board it cuts off;
  *  - a player has at most `maxHeads` growing lines, and losing one in a
- *    collision blocks the next tap for `respawnDelayMs`.
+ *    collision blocks the next tap for `respawnDelayMs`;
+ *  - closing a circuit round a rival's line takes that line's pattern: it
+ *    joins your patterns, draws in a colour 2/3 yours and 1/3 theirs, and
+ *    you choose which pattern a tap draws with. Holding a captured pattern
+ *    lifts your head limit to `headsWithCapture`.
  */
 
 import type { Pt } from '../tiles';
+import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, type Field } from './field';
 import { stepIntervalMs, type Knobs } from './knobs';
-import type { GameEvent, PathStatus, PathWire, PlayerPublic } from './protocol';
+import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
 import {
@@ -57,6 +62,20 @@ export interface Path {
   points: number;
   /** An edge-to-edge line's claimed region (line + field outline), once closed. */
   region?: Pt[];
+  /** The pattern it grows by — its owner's own rule or one they captured. */
+  readonly rule: PlayerRule;
+  readonly table: ChordTable;
+  /** Index of that pattern in the owner's `patterns`. */
+  readonly pattern: number;
+}
+
+/** A rule a player can draw with, and the colour its lines take. */
+export interface Pattern {
+  readonly rule: PlayerRule;
+  readonly table: ChordTable;
+  readonly color: string;
+  readonly from?: string;
+  readonly fromName?: string;
 }
 
 
@@ -73,6 +92,10 @@ export interface Player {
   readonly bot: boolean;
   /** Engine time before which a tap may not start a new head (collision cooldown). */
   respawnAt: number;
+  /** `patterns[0]` is `rule`/`table`; captured patterns follow. */
+  readonly patterns: Pattern[];
+  /** The pattern a tap draws with. */
+  active: number;
 }
 
 export type TapResult = { ok: true; path: number } | { ok: false; reason: string };
@@ -81,6 +104,16 @@ export type TapResult = { ok: true; path: number } | { ok: false; reason: string
 export function playerColor(index: number): string {
   const h = (index * 137.50776405003785) % 360;
   return `hsl(${h.toFixed(1)}, 90%, 62%)`;
+}
+
+function sameRule(a: PlayerRule, b: PlayerRule): boolean {
+  return (
+    a.family === b.family &&
+    a.subset.length === b.subset.length &&
+    a.subset.every((x, i) => x === b.subset[i]) &&
+    a.matching.length === b.matching.length &&
+    a.matching.every((x, i) => x === b.matching[i])
+  );
 }
 
 export class Engine {
@@ -106,17 +139,21 @@ export class Engine {
 
   addPlayer(id: string, name: string, rule: PlayerRule, bot = false): GameEvent[] {
     if (this.players.has(id)) return [];
+    const color = playerColor(this.colorIndex++);
+    const table = chordTableFor(this.field, rule);
     const player: Player = {
       id,
       name,
-      color: playerColor(this.colorIndex++),
+      color,
       rule,
-      table: chordTableFor(this.field, rule),
+      table,
       score: 0,
       combo: this.knobs.comboStart,
       paths: [],
       bot,
       respawnAt: 0,
+      patterns: [{ rule, table, color }],
+      active: 0,
     };
     this.players.set(id, player);
     return [{ t: 'join', player: this.publicOf(player) }];
@@ -140,6 +177,9 @@ export class Engine {
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
     p.rule = rule;
     p.table = chordTableFor(this.field, rule);
+    p.patterns.length = 0;
+    p.patterns.push({ rule, table: p.table, color: p.color });
+    p.active = 0;
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     ev.push({ t: 'rule', id, rule, score: p.score, combo: p.combo });
@@ -147,7 +187,33 @@ export class Engine {
   }
 
   publicOf(p: Player): PlayerPublic {
-    return { id: p.id, name: p.name, color: p.color, rule: p.rule, score: p.score, combo: p.combo, bot: p.bot };
+    return {
+      id: p.id,
+      name: p.name,
+      color: p.color,
+      rule: p.rule,
+      score: p.score,
+      combo: p.combo,
+      bot: p.bot,
+      patterns: p.patterns.map(patternPublic),
+      active: p.active,
+    };
+  }
+
+  /** How many lines `p` may have growing at once (0 = unlimited). */
+  headLimit(p: Player): number {
+    const k = this.knobs;
+    if (p.patterns.length < 2) return k.maxHeads;
+    if (k.maxHeads === 0 || k.headsWithCapture === 0) return 0;
+    return Math.max(k.maxHeads, k.headsWithCapture);
+  }
+
+  /** Choose which pattern `id`'s taps draw with. */
+  setActive(id: string, index: number): GameEvent[] {
+    const p = this.players.get(id);
+    if (!p || !Number.isInteger(index) || index < 0 || index >= p.patterns.length || index === p.active) return [];
+    p.active = index;
+    return [{ t: 'active', id, active: index }];
   }
 
   snapshot(): { players: PlayerPublic[]; paths: PathWire[] } {
@@ -155,11 +221,10 @@ export class Engine {
     const paths: PathWire[] = [];
     for (const p of this.players.values()) {
       for (const path of p.paths) {
-        paths.push(
-          path.region
-            ? { id: path.id, owner: path.owner, status: path.status, steps: path.steps, region: path.region }
-            : { id: path.id, owner: path.owner, status: path.status, steps: path.steps },
-        );
+        const wire: { -readonly [K in keyof PathWire]: PathWire[K] } = { id: path.id, owner: path.owner, status: path.status, steps: path.steps };
+        if (path.region) wire.region = path.region;
+        if (path.pattern !== 0) wire.pattern = path.pattern;
+        paths.push(wire);
       }
     }
     return { players, paths };
@@ -173,13 +238,14 @@ export class Engine {
     if (this.now < p.respawnAt) {
       return { result: { ok: false, reason: 'still recovering from that collision' }, events: ev };
     }
-    if (this.knobs.maxHeads > 0 && p.paths.filter((q) => q.status === 'growing').length >= this.knobs.maxHeads) {
-      return { result: { ok: false, reason: 'your line is still growing' }, events: ev };
+    const heads = this.headLimit(p);
+    if (heads > 0 && p.paths.filter((q) => q.status === 'growing').length >= heads) {
+      return { result: { ok: false, reason: heads > 1 ? 'your lines are still growing' : 'your line is still growing' }, events: ev };
     }
     if (!Number.isInteger(tile) || tile < 0 || tile >= this.field.count) {
       return { result: { ok: false, reason: 'no such tile' }, events: ev };
     }
-    const turn = p.paths.find((q) => q.status === 'stuck' && q.steps[0].tile === tile && this.canTurn(p, q));
+    const turn = p.paths.find((q) => q.status === 'stuck' && q.steps[0].tile === tile && this.canTurn(q));
     if (turn) {
       this.turnRound(turn, ev);
       return { result: { ok: true, path: turn.id }, events: ev };
@@ -187,8 +253,12 @@ export class Engine {
     if (this.occupancy.get(tile) && [...this.occupancy.get(tile)!].some((path) => path.owner === id)) {
       return { result: { ok: false, reason: "that's your own line" }, events: ev };
     }
-    if (tileChords(this.field, p.table, tile).length === 0) {
-      return { result: { ok: false, reason: 'your rule draws no line on this tile' }, events: ev };
+    const pattern = p.patterns[p.active] ?? p.patterns[0];
+    if (tileChords(this.field, pattern.table, tile).length === 0) {
+      return {
+        result: { ok: false, reason: p.active === 0 ? 'your rule draws no line on this tile' : 'that pattern draws no line on this tile' },
+        events: ev,
+      };
     }
     if (!this.knobs.tapOntoOthers) {
       const occ = this.occupancy.get(tile);
@@ -199,7 +269,7 @@ export class Engine {
     if (!this.knobs.tapInsideRivalCircuits && this.insideRivalCircuit(id, tileCenter(this.field, tile))) {
       return { result: { ok: false, reason: "that's inside someone else's circuit" }, events: ev };
     }
-    const chord = nearestChord(this.field, p.table, tile, at);
+    const chord = nearestChord(this.field, pattern.table, tile, at);
     const exitEnd: 0 | 1 = this.rng.next() < 0.5 ? 0 : 1;
 
     // Every tap starts another line; the old ones sit stuck or closed (or keep
@@ -217,10 +287,13 @@ export class Engine {
       steps: [],
       progress: 0,
       points: 0,
+      rule: pattern.rule,
+      table: pattern.table,
+      pattern: p.patterns.indexOf(pattern),
     };
     p.paths.push(path);
     this.pathsById.set(path.id, path);
-    this.addStep(p, path, startStep(this.field, p.table, tile, chord, exitEnd), ev);
+    this.addStep(p, path, startStep(this.field, pattern.table, tile, chord, exitEnd), ev);
     return { result: { ok: true, path: path.id }, events: ev };
   }
 
@@ -251,11 +324,11 @@ export class Engine {
     const cur = path.steps[path.steps.length - 1];
     const out = stepForward(
       this.field,
-      p.table,
+      path.table,
       cur,
       this.knobs.junctionPolicy === 'random' ? this.pickJunction : undefined,
     );
-    if (out.kind === 'dead' && onFieldBoundary(this.field, cur.tile, cur.b) && this.startsAtEdge(p, path)) {
+    if (out.kind === 'dead' && onFieldBoundary(this.field, cur.tile, cur.b) && this.startsAtEdge(path)) {
       // Edge to edge: the line cuts the board in two and claims the smaller side.
       const line = [...path.steps.map((q) => q.a), cur.b];
       const region = boundaryRegion(this.field, line);
@@ -291,12 +364,13 @@ export class Engine {
     if (hitOwner !== null && this.knobs.mutualCut) {
       // The collision is drawn (so both players see where it happened), then
       // the line that caused it goes too, with everything it had earned.
+      ev.push(this.stepEvent(p, path, s));
       path.steps.push(s);
-      ev.push({ t: 'step', path: path.id, owner: p.id, step: s });
       p.combo = this.knobs.comboStart;
       this.dropPath(path, hitOwner, ev);
       return false;
     }
+    const stepEv = this.stepEvent(p, path, s);
     path.steps.push(s);
     let occ = this.occupancy.get(s.tile);
     if (!occ) {
@@ -304,10 +378,17 @@ export class Engine {
       this.occupancy.set(s.tile, occ);
     }
     occ.add(path);
-    ev.push({ t: 'step', path: path.id, owner: p.id, step: s });
+    ev.push(stepEv);
     path.points += this.knobs.pointsPerTile;
     this.addScore(p, this.knobs.pointsPerTile, ev);
     return true;
+  }
+
+  /** A path's step event; the first one says which pattern drew it. */
+  private stepEvent(p: Player, path: Path, s: WalkStep): GameEvent {
+    return path.steps.length === 0 && path.pattern !== 0
+      ? { t: 'step', path: path.id, owner: p.id, step: s, pattern: path.pattern }
+      : { t: 'step', path: path.id, owner: p.id, step: s };
   }
 
   /**
@@ -323,11 +404,9 @@ export class Engine {
       if (other.owner === p.id) continue;
       let hit = this.knobs.crossingMode === 'tile';
       if (!hit) {
-        const rival = this.players.get(other.owner);
-        if (!rival) continue;
         for (const q of other.steps) {
           if (q.tile !== s.tile) continue;
-          const seg = worldChord(this.field, rival.table, q.tile, q.chord);
+          const seg = worldChord(this.field, other.table, q.tile, q.chord);
           if (chordsConflict(mine, seg, this.knobs.touchCounts)) {
             hit = true;
             break;
@@ -345,18 +424,18 @@ export class Engine {
   }
 
   /** Does the line's start sit on the field's edge, with nowhere to go behind it? */
-  private startsAtEdge(p: Player, path: Path): boolean {
+  private startsAtEdge(path: Path): boolean {
     const s = path.steps[0];
-    return continuations(this.field, p.table, s.tile, s.chord, s.a).length === 0 && onFieldBoundary(this.field, s.tile, s.a);
+    return continuations(this.field, path.table, s.tile, s.chord, s.a).length === 0 && onFieldBoundary(this.field, s.tile, s.a);
   }
 
   /** A stuck line that ran off the edge, whose start still has somewhere to go. */
-  private canTurn(p: Player, path: Path): boolean {
+  private canTurn(path: Path): boolean {
     const last = path.steps[path.steps.length - 1];
-    if (continuations(this.field, p.table, last.tile, last.chord, last.b).length > 0) return false;
+    if (continuations(this.field, path.table, last.tile, last.chord, last.b).length > 0) return false;
     if (!onFieldBoundary(this.field, last.tile, last.b)) return false;
     const s = path.steps[0];
-    return continuations(this.field, p.table, s.tile, s.chord, s.a).length > 0;
+    return continuations(this.field, path.table, s.tile, s.chord, s.a).length > 0;
   }
 
   /** Run the line's steps the other way and let it grow again from its old start. */
@@ -372,7 +451,8 @@ export class Engine {
   private closeCircuit(p: Player, path: Path, ev: GameEvent[], region?: Pt[]): void {
     const k = this.knobs;
     const length = path.steps.length;
-    const area = polygonArea(region ?? path.steps.map((s) => s.a)) / this.field.tileArea;
+    const polygon = region ?? path.steps.map((s) => s.a);
+    const area = polygonArea(polygon) / this.field.tileArea;
     const combo = p.combo;
     const bonus = Math.round(
       combo * (k.circuitBase + k.circuitLengthWeight * length + k.circuitAreaWeight * area),
@@ -388,10 +468,48 @@ export class Engine {
     p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
     path.points += bonus;
     this.addScore(p, bonus, ev);
+    if (k.captureOnEnclose) this.captureEnclosed(p, polygon, ev);
     // Trim old trophies only when a cap is set.
     if (k.maxCompletedCircuits > 0) {
       const closed = p.paths.filter((q) => q.status === 'closed');
       while (closed.length > k.maxCompletedCircuits) this.dropPath(closed.shift()!, undefined, ev);
+    }
+  }
+
+  /**
+   * Take the pattern of every rival line wholly inside `polygon` (a circuit `p`
+   * just closed) that `p` does not already hold. The rival keeps their line.
+   */
+  private captureEnclosed(p: Player, polygon: readonly Pt[], ev: GameEvent[]): void {
+    if (polygon.length < 3) return;
+    const cap = this.knobs.maxCapturedPatterns;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const q of polygon) {
+      if (q.x < minX) minX = q.x;
+      if (q.x > maxX) maxX = q.x;
+      if (q.y < minY) minY = q.y;
+      if (q.y > maxY) maxY = q.y;
+    }
+    const inside = (q: Pt): boolean =>
+      q.x >= minX && q.x <= maxX && q.y >= minY && q.y <= maxY && pointInPolygon(q, polygon as Pt[]);
+    for (const rival of this.players.values()) {
+      if (rival.id === p.id) continue;
+      for (const other of rival.paths) {
+        if (cap > 0 && p.patterns.length - 1 >= cap) return;
+        if (other.steps.length === 0) continue;
+        if (p.patterns.some((q) => sameRule(q.rule, other.rule))) continue;
+        const enclosed = other.steps.every((s) => inside({ x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 }));
+        if (!enclosed) continue;
+        const pattern: Pattern = {
+          rule: other.rule,
+          table: other.table,
+          color: mixHsl(p.color, rival.color, 1 / 3),
+          from: rival.id,
+          fromName: rival.name,
+        };
+        p.patterns.push(pattern);
+        ev.push({ t: 'capture', id: p.id, pattern: patternPublic(pattern) });
+      }
     }
   }
 
@@ -470,4 +588,10 @@ export class Engine {
   getPath(id: number): Path | undefined {
     return this.pathsById.get(id);
   }
+}
+
+function patternPublic(q: Pattern): PatternPublic {
+  return q.from === undefined
+    ? { rule: q.rule, color: q.color }
+    : { rule: q.rule, color: q.color, from: q.from, fromName: q.fromName ?? '' };
 }
