@@ -41,6 +41,13 @@ export interface Knobs {
   maxHeads: number;
   /** Head limit once a player holds a captured pattern (never below `maxHeads`; 0 = unlimited). */
   headsWithCapture: number;
+  /**
+   * Each further captured pattern (a new kind of rival line) adds one more
+   * head on top of `headsWithCapture`, up to `maxHeadsTotal`.
+   */
+  headPerCapture: boolean;
+  /** Ceiling on the head limit that captures can lift you to (0 = no ceiling). */
+  maxHeadsTotal: number;
   /** Close a circuit round a rival's line and you take its pattern. */
   captureOnEnclose: boolean;
   /** Captured patterns a player may hold; later captures are ignored (0 = unlimited). */
@@ -105,8 +112,10 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   minStepMs: 10,
   maxHeads: 1,
   headsWithCapture: 2,
+  headPerCapture: true,
+  maxHeadsTotal: 12,
   captureOnEnclose: true,
-  maxCapturedPatterns: 8,
+  maxCapturedPatterns: 11,
   respawnDelayMs: 500,
   maxPathLength: 0,
   junctionPolicy: 'random',
@@ -135,7 +144,10 @@ export function stepIntervalMs(knobs: Knobs, score: number): number {
 export function headLimit(knobs: Knobs, patterns: number): number {
   if (patterns < 2) return knobs.maxHeads;
   if (knobs.maxHeads === 0 || knobs.headsWithCapture === 0) return 0;
-  return Math.max(knobs.maxHeads, knobs.headsWithCapture);
+  const first = Math.max(knobs.maxHeads, knobs.headsWithCapture);
+  if (!knobs.headPerCapture) return first;
+  const n = first + (patterns - 2);
+  return knobs.maxHeadsTotal > 0 ? Math.max(first, Math.min(knobs.maxHeadsTotal, n)) : n;
 }
 
 /**
