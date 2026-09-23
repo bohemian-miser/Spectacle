@@ -109,6 +109,15 @@ describe('engine', () => {
     expect(wipes).toHaveLength(2);
     expect(wipes[0]).toMatchObject({ owner: 'a', by: 'b' });
     expect(wipes[1]).toMatchObject({ owner: 'b', by: 'a' });
+    // Both carry where it happened (for the clients' sparks)…
+    const at = (wipes[0] as { at?: { x: number; y: number } }).at;
+    expect(at).toBeDefined();
+    expect((wipes[1] as { at?: unknown }).at).toEqual(at);
+    // …on the hitter's drawn chord (a spectre is concave, so not always inside the tile).
+    const hit = tb.events.find((x) => x.t === 'step' && x.owner === 'b');
+    if (hit?.t !== 'step') throw new Error('no step');
+    expect(at!.x).toBeCloseTo((hit.step.a.x + hit.step.b.x) / 2, 2);
+    expect(at!.y).toBeCloseTo((hit.step.a.y + hit.step.b.y) / 2, 2);
     // Mutual: both lines are gone.
     expect(e.players.get('a')!.paths).toHaveLength(0);
     expect(e.players.get('b')!.paths).toHaveLength(0);

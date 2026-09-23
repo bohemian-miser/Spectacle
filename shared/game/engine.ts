@@ -128,6 +128,11 @@ function samePt(a: Pt, b: Pt): boolean {
   return Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
 }
 
+/** Where a step sits on the board: its chord's midpoint (rounded, it goes on the wire). */
+function chordMid(s: WalkStep): Pt {
+  return { x: Math.round((s.a.x + s.b.x) * 500) / 1000, y: Math.round((s.a.y + s.b.y) * 500) / 1000 };
+}
+
 function sameSeg(a: Segment, b: Segment): boolean {
   return (samePt(a[0], b[0]) && samePt(a[1], b[1])) || (samePt(a[0], b[1]) && samePt(a[1], b[0]));
 }
@@ -506,7 +511,7 @@ export class Engine {
       ev.push(this.stepEvent(p, path, s));
       path.steps.push(s);
       p.combo = this.knobs.comboStart;
-      this.dropPath(path, hitOwner, ev);
+      this.dropPath(path, hitOwner, ev, chordMid(s));
       return false;
     }
     const stepEv = this.stepEvent(p, path, s);
@@ -555,7 +560,7 @@ export class Engine {
       if (hit) {
         const rival = this.players.get(other.owner);
         if (rival) rival.combo = this.knobs.comboStart;
-        this.dropPath(other, p.id, ev);
+        this.dropPath(other, p.id, ev, chordMid(s));
         hitOwner = other.owner;
       }
     }
@@ -683,9 +688,10 @@ export class Engine {
 
   /**
    * Remove a path from the board. Its points leave with it: the owner loses
-   * them, and a cutter (`by`) receives `stealFraction` of them.
+   * them, and a cutter (`by`) receives `stealFraction` of them. `at` is where
+   * the collision happened (the clients spark there).
    */
-  private dropPath(path: Path, by: string | undefined, ev: GameEvent[]): void {
+  private dropPath(path: Path, by: string | undefined, ev: GameEvent[], at?: Pt): void {
     const p = this.players.get(path.owner);
     // A head lost in a collision (either side of it) costs a moment before the next.
     if (p && by !== undefined && path.status === 'growing') p.respawnAt = this.now + this.knobs.respawnDelayMs;
@@ -704,7 +710,13 @@ export class Engine {
       occ.delete(path);
       if (occ.size === 0) this.occupancy.delete(s.tile);
     }
-    ev.push(by === undefined ? { t: 'wipe', path: path.id, owner: path.owner } : { t: 'wipe', path: path.id, owner: path.owner, by });
+    ev.push(
+      by === undefined
+        ? { t: 'wipe', path: path.id, owner: path.owner }
+        : at === undefined
+          ? { t: 'wipe', path: path.id, owner: path.owner, by }
+          : { t: 'wipe', path: path.id, owner: path.owner, by, at },
+    );
     if (path.points > 0) {
       if (p) this.addScore(p, -path.points, ev);
       const cutter = by !== undefined ? this.players.get(by) : undefined;

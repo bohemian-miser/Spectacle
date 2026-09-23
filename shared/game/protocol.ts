@@ -91,8 +91,8 @@ export type GameEvent =
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }
   /** A line that ran off the board turned round: its steps now run the other way, and it grows again. */
   | { readonly t: 'reverse'; readonly path: number }
-  /** A path was cut (`by`) or abandoned (`by` absent) and is gone. */
-  | { readonly t: 'wipe'; readonly path: number; readonly owner: string; readonly by?: string }
+  /** A path was cut (`by`, in a collision at `at`) or abandoned (`by` absent) and is gone. */
+  | { readonly t: 'wipe'; readonly path: number; readonly owner: string; readonly by?: string; readonly at?: Pt }
   | {
       readonly t: 'circuit';
       readonly path: number;

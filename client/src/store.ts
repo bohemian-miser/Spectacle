@@ -35,6 +35,22 @@ export interface Toast {
   readonly at: number;
 }
 
+/** A line cut in a collision, fading off the board (the renderer drops it when done). */
+export interface Dying {
+  readonly path: ClientPath;
+  readonly color: string;
+  readonly mine: boolean;
+  readonly born: number;
+}
+
+/** A little spray of sparks where a collision happened, in the cut line's colour. */
+export interface Burst {
+  readonly at: Pt;
+  readonly color: string;
+  readonly seed: number;
+  readonly born: number;
+}
+
 export type Listener = () => void;
 
 export class Store {
@@ -48,6 +64,9 @@ export class Store {
   /** tile → paths on it (for the faded-tile render). */
   readonly occupancy = new Map<number, Set<ClientPath>>();
   toasts: Toast[] = [];
+  /** Collision after-effects, in `performance.now()` time; the renderer prunes them. */
+  dying: Dying[] = [];
+  bursts: Burst[] = [];
   connected = false;
   version = 0;
   /** Bumped whenever geometry changed (paths), for the renderer's dirty flag. */
@@ -100,6 +119,8 @@ export class Store {
     this.players.clear();
     this.paths.clear();
     this.occupancy.clear();
+    this.dying = [];
+    this.bursts = [];
     this.you = '';
     this.resume = null;
     this.geometryVersion++;
@@ -124,6 +145,8 @@ export class Store {
         this.players.clear();
         this.paths.clear();
         this.occupancy.clear();
+        this.dying = [];
+        this.bursts = [];
         this.you = msg.you;
         this.resume = { id: msg.you, token: msg.token };
         this.knobs = msg.knobs;
@@ -225,6 +248,15 @@ export class Store {
       }
       case 'wipe': {
         const path = this.paths.get(ev.path);
+        if (path && ev.by !== undefined) {
+          // Cut: the line goes kaput where it was hit and fades out, rather than blinking away.
+          const color = this.pathColor(path);
+          const born = performance.now();
+          if (color) {
+            this.dying.push({ path, color, mine: path.owner === this.you, born });
+            if (ev.at) this.bursts.push({ at: ev.at, color, seed: path.id, born });
+          }
+        }
         if (path) {
           this.paths.delete(ev.path);
           for (const s of path.steps) {
