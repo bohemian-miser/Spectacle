@@ -71,7 +71,9 @@ you.
    — and wash the tiles they enclose in it. The washes stack and each level of
    nesting sinks deeper, so a circuit inside a circuit stands apart.
 7. **Capture.** Close a circuit round a rival's line and you take its pattern
-   (the rule that drew it; they keep the line). It becomes yours to draw with,
+   (the rule that drew it) — and the area is yours: every rival line wholly
+   inside, loops and claims included, changes hands with the points it
+   carries (`takeEnclosed`; off, they keep their lines). The pattern becomes yours to draw with,
    in a colour two thirds yours and one third theirs. Your patterns sit as
    tabs on the left wall, bottom left — the one sticking out furthest is
    active, and your next tap draws with it (click a tab, or press 1–9). Only

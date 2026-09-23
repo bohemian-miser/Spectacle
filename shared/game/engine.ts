@@ -36,7 +36,11 @@
  *    joins your patterns, draws in a colour 2/3 yours and 1/3 theirs, and
  *    you choose which pattern a tap draws with. Holding a captured pattern
  *    lifts your head limit to `headsWithCapture`, and (`headPerCapture`)
- *    each further one adds a head, up to `maxHeadsTotal`.
+ *    each further one adds a head, up to `maxHeadsTotal`;
+ *  - (`takeEnclosed`) the lines themselves change hands too: every rival
+ *    line wholly inside the circuit — loops, edge-to-edge claims, lines still
+ *    growing — becomes yours, drawn with the captured pattern, and its points
+ *    come with it (zero-sum: the rival loses them).
  */
 
 import type { Pt, Segment } from '../tiles';
@@ -62,7 +66,8 @@ import {
 
 export interface Path {
   readonly id: number;
-  readonly owner: string;
+  /** Changes hands when a rival closes a circuit round it (`takeEnclosed`). */
+  owner: string;
   status: PathStatus;
   readonly steps: WalkStep[];
   /** Fractional steps accumulated since the last advance. */
@@ -75,7 +80,7 @@ export interface Path {
   readonly rule: PlayerRule;
   readonly table: ChordTable;
   /** Index of that pattern in the owner's `patterns`. */
-  readonly pattern: number;
+  pattern: number;
 }
 
 /** A rule a player can draw with, and the colour its lines take. */
@@ -643,7 +648,7 @@ export class Engine {
     p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
     path.points += bonus;
     this.addScore(p, bonus, ev);
-    if (k.captureOnEnclose) this.captureEnclosed(p, polygon, ev);
+    this.captureEnclosed(p, polygon, ev);
     // Trim old trophies only when a cap is set.
     if (k.maxCompletedCircuits > 0) {
       const closed = p.paths.filter((q) => q.status === 'closed');
@@ -652,12 +657,15 @@ export class Engine {
   }
 
   /**
-   * Take the pattern of every rival line wholly inside `polygon` (a circuit `p`
-   * just closed) that `p` does not already hold. The rival keeps their line.
+   * Every rival line wholly inside `polygon` (a circuit `p` just closed):
+   * take its pattern if `p` does not already hold it (`captureOnEnclose`), and
+   * with `takeEnclosed` take the line itself — owner, pattern index and the
+   * points it carries. A line whose pattern `p` cannot hold (the cap) stays put.
    */
   private captureEnclosed(p: Player, polygon: readonly Pt[], ev: GameEvent[]): void {
-    if (polygon.length < 3) return;
-    const cap = this.knobs.maxCapturedPatterns;
+    const k = this.knobs;
+    if (polygon.length < 3 || (!k.captureOnEnclose && !k.takeEnclosed)) return;
+    const cap = k.maxCapturedPatterns;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const q of polygon) {
       if (q.x < minX) minX = q.x;
@@ -667,24 +675,40 @@ export class Engine {
     }
     const inside = (q: Pt): boolean =>
       q.x >= minX && q.x <= maxX && q.y >= minY && q.y <= maxY && pointInPolygon(q, polygon as Pt[]);
-    for (const rival of this.players.values()) {
+    for (const rival of [...this.players.values()]) {
       if (rival.id === p.id) continue;
-      for (const other of rival.paths) {
-        if (cap > 0 && p.patterns.length - 1 >= cap) return;
+      for (const other of [...rival.paths]) {
         if (other.steps.length === 0) continue;
-        if (p.patterns.some((q) => sameRule(q.rule, other.rule))) continue;
         const enclosed = other.steps.every((s) => inside({ x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 }));
         if (!enclosed) continue;
-        const pattern: Pattern = {
-          rule: other.rule,
-          table: other.table,
-          color: mixHsl(p.color, rival.color, 1 / 3),
-          from: rival.id,
-          fromName: rival.name,
-        };
-        p.patterns.push(pattern);
-        ev.push({ t: 'capture', id: p.id, pattern: patternPublic(pattern) });
+        let index = p.patterns.findIndex((q) => sameRule(q.rule, other.rule));
+        if (index < 0 && k.captureOnEnclose && !(cap > 0 && p.patterns.length - 1 >= cap)) {
+          const pattern: Pattern = {
+            rule: other.rule,
+            table: other.table,
+            color: mixHsl(p.color, rival.color, 1 / 3),
+            from: rival.id,
+            fromName: rival.name,
+          };
+          index = p.patterns.push(pattern) - 1;
+          ev.push({ t: 'capture', id: p.id, pattern: patternPublic(pattern) });
+        }
+        if (k.takeEnclosed && index >= 0) this.takePath(other, rival, p, index, ev);
       }
+    }
+  }
+
+  /** Hand `path` from `from` to `to`, drawn with `to`'s pattern `index`; its points go with it. */
+  private takePath(path: Path, from: Player, to: Player, index: number, ev: GameEvent[]): void {
+    const i = from.paths.indexOf(path);
+    if (i >= 0) from.paths.splice(i, 1);
+    to.paths.push(path);
+    path.owner = to.id;
+    path.pattern = index;
+    ev.push({ t: 'take', path: path.id, from: from.id, owner: to.id, pattern: index });
+    if (path.points > 0) {
+      this.addScore(from, -path.points, ev);
+      this.addScore(to, path.points, ev);
     }
   }
 
