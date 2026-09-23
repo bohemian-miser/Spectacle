@@ -123,7 +123,9 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   instead it meets that line's loose end on the same chord (same rule, not
   closed), `join` folds the other line in: `wipe` (no `by`) for it, then its
   steps re-sent as `step`s of the joiner, its points carried over, never
-  re-scored. Two dead ends at the edge thus become one edge-to-edge claim.
+  re-scored. Two dead ends at the edge thus become one edge-to-edge claim. A line that
+  runs off the edge with your loose end just behind its start turns round and
+  joins it by itself (`joinBehind`) — no tap on the joint needed.
   `overlapOwnLines` (default false) is the other mode: a line grows on over
   your own instead of stopping (joins still happen), and a tap is refused on
   any tile one of your lines is on at all (per tile, not per chord), so

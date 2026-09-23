@@ -410,6 +410,7 @@ export class Engine {
         return;
       }
     }
+    if (out.kind === 'dead' && this.joinBehind(p, path, ev)) return;
     if (out.kind === 'dead' || out.kind === 'junction') {
       this.setStatus(path, 'stuck', ev);
       return;
@@ -580,6 +581,24 @@ export class Engine {
     if (!onFieldBoundary(this.field, last.tile, last.b)) return false;
     const s = path.steps[0];
     return continuations(this.field, path.table, s.tile, s.chord, s.a).length > 0;
+  }
+
+  /**
+   * A line that just ran off the edge, whose start abuts the loose end of
+   * another of its owner's lines, turns round and joins it straight away —
+   * the same as tapping its start, which is all the player could do next.
+   * Returns true when it did (the path is growing again).
+   */
+  private joinBehind(p: Player, path: Path, ev: GameEvent[]): boolean {
+    if (!this.canTurn(path)) return false;
+    const first = path.steps[0];
+    const back = stepForward(this.field, path.table, { tile: first.tile, chord: first.chord, a: first.b, b: first.a });
+    if (back.kind !== 'step') return false;
+    const meet = this.meetOwn(p, path, back.step);
+    if (meet === null || meet === 'stop') return false;
+    this.turnRound(path, ev);
+    this.join(p, path, meet, ev);
+    return true;
   }
 
   /** Run the line's steps the other way and let it grow again from its old start. */
