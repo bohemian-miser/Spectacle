@@ -532,13 +532,54 @@ describe('engine', () => {
         expect(found).toBeGreaterThan(0);
       });
 
-      it("on: a tap may not start on any tile one of your lines passes through", () => {
+      it('on: a tap may not start on a tile a line of another of your patterns passes through', () => {
         const small = chordTableFor(FIELD, SMALL);
         const probe = second({ overlapOwnLines: true }, 0);
         const tile = probe.loop.steps.map((q) => q.tile).find((t) => tileChords(FIELD, small, t).length > 0);
         expect(tile).toBeDefined();
         const r = second({ overlapOwnLines: true }, tile!);
-        expect(r.refused).toBe('you already have a line on this tile');
+        expect(r.refused).toBe('another of your patterns runs through this tile');
+      });
+
+      it('on: your lines of the same pattern block only their own chords', () => {
+        // Ann's BIG loop; then, with BIG still active, a tap right on her loop's
+        // chord in a tile that has another BIG chord starts on that free one.
+        const big = chordTableFor(FIELD, BIG);
+        const mid = (tile: number, c: number) => {
+          const [a, b] = worldChord(FIELD, big, tile, c);
+          return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+        };
+        const setup = () => {
+          const e = make({ overlapOwnLines: true, maxHeads: 1, headsWithCapture: 1 });
+          e.addPlayer('a', 'Ann', BIG);
+          const loop = e.tap('a', 57, chordMid(BIG, 57)).result;
+          if (!loop.ok) throw new Error('loop refused');
+          runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+          return { e, loop: e.getPath(loop.path)! };
+        };
+        const { loop } = setup();
+        const onLoop = (t: number, c: number) => loop.steps.some((q) => q.tile === t && q.chord === c);
+        const free = loop.steps.find((q) =>
+          tileChords(FIELD, big, q.tile).some((_, c) => !onLoop(q.tile, c)),
+        );
+        const full = loop.steps.find((q) =>
+          tileChords(FIELD, big, q.tile).every((_, c) => onLoop(q.tile, c)),
+        );
+        expect(free ?? full).toBeDefined();
+        if (free) {
+          const { e } = setup();
+          const r = e.tap('a', free.tile, mid(free.tile, free.chord)).result;
+          expect(r.ok).toBe(true);
+          if (r.ok) {
+            const start = e.getPath(r.path)!.steps[0];
+            expect(start.tile).toBe(free.tile);
+            expect(onLoop(start.tile, start.chord)).toBe(false);
+          }
+        }
+        if (full) {
+          const { e } = setup();
+          expect(e.tap('a', full.tile, mid(full.tile, full.chord)).result).toEqual({ ok: false, reason: "that's your own line" });
+        }
       });
 
       it('on: a rival must cut each of the layered lines', () => {

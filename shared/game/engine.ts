@@ -28,8 +28,8 @@
  *    it meets that line's loose end on the same chord: then they join into one
  *    (the other's steps and points fold in), so two lines that ran off the
  *    edge make one edge-to-edge claim. With `overlapOwnLines` it grows on
- *    over the top instead (joins still happen), and a tap may not start on
- *    any tile one of the player's lines passes through;
+ *    over the top instead (joins still happen); taps stay per chord, except
+ *    that a line of another of the player's patterns blocks its whole tile;
  *  - a player has at most `maxHeads` growing lines, and losing one in a
  *    collision blocks the next tap for `respawnDelayMs`;
  *  - closing a circuit round a rival's line takes that line's pattern: it
@@ -284,7 +284,7 @@ export class Engine {
     }
     // Lines block chords, not tiles: a tap on a tile some line already runs
     // through starts on the nearest chord of it that no line is on or crosses.
-    const chord = this.freeChord(id, pattern.table, tile, at);
+    const chord = this.freeChord(id, pattern, tile, at);
     if (typeof chord === 'string') return { result: { ok: false, reason: chord }, events: ev };
     if (!this.knobs.tapInsideRivalCircuits && this.insideRivalCircuit(id, tileCenter(this.field, tile))) {
       return { result: { ok: false, reason: "that's inside someone else's circuit" }, events: ev };
@@ -317,12 +317,15 @@ export class Engine {
   }
 
   /**
-   * The chord of `tile` nearest `at` that player `id` may start on: none of
-   * their own lines on it or crossing it (with `overlapOwnLines`, none of
-   * their lines on the tile at all), nor a rival's unless `tapOntoOthers`.
-   * When every chord is blocked, the reason (for the chord nearest `at`).
+   * The chord of `tile` nearest `at` that player `id` may start on with
+   * `pattern`: none of their own lines on it or crossing it (with
+   * `overlapOwnLines`, none of their lines of the same pattern on it, and none
+   * of another pattern on the tile at all), nor a rival's unless
+   * `tapOntoOthers`. When every chord is blocked, the reason (for the chord
+   * nearest `at`).
    */
-  private freeChord(id: string, table: ChordTable, tile: number, at: Pt): number | string {
+  private freeChord(id: string, pattern: { rule: PlayerRule; table: ChordTable }, tile: number, at: Pt): number | string {
+    const table = pattern.table;
     // Nearest first: the chord under the finger, then the rest by midpoint.
     const near = nearestChord(this.field, table, tile, at);
     const dist = (c: number): number => {
@@ -333,21 +336,32 @@ export class Engine {
     const order = tileChords(this.field, table, tile).map((_, c) => c).sort((x, y) => dist(x) - dist(y));
     let reason: string | null = null;
     for (const c of order) {
-      const why = this.chordBlocked(id, tile, worldChord(this.field, table, tile, c));
+      const why = this.chordBlocked(id, pattern.rule, tile, worldChord(this.field, table, tile, c));
       if (why === null) return c;
       reason ??= why;
     }
     return reason ?? 'no free line on this tile';
   }
 
-  /** Why player `id` may not start on segment `seg` of `tile`, or null when they may. */
-  private chordBlocked(id: string, tile: number, seg: Segment): string | null {
+  /**
+   * Why player `id` may not start a `rule` line on segment `seg` of `tile`, or
+   * null when they may.
+   */
+  private chordBlocked(id: string, rule: PlayerRule, tile: number, seg: Segment): string | null {
     const occ = this.occupancy.get(tile);
     if (!occ) return null;
     let rival = false;
     for (const other of occ) {
       const mine = other.owner === id;
-      if (mine && this.knobs.overlapOwnLines) return 'you already have a line on this tile';
+      if (mine && this.knobs.overlapOwnLines) {
+        // Your lines of the same pattern block only the chord they are on;
+        // one of another pattern keeps the whole tile.
+        if (!sameRule(other.rule, rule)) return 'another of your patterns runs through this tile';
+        if (other.steps.some((q) => q.tile === tile && sameSeg(seg, worldChord(this.field, other.table, tile, q.chord)))) {
+          return "that's your own line";
+        }
+        continue;
+      }
       if (!mine && this.knobs.tapOntoOthers) continue;
       if (!this.pathMeets(other, tile, seg)) continue;
       if (mine) return "that's your own line";
