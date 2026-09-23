@@ -1,17 +1,87 @@
+<div align="center">
+
 # Spectacle
 
-A massively multiplayer strand-drawing game on hexagon and Spectre tilings —
-the [Spectre](https://github.com/bohemian-miser/Spectre) explorer's edge rules
-turned into an `.io`-style arena.
+**A massively multiplayer strand-drawing game on hexagon and Spectre tilings.**
 
-Everyone shares one very large field of tiles. You make your own **rule** — which
-edge classes carry a line, and how the lines pair up inside each tile type — then
-tap a tile. Your line grows from there on its own, following *your* rule from
-tile to tile, faster as you score. Close a loop for a bonus. Run into a tail and
-you stop. Cross someone's line and it disappears — and they can do the same to
-you.
+<h2>
+  <a href="https://spectacle-iclxjyodzq-uc.a.run.app">▶&nbsp; Play the live arena</a>
+</h2>
 
-## How it plays
+<a href="https://spectacle-iclxjyodzq-uc.a.run.app"><img alt="Play online" src="https://img.shields.io/badge/PLAY%20ONLINE-live%20arena-2f6fdb?style=for-the-badge"></a>
+&nbsp;
+<a href="https://bohemian-miser.github.io/Spectacle/"><img alt="Play solo" src="https://img.shields.io/badge/PLAY%20SOLO-in%20your%20browser-3aa655?style=for-the-badge"></a>
+
+<sub>Online: everyone on one shared field, bots included. Solo: the same engine and bots running entirely in your tab, no server.</sub>
+
+<br><br>
+
+<a href="https://spectacle-iclxjyodzq-uc.a.run.app"><img src="docs/images/arena-hex.png" alt="A hexagon arena mid-game: coloured tiles, players' lines and closed circuits, the HUD and the leaderboard" width="100%"></a>
+
+</div>
+
+---
+
+The [Spectre](https://github.com/bohemian-miser/Spectre) explorer's edge rules,
+turned into an `.io`-style arena. Everyone shares one very large field of
+tiles. You design your own **rule** — which edges carry a line, and how the
+lines pair up inside each tile — then tap a tile. Your line grows from there on
+its own, following *your* rule from tile to tile, faster the more you hold.
+Close a loop and you score; run into a dead end and you stop; cross someone's
+line and you both die.
+
+## The game in 30 seconds
+
+| | |
+|---|---|
+| 🧬 **Design a rule** | Switch edge classes on and drag dot to dot to pair them up inside each tile type. The preview shows the loops and loose ends your rule makes. |
+| 👆 **Tap a tile** | Your line starts there and grows by itself, one tile per step, following your rule. Press-and-hold then drag to paint starts across an area. |
+| ⭕ **Close circuits** | A line that comes back to where it began is a circuit: points for length and enclosed area, and your combo climbs. Run edge to edge and you claim the smaller side of the field. |
+| ⚔️ **Cut and be cut** | Lines that cross both die, taking their points with them — scoring is zero-sum. You can't start on a rival's line; you have to grow into it. |
+| 🏴 **Capture** | Close a circuit round a rival's line and you take their pattern (and every rival line inside). Each captured pattern is a new way to draw, and another head growing at once. |
+| 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. Nobody will tell you which. |
+
+## Screenshots
+
+<table>
+<tr>
+<td width="50%"><img src="docs/images/rule-tiles.png" alt="The rule lab: one card per tile type, edge class numbers round each tile and the pairing drawn as blue chords"></td>
+<td width="50%"><img src="docs/images/rule-preview.png" alt="The level-3 patch preview: circuits and open lines the rule produces"></td>
+</tr>
+<tr>
+<td><b>The rule lab.</b> Every edge wears its class number; click one to switch that class on everywhere, drag dot to dot to pair lines up. Odd tiles are tails.</td>
+<td><b>The preview.</b> A level-3 patch drawn with your rule: closed circuits coloured by length, open lines in red. <i>Surprise me</i> deals a random clean rule.</td>
+</tr>
+<tr>
+<td><img src="docs/images/arena-closeup.png" alt="The arena zoomed in: hexagons with rotation arrows, the faint rule pattern and players' circuits"></td>
+<td><img src="docs/images/arena-spectre-dark.png" alt="A Spectre-tiling arena in the dark theme"></td>
+</tr>
+<tr>
+<td><b>Up close.</b> Each hexagon's arrow says which way it is turned; your rule's pattern is sketched faintly on the tiles still free.</td>
+<td><b>Spectre tilings, dark theme.</b> The same game on the aperiodic Spectre monotile — every tile type in the explorer's own colours.</td>
+</tr>
+<tr>
+<td><img src="docs/images/arena-teams.png" alt="Team colours: your lines blue, every rival red"></td>
+<td><img src="docs/images/settings.png" alt="The settings panel over a live board"></td>
+</tr>
+<tr>
+<td><b>Team colours</b> (press <kbd>T</kbd>): you in blue, everyone else in red.</td>
+<td><b>Settings apply live</b> — theme, five circuit-colour styles, a plain board, team colours.</td>
+</tr>
+</table>
+
+## Controls
+
+| Action | Mouse | Touch | Keys |
+|---|---|---|---|
+| Start a line | click a tile | tap a tile | |
+| Paint starts across an area | hold still ~0.3 s, then drag | hold, then drag | |
+| Pan | drag · right/middle/shift-drag | drag · two fingers | |
+| Zoom | wheel | pinch | |
+| Pick the pattern you draw with | click a tab (bottom left) | tap a tab | <kbd>1</kbd>–<kbd>9</kbd> |
+| Team colours | ⚙ Settings | ⚙ Settings | <kbd>T</kbd> |
+
+## The rules in full
 
 1. **Name and rule.** The lobby is the Tails-problem rule lab: every edge of
    every tile wears its class number (click one to switch that class on), and
@@ -119,7 +189,44 @@ set any of them with `KNOB_<NAME>` environment variables
 (`KNOB_BASE_STEP_MS=250 KNOB_CROSSING_MODE=tile …`). Mechanics first, balance
 later.
 
-## Running it
+## Infrastructure
+
+```mermaid
+flowchart LR
+  subgraph players["Players"]
+    B1["Browser<br/>React + Canvas / WebGL2"]
+    B2["Browser (solo)<br/>engine + bots in the tab"]
+  end
+  subgraph gcp["GCP · spectacle-game · us-central1"]
+    CR["Cloud Run<br/>Node + ws · one arena<br/>50 ms tick · bots<br/>scales to zero"]
+  end
+  subgraph gh["GitHub"]
+    CI["Actions: ci.yml<br/>typecheck · tests · build<br/>Docker · headless smoke"]
+    PUB["publish.yml → GHCR image"]
+    DEP["deploy-cloudrun.yml<br/>Workload Identity, no keys"]
+    PG["pages.yml → GitHub Pages<br/>solo-only static build"]
+  end
+  B1 <-- "WebSocket /ws<br/>events + resume tokens" --> CR
+  PG -. static files .-> B2
+  CI --> PUB
+  DEP -- "build + deploy on merge to main" --> CR
+```
+
+- **One authoritative server.** Node + [`ws`](https://github.com/websockets/ws)
+  runs the engine on a 50 ms tick and broadcasts batched events. The field is
+  deterministic from `(family, level, rootTile)`, so only that spec travels;
+  clients draw lines from the event stream without knowing anyone's rule.
+- **Cloud Run, scale to zero.** At most one instance, none when idle. The hourly
+  WebSocket cap is invisible: the client reconnects and resumes the same player
+  with a single-use token (kept for 5 minutes).
+- **Keyless CI.** Every merge to `main` builds the image and deploys it through
+  Workload Identity Federation pinned to this repository — there is no
+  service-account key anywhere.
+- **Pages.** The same engine and bots compiled into a static, solo-only build.
+- **Alternative host.** A free `e2-micro` VM with Caddy (TLS) and Watchtower
+  (auto-pull from GHCR) — see below.
+
+## Running it yourself
 
 ```bash
 npm install
@@ -245,6 +352,10 @@ npm test                 # vitest: field, strand-vs-oracle, engine mechanics, ru
 npm run typecheck
 PW_EXE=/path/to/chromium npx tsx scripts/smoke.ts   # headless round against a running server
 ```
+
+The README's screenshots come from `scripts/readme-shots.ts` (start a hex and a
+spectre server with bots, then run it; the header of the script has the
+commands) and live in `docs/images/`.
 
 CI runs all three (the smoke job builds, starts the server with bots, plays a
 round in Chromium and uploads screenshots).
