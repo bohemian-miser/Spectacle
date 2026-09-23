@@ -5,7 +5,7 @@ import { ONLINE_URL, SOLO_ONLY, type Mode } from './App';
 import { SOLO_LEVELS, type SoloOptions } from './local';
 import { RuleEditor } from './RuleEditor';
 import type { Store } from './store';
-import { ThemeToggle } from './ThemeToggle';
+import { SettingsButton } from './SettingsButton';
 
 export interface LobbyProps {
   readonly store: Store;
@@ -46,7 +46,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
             {hello && mode === 'online' ? ` ${hello.tiles.toLocaleString()} tiles, ${hello.players} playing.` : ''}
           </p>
         </div>
-        <ThemeToggle />
+        <SettingsButton />
       </header>
 
       {!inArena && (

@@ -65,6 +65,14 @@ const hud = await page.locator('.hud-me').innerText();
 console.log(hud.replace(/\n/g, ' | '));
 console.log('tile layer:', await page.evaluate(() => (document.querySelector('.arena-tiles') as HTMLCanvasElement).getContext('webgl2') ? 'webgl2' : 'canvas2d'));
 await page.screenshot({ path: out });
+// Settings apply live behind the modal: circuit colours, then the plain board.
+await page.getByRole('button', { name: 'Settings' }).click();
+await page.getByLabel('Circuit colours').selectOption('c');
+await page.getByLabel('Plain board (hide tile colours and arrows)').check();
+await page.waitForTimeout(300);
+await page.screenshot({ path: out.replace('.png', '-settings.png') });
+await page.getByLabel('Plain board (hide tile colours and arrows)').uncheck();
+await page.keyboard.press('Escape');
 // Restart with a fresh rule: New rule → Surprise me → Restart, then tap again.
 await page.getByRole('button', { name: 'New rule' }).click();
 await page.getByRole('button', { name: 'Surprise me' }).click();

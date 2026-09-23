@@ -8,8 +8,9 @@
  * Zoomed in close, your own rule is sketched faintly over the free tiles.
  */
 
-import { pathPolygon, tilesInBox, tilesInsidePolygon, type Box, type Field } from '../../shared/game/field';
+import { fieldOutline, pathPolygon, tilesInBox, tilesInsidePolygon, type Box, type Field } from '../../shared/game/field';
 import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand';
+import { getSettings, type CircuitStyle, type Settings } from './settings';
 import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { ClientPath, Store } from './store';
@@ -32,25 +33,6 @@ import {
  * little closer in than the direction arrows. It fades in over the next
  * `PATTERN_FADE` of scale, so it dims away as you zoom back out.
  */
-/**
- * Circuit colouring, while we choose one (`?circuits=a…e`):
- *  a  owner ramp — hue ±110° round the owner's colour and lightness by length;
- *     each nesting level darkens the wash 14%.
- *  b  Spectre's length palette (`circuitLengthRgb`, as in the rule lab) for
- *     loops and washes alike; nesting darkens as in a.
- *  c  depth bands — loops on the owner ramp; the wash steps its hue 50° and
- *     its lightness down with every level of nesting.
- *  d  contour stripes — loops on the length palette; nesting levels alternate
- *     light and dark like a topographic map.
- *  e  depth heatmap — loops on the length palette; the wash is a magma scale
- *     by depth (yellow, orange, red, purple, near-black).
- */
-type CircuitStyle = 'a' | 'b' | 'c' | 'd' | 'e';
-const CIRCUIT_STYLE: CircuitStyle = (() => {
-  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('circuits');
-  return v === 'b' || v === 'c' || v === 'd' || v === 'e' ? v : 'a';
-})();
-const LENGTH_PALETTE = CIRCUIT_STYLE === 'b' || CIRCUIT_STYLE === 'd' || CIRCUIT_STYLE === 'e';
 const MAGMA: readonly (readonly [number, number, number])[] = [
   [252, 214, 120],
   [247, 146, 64],
@@ -77,10 +59,14 @@ export class Renderer {
   private lastGeometry = -1;
   private lastPlayersVersion = -1;
   private board: BoardTheme = boardTheme();
+  /** How circuits are coloured (see `settings.ts`). */
+  private style: CircuitStyle = getSettings().circuitStyle;
+  /** The plain board: tiles in the ground colour, no arrows, the arena's edge drawn. */
+  private plain = getSettings().plainTiles;
   /** A closed circuit's enclosed tiles; a closed path never changes, so once is enough. */
   private readonly interiors = new WeakMap<ClientPath, readonly number[]>();
   /** A closed path's colour and darkening, keyed on the owner colour it was made from. */
-  private readonly looks = new WeakMap<ClientPath, readonly [string, readonly [string, number]]>();
+  private looks = new WeakMap<ClientPath, readonly [string, readonly [string, number]]>();
   private readonly rgbCache = new Map<string, [number, number, number]>();
   /** Tiles inside anyone else's closed circuit (rebuilt with the tints). */
   private rivalInterior = new Set<number>();
@@ -114,11 +100,12 @@ export class Renderer {
     }
     this.tiles = layer ?? createCanvasTiles(this.tileCanvas, field, fills, this.board);
     this.tiles.resize(Math.round(this.width * this.dpr), Math.round(this.height * this.dpr));
+    this.tiles.setArrows(!this.plain);
     this.lastGeometry = -1;
   }
 
   private fills(field: Field): Rgb01[] {
-    return field.leafTypes.map((type) => typeFill(type, this.board.tileDim));
+    return field.leafTypes.map((type) => (this.plain ? this.board.bg : typeFill(type, this.board.tileDim)));
   }
 
   /** Repaint in another scheme: new tile fills, ground and ink, and fresh tints. */
@@ -127,6 +114,25 @@ export class Renderer {
     if (this.field) this.tiles?.setTheme(board, this.fills(this.field));
     // The claim tint is mixed against the scheme's fills, so it has to go again.
     this.lastGeometry = -1;
+  }
+
+  /** Apply the display settings: circuit colouring and the plain board, live. */
+  setSettings(s: Settings): void {
+    if (s.circuitStyle !== this.style) {
+      this.style = s.circuitStyle;
+      this.looks = new WeakMap();
+      this.lastGeometry = -1;
+    }
+    if (s.plainTiles !== this.plain) {
+      this.plain = s.plainTiles;
+      if (this.field) this.tiles?.setTheme(this.board, this.fills(this.field));
+      this.tiles?.setArrows(!this.plain);
+      this.lastGeometry = -1;
+    }
+  }
+
+  private lengthPalette(): boolean {
+    return this.style === 'b' || this.style === 'd' || this.style === 'e';
   }
 
   fitToField(): void {
@@ -286,7 +292,7 @@ export class Renderer {
 
   /** A washed tile's final tint under the chosen circuit style (0..255 channels + strength). */
   private washTint(r: number, g: number, b: number, a: number, depth: number, inner: ClientPath): [number, number, number, number] {
-    switch (CIRCUIT_STYLE) {
+    switch (this.style) {
       case 'c': {
         const base = this.store.players.get(inner.owner)?.color ?? 'hsl(0, 90%, 62%)';
         const m = /hsl\(\s*([\d.]+)/.exec(base);
@@ -339,7 +345,7 @@ export class Renderer {
     const hit = this.looks.get(path);
     if (hit && hit[0] === color) return hit[1];
     const look: [string, number] = [
-      LENGTH_PALETTE ? rgbToHex(circuitLengthRgb(path.steps.length)) : circuitColor(color, path.steps.length, path.id),
+      this.lengthPalette() ? rgbToHex(circuitLengthRgb(path.steps.length)) : circuitColor(color, path.steps.length, path.id),
       0,
     ];
     this.looks.set(path, [color, look]);
@@ -389,6 +395,27 @@ export class Renderer {
     this.drawOverlay(t);
   }
 
+  /** The arena's edge, for the plain board (where no tile fill shows it). */
+  private drawOutline(toScreen: (x: number, y: number) => [number, number]): void {
+    const field = this.field;
+    if (!field) return;
+    const ring = fieldOutline(field);
+    if (ring.length < 3) return;
+    const ctx = this.ctx;
+    ctx.beginPath();
+    for (let k = 0; k < ring.length; k++) {
+      const [x, y] = toScreen(ring[k].x, ring[k].y);
+      if (k === 0) ctx.moveTo(x, y);
+      else ctx.lineTo(x, y);
+    }
+    ctx.closePath();
+    ctx.strokeStyle = this.board.inkCss;
+    ctx.globalAlpha = 0.55;
+    ctx.lineWidth = Math.max(1.5, 0.08 * this.camera.scale * this.dpr);
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
   private drawOverlay(t: number): void {
     const ctx = this.ctx;
     const store = this.store;
@@ -405,6 +432,7 @@ export class Renderer {
     ];
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    if (this.plain) this.drawOutline(toScreen);
     this.drawPattern(toScreen, box);
     const drawPath = (path: ClientPath, mine: boolean): void => {
       const owner = store.players.get(path.owner);

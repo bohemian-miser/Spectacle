@@ -31,6 +31,7 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
   let scheme = board;
   const tints = new Map<number, string>();
   let lastKey = '';
+  let arrows = true;
   const visible: number[] = [];
 
   const setTransform = (c: CanvasRenderingContext2D, i: number, cam: Camera, w: number, h: number, dpr: number): void => {
@@ -62,6 +63,9 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
       scheme = next;
       css = nextFills.map(cssRgb);
       lastKey = '';
+    },
+    setArrows(on) {
+      arrows = on;
     },
     clearTints() {
       tints.clear();
@@ -102,7 +106,7 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
       // Arrows last, so a claimed tile keeps its direction. `visible` is the
       // last tilesInBox result, which is this camera: it is refreshed above on
       // every move.
-      if (arrow && cam.scale > ARROW_MIN_SCALE) {
+      if (arrow && arrows && cam.scale > ARROW_MIN_SCALE) {
         ctx.fillStyle = scheme.arrowCss;
         for (const i of visible) {
           setTransform(ctx, i, cam, w, h, dpr);
