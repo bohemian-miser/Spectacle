@@ -29,9 +29,12 @@ import {
 } from './tiles-layer';
 
 /**
- * Scale at which your rule's pattern starts to show on the free tiles — a
- * little closer in than the direction arrows. It fades in over the next
- * `PATTERN_FADE` of scale, so it dims away as you zoom back out.
+ * Scale at which your rule's pattern starts to show on the free tiles. It
+ * fades in over the next `PATTERN_FADE` of scale, so it dims away as you
+ * zoom back out. Scale is screen px per world unit (see `fitToField`), so
+ * render distance is ∝ 1 / scale — dividing the plain 1.3 × `ARROW_MIN_SCALE`
+ * threshold by 1.5 renders the pattern at 50% more distance (it now shows
+ * before the direction arrows do, not after).
  */
 const MAGMA: readonly (readonly [number, number, number])[] = [
   [252, 214, 120],
@@ -42,7 +45,7 @@ const MAGMA: readonly (readonly [number, number, number])[] = [
   [28, 12, 60],
 ];
 
-export const PATTERN_MIN_SCALE = ARROW_MIN_SCALE * 1.3;
+export const PATTERN_MIN_SCALE = (ARROW_MIN_SCALE * 1.3) / 1.5;
 const PATTERN_FADE = 16;
 const PATTERN_ALPHA = 0.35;
 
