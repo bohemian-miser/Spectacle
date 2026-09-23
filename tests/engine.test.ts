@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Engine, type Path } from '../shared/game/engine';
 import { buildField, pointInPolygon, tileCenter } from '../shared/game/field';
-import { DEFAULT_KNOBS, stepIntervalMs, type Knobs } from '../shared/game/knobs';
+import { DEFAULT_KNOBS, maxSpeedFor, stepIntervalMs, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
 import { defaultRule, fassRule, oddTypes, randomCleanRule, ruleFromCombo, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
@@ -91,9 +91,13 @@ describe('engine', () => {
   });
 
   it('speed rises with score and is clamped', () => {
-    expect(stepIntervalMs(DEFAULT_KNOBS, 0)).toBe(DEFAULT_KNOBS.baseStepMs);
-    expect(stepIntervalMs(DEFAULT_KNOBS, 100)).toBeLessThan(DEFAULT_KNOBS.baseStepMs);
-    expect(stepIntervalMs(DEFAULT_KNOBS, 1e9)).toBe(DEFAULT_KNOBS.minStepMs);
+    const ref = DEFAULT_KNOBS.maxSpeedRefTiles;
+    expect(stepIntervalMs(DEFAULT_KNOBS, 0, ref)).toBe(DEFAULT_KNOBS.baseStepMs);
+    expect(stepIntervalMs(DEFAULT_KNOBS, 100, ref)).toBeLessThan(DEFAULT_KNOBS.baseStepMs);
+    expect(1000 / stepIntervalMs(DEFAULT_KNOBS, 1e9, ref)).toBeCloseTo(DEFAULT_KNOBS.maxSpeed);
+    // The cap scales with the log of the field size.
+    expect(maxSpeedFor(DEFAULT_KNOBS, ref * ref)).toBeCloseTo(2 * DEFAULT_KNOBS.maxSpeed);
+    expect(maxSpeedFor(DEFAULT_KNOBS, Math.sqrt(ref))).toBeCloseTo(DEFAULT_KNOBS.maxSpeed / 2);
   });
 
   it('a rival crossing your chord wipes your path (tile mode)', () => {

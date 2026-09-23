@@ -442,9 +442,9 @@ export class Engine {
     for (const p of this.players.values()) {
       for (const path of [...p.paths]) {
         if (path.status !== 'growing') continue;
-        path.progress += dtMs / stepIntervalMs(this.knobs, p.score);
+        path.progress += dtMs / stepIntervalMs(this.knobs, p.score, this.field.count);
         // Guard: a huge dt must not spin for thousands of steps in one tick.
-        let budget = 64;
+        let budget = 256;
         while (path.progress >= 1 && path.status === 'growing' && budget-- > 0) {
           path.progress -= 1;
           this.advance(p, path, ev);

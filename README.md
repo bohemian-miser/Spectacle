@@ -98,7 +98,8 @@ line and you both die.
    area you hold to keep filling it in. A plain drag pans (so do two fingers,
    or a right-, middle- or shift-drag); wheel or pinch zooms.
 3. **It grows.** One tile per step; the step interval shrinks with your score
-   (`baseStepMs / (1 + score × speedPerPoint)`, floored at `minStepMs`). Each tile
+   (`baseStepMs / (1 + score × speedPerPoint)`, capped at `maxSpeed` = 1000 tiles/s on a 242k-tile field, scaled by the
+   log of the field's tile count). Each tile
    entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
    points it earned, and when the line goes (cut, abandoned, capped) so do its
    points — your score is what you hold on the board. `stealFraction` hands a
