@@ -13,7 +13,7 @@
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
  */
 
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
@@ -118,13 +118,33 @@ let nextClient = 1;
 let pending: GameEvent[] = [];
 
 /**
- * Dropped players are kept for a grace period so a reconnect (a flaky phone,
- * or Cloud Run's hourly request cap) picks the same player up: same id, score,
- * lines. The token is issued in `welcome` and must come back in `join.resume`.
+ * Dropped players are kept for a grace period so a reconnect (a flaky phone, a
+ * page refresh, or Cloud Run's hourly request cap) picks the same player up:
+ * same id, score, lines. The token is issued in `welcome` and must come back in
+ * `join.resume`.
+ *
+ * - 128 random bits from the CSPRNG; only its SHA-256 is kept here, compared
+ *   in constant time.
+ * - Single use: every successful resume issues a new token and the old one
+ *   dies, so a copied or leaked ticket stops working once the owner is back.
+ * - A resume may take over a player whose old socket is still open — a
+ *   refresh often reconnects before the server has seen the old page go. The
+ *   token proves ownership; the old socket is detached and closed.
  */
 const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 90_000);
-const tokens = new Map<string, string>(); // player id → token
+const tokenHashes = new Map<string, Buffer>(); // player id → sha256(token)
 const detached = new Map<string, ReturnType<typeof setTimeout>>(); // player id → expiry
+
+function hashToken(token: string): Buffer {
+  return createHash('sha256').update(token).digest();
+}
+
+/** A new resume token for `id`, replacing any earlier one. */
+function issueToken(id: string): string {
+  const token = randomBytes(16).toString('hex');
+  tokenHashes.set(id, hashToken(token));
+  return token;
+}
 
 function detach(id: string): void {
   if (!engine.players.has(id)) return;
@@ -132,7 +152,7 @@ function detach(id: string): void {
     id,
     setTimeout(() => {
       detached.delete(id);
-      tokens.delete(id);
+      tokenHashes.delete(id);
       pending.push(...engine.removePlayer(id));
     }, RESUME_GRACE_MS),
   );
@@ -141,11 +161,22 @@ function detach(id: string): void {
 function tryResume(client: Client, resume: unknown): boolean {
   if (!resume || typeof resume !== 'object') return false;
   const r = resume as { id?: unknown; token?: unknown };
-  if (typeof r.id !== 'string' || typeof r.token !== 'string') return false;
+  if (typeof r.id !== 'string' || typeof r.token !== 'string' || r.token.length > 128) return false;
+  const want = tokenHashes.get(r.id);
+  if (!want || !engine.players.has(r.id) || !timingSafeEqual(want, hashToken(r.token))) return false;
   const expiry = detached.get(r.id);
-  if (expiry === undefined || tokens.get(r.id) !== r.token) return false;
-  clearTimeout(expiry);
-  detached.delete(r.id);
+  if (expiry !== undefined) {
+    clearTimeout(expiry);
+    detached.delete(r.id);
+  }
+  // Still attached elsewhere (the page before a refresh): cut that socket
+  // loose first, so its close handler neither removes nor detaches us.
+  const old = clients.get(r.id);
+  if (old && old !== client) {
+    old.joined = false;
+    old.id = `gone${nextClient++}`;
+    old.ws.close(4000, 'resumed elsewhere');
+  }
   clients.delete(client.id);
   client.id = r.id;
   clients.set(client.id, client);
@@ -183,7 +214,7 @@ wss.on('connection', (ws) => {
         if (tryResume(client, msg.resume)) {
           client.joined = true;
           const snap = engine.snapshot();
-          send(ws, { t: 'welcome', you: client.id, token: tokens.get(client.id)!, field: spec, knobs, players: snap.players, paths: snap.paths });
+          send(ws, { t: 'welcome', you: client.id, token: issueToken(client.id), field: spec, knobs, players: snap.players, paths: snap.paths });
           return;
         }
         const rule = validateRule(msg.rule, field.family);
@@ -197,8 +228,7 @@ wss.on('connection', (ws) => {
         }
         const ev = engine.addPlayer(client.id, cleanName(msg.name), rule);
         client.joined = true;
-        const token = randomBytes(16).toString('hex');
-        tokens.set(client.id, token);
+        const token = issueToken(client.id);
         const snap = engine.snapshot();
         send(ws, { t: 'welcome', you: client.id, token, field: spec, knobs, players: snap.players, paths: snap.paths });
         // Everyone else learns about the newcomer on the next flush; the

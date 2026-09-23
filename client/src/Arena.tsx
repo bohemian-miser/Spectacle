@@ -10,6 +10,7 @@ import { describeRule } from '../../shared/game/rule';
 import type { GameConnection } from './net';
 import { Renderer } from './render';
 import type { Store } from './store';
+import { helpSeen, markHelpSeen } from './session';
 import { boardTheme, useTheme } from './theme';
 import { strandColor } from './tiles-layer';
 import { ThemeToggle } from './ThemeToggle';
@@ -36,7 +37,11 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const rendererRef = useRef<Renderer | null>(null);
   const pointers = useRef(new Map<number, PointerState>());
   const pinchDist = useRef(0);
-  const [showHelp, setShowHelp] = useState(true);
+  const [showHelp, setShowHelp] = useState(() => !helpSeen());
+  const hideHelp = (): void => {
+    setShowHelp(false);
+    markHelpSeen();
+  };
   const [theme] = useTheme();
   // `theme` is the dep, not the source: the palette follows what is on <html>.
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -90,7 +95,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
       return;
     }
     conn.send({ t: 'tap', tile, x: w.x, y: w.y });
-    setShowHelp(false);
+    if (showHelp) hideHelp();
   };
 
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>): void => {
@@ -225,7 +230,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
           <b>Tap a tile</b> to start a line along your rule. It grows on its own, faster as you score.
           Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
           <div className="muted">Drag to pan · wheel or pinch to zoom</div>
-          <button type="button" className="btn" onClick={() => setShowHelp(false)}>
+          <button type="button" className="btn" onClick={hideHelp}>
             Got it
           </button>
         </div>

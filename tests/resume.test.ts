@@ -112,6 +112,51 @@ describe('resume', () => {
     expect(w3.you).not.toBe(w1.you);
     // Ann is still held (detached) for the grace period, so both are listed.
     expect(w3.players.map((p) => p.name).sort()).toEqual(['Ann', 'Cat']);
+    await awaitDrop(c);
+
+    // Tokens are single use: w1's died when b resumed with it.
+    const d = new Client();
+    await d.open();
+    await d.until('hello');
+    d.send({ t: 'join', name: 'Dan', rule: fassRule('hex'), resume: { id: w1.you, token: w1.token } });
+    const w4 = await d.until('welcome');
+    if (w4.t !== 'welcome') throw new Error();
+    expect(w4.you).not.toBe(w1.you);
+    expect(w2.token).not.toBe(w1.token);
+    d.ws.close();
+  }, 20_000);
+
+  it('a refresh that reconnects before the old socket is gone takes the player over', async () => {
+    const a = new Client();
+    await a.open();
+    await a.until('hello');
+    a.send({ t: 'join', name: 'Eve', rule: fassRule('hex') });
+    const w1 = await a.until('welcome');
+    if (w1.t !== 'welcome') throw new Error();
+
+    // No close on `a` first: the new page beats the old one's goodbye.
+    const closed = new Promise<number>((r) => a.ws.once('close', (code) => r(code)));
+    const b = new Client();
+    await b.open();
+    await b.until('hello');
+    b.send({ t: 'join', name: 'ignored', rule: fassRule('hex'), resume: { id: w1.you, token: w1.token } });
+    const w2 = await b.until('welcome');
+    if (w2.t !== 'welcome') throw new Error();
+    expect(w2.you).toBe(w1.you);
+    expect(await closed).toBe(4000);
+    expect(w2.players.filter((p) => p.name === 'Eve')).toHaveLength(1);
+    // The old socket's close must not have unhooked the new one: b still
+    // hears about a newcomer.
+    await fetch(`http://127.0.0.1:${PORT}/healthz`);
+    const c = new Client();
+    await c.open();
+    await c.until('hello');
+    c.send({ t: 'join', name: 'Fay', rule: fassRule('hex') });
+    await c.until('welcome');
+    const ev = await b.until('events');
+    if (ev.t !== 'events') throw new Error();
+    expect(ev.ev.some((e) => e.t === 'join' && e.player.name === 'Fay')).toBe(true);
+    b.ws.close();
     c.ws.close();
   }, 20_000);
 });
