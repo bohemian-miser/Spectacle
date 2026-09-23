@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Engine } from '../shared/game/engine';
+import { Engine, type Path } from '../shared/game/engine';
 import { buildField, pointInPolygon, tileCenter } from '../shared/game/field';
 import { DEFAULT_KNOBS, stepIntervalMs, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
@@ -471,6 +471,85 @@ describe('engine', () => {
       const { e, ev } = enclose({ captureOnEnclose: false });
       expect(ev.some((x) => x.t === 'capture')).toBe(false);
       expect(e.players.get('a')!.patterns).toHaveLength(1);
+    });
+
+    describe('overlapOwnLines', () => {
+      /** Does any chord of `b` on its tiles run along or cross a chord of `a`? */
+      const meets = (a: Path, b: Path) =>
+        b.steps.some((q) => {
+          const seg = worldChord(FIELD, b.table, q.tile, q.chord);
+          return a.steps.some((r) => {
+            if (r.tile !== q.tile) return false;
+            const o = worldChord(FIELD, a.table, r.tile, r.chord);
+            return chordsConflict(seg, o, true);
+          });
+        });
+
+      /**
+       * Ann closes her BIG loop, then (holding SMALL too) taps SMALL at `start`.
+       * Returns the loop and the second line once it stops growing.
+       */
+      function second(knobs: Partial<Knobs>, start: number) {
+        const e = make({ ...knobs, maxHeads: 1, headsWithCapture: 1 });
+        e.addPlayer('a', 'Ann', BIG);
+        const a = e.players.get('a')!;
+        const loop = e.tap('a', 57, chordMid(BIG, 57)).result;
+        if (!loop.ok) throw new Error('loop refused');
+        runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+        a.patterns.push({ rule: SMALL, table: chordTableFor(FIELD, SMALL), color: a.color });
+        e.setActive('a', 1);
+        const r = e.tap('a', start, tileCenter(FIELD, start));
+        if (!r.result.ok) return { e, loop: e.getPath(loop.path)!, line: null, refused: r.result.reason };
+        const id = r.result.path;
+        runUntil(e, () => e.getPath(id)?.status !== 'growing');
+        return { e, loop: e.getPath(loop.path)!, line: e.getPath(id) ?? null, refused: null };
+      }
+
+      it('off: a line stops at your own; on: it grows on over the top', () => {
+        const small = chordTableFor(FIELD, SMALL);
+        let found = 0;
+        for (let t = 0; t < FIELD.count && found < 2; t++) {
+          if (tileChords(FIELD, small, t).length === 0) continue;
+          const on = second({ overlapOwnLines: true }, t);
+          if (!on.line || !meets(on.loop, on.line)) continue;
+          // The same tap with the knob off stops short of Ann's loop.
+          const off = second({}, t);
+          expect(off.line).not.toBeNull();
+          expect(off.line!.status).toBe('stuck');
+          expect(meets(off.loop, off.line!)).toBe(false);
+          expect(on.line.steps.length).toBeGreaterThan(off.line!.steps.length);
+          found++;
+        }
+        expect(found).toBeGreaterThan(0);
+      });
+
+      it("on: a tap may not start on any tile one of your lines passes through", () => {
+        const small = chordTableFor(FIELD, SMALL);
+        const probe = second({ overlapOwnLines: true }, 0);
+        const tile = probe.loop.steps.map((q) => q.tile).find((t) => tileChords(FIELD, small, t).length > 0);
+        expect(tile).toBeDefined();
+        const r = second({ overlapOwnLines: true }, tile!);
+        expect(r.refused).toBe('you already have a line on this tile');
+      });
+
+      it('on: a rival must cut each of the layered lines', () => {
+        // Tile mode: a rival entering a tile cuts every line on it.
+        const small = chordTableFor(FIELD, SMALL);
+        for (let t = 0; t < FIELD.count; t++) {
+          if (tileChords(FIELD, small, t).length === 0) continue;
+          const { e, loop, line } = second({ overlapOwnLines: true, crossingMode: 'tile', tapOntoOthers: true, tapInsideRivalCircuits: true }, t);
+          if (!line) continue;
+          const shared = line.steps.find((q) => loop.steps.some((r) => r.tile === q.tile) && q.tile !== line.steps[0].tile);
+          if (!shared) continue;
+          e.addPlayer('b', 'Bea', SEL15);
+          if (tileChords(FIELD, chordTableFor(FIELD, SEL15), shared.tile).length === 0) continue;
+          expect(e.tap('b', shared.tile, tileCenter(FIELD, shared.tile)).result.ok).toBe(true);
+          expect(e.getPath(loop.id)).toBeUndefined();
+          expect(e.getPath(line.id)).toBeUndefined();
+          return;
+        }
+        throw new Error('no shared tile found');
+      });
     });
   });
 });

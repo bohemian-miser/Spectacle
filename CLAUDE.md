@@ -124,6 +124,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   closed), `join` folds the other line in: `wipe` (no `by`) for it, then its
   steps re-sent as `step`s of the joiner, its points carried over, never
   re-scored. Two dead ends at the edge thus become one edge-to-edge claim.
+  `overlapOwnLines` (default false) is the other mode: a line grows on over
+  your own instead of stopping (joins still happen), and a tap is refused on
+  any tile one of your lines is on at all (per tile, not per chord), so
+  layered lines are started beside and grown in; a rival must cut each.
 - **Captured patterns.** Closing a circuit (loop or edge-to-edge region)
   round a rival's line — every step's midpoint inside — takes that line's
   rule into your `patterns` (index 0 is always your own rule; captures are

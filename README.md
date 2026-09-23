@@ -49,6 +49,11 @@ you.
    unless it meets that line's loose end on the same chord: then the two join
    into one line (nothing is scored twice). Two lines that each ran off the
    edge join into one edge-to-edge line and claim their side.
+   With `overlapOwnLines` (`KNOB_OVERLAP_OWN_LINES=1`) your lines no longer
+   stop each other: a growing line runs on over the top of your own, but a
+   tap may not start on any tile one of your lines already passes through.
+   Start off to the side and grow in, and the layered lines are defence in
+   depth — a rival has to cut each of them.
    Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
    next tap lands.
 6. **Crossing.** When a line enters a tile where another player's chord crosses
