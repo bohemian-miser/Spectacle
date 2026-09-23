@@ -101,24 +101,16 @@ export function cssRgb(c: Rgb01): string {
 }
 
 /**
- * A closed circuit's colour: the owner's colour, darkened with the length of
- * the loop — short loops stay bright, a loop of thousands of tiles goes deep.
- * `t` in [0, 1] is the darkening amount; the same curve serves lines and tints.
+ * Every closed circuit's colour, told apart by length. A loop's length (log
+ * scale, 8 to ~4000 steps) walks its hue `CIRCUIT_HUE_SPAN`° across the range,
+ * centred on its owner's colour, and its lightness from pale (short loops) to
+ * deep (long ones). Equal lengths still differ by up to ±`CIRCUIT_HUE_JITTER`°
+ * (per circuit id), so two neighbouring loops never merge into one blob. The
+ * result is the colour itself: no lift, no further darkening.
  */
-export function circuitDarkening(length: number): number {
-  return Math.min(0.42, 0.42 * (Math.log2(Math.max(1, length)) / 12));
-}
-
-/**
- * Your own circuits, told apart by length. A loop's length (log scale, 8 to
- * ~4000 steps) walks both its hue — `OWN_HUE_SPAN`° across the range, centred
- * on your colour — and its lightness, pale for short loops, deep for long
- * ones. Equal lengths still differ by a few degrees (per circuit id), so two
- * neighbouring loops never merge into one blob. The result is the colour
- * itself: no lift, no further darkening.
- */
-const OWN_HUE_SPAN = 150;
-const OWN_LIGHT = [80, 30] as const;
+const CIRCUIT_HUE_SPAN = 220;
+const CIRCUIT_HUE_JITTER = 14;
+const CIRCUIT_LIGHT = [84, 26] as const;
 
 /** A stable 0..1 per circuit (golden-ratio walk over the path id). */
 function circuitJitter(id: number): number {
@@ -130,12 +122,13 @@ export function circuitLengthT(length: number): number {
   return Math.max(0, Math.min(1, (Math.log2(Math.max(1, length)) - 3) / 9));
 }
 
-export function ownCircuitColor(css: string, length: number, id: number): string {
+export function circuitColor(css: string, length: number, id: number): string {
   const m = /hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%/.exec(css);
   if (!m) return css;
   const t = circuitLengthT(length);
-  const h = (((Number(m[1]) + (t - 0.5) * OWN_HUE_SPAN + (circuitJitter(id) - 0.5) * 16) % 360) + 360) % 360;
-  const l = OWN_LIGHT[0] + (OWN_LIGHT[1] - OWN_LIGHT[0]) * t;
+  const shift = (t - 0.5) * CIRCUIT_HUE_SPAN + (circuitJitter(id) * 2 - 1) * CIRCUIT_HUE_JITTER;
+  const h = (((Number(m[1]) + shift) % 360) + 360) % 360;
+  const l = CIRCUIT_LIGHT[0] + (CIRCUIT_LIGHT[1] - CIRCUIT_LIGHT[0]) * t;
   return `hsl(${h.toFixed(1)}, ${m[2]}%, ${l.toFixed(1)}%)`;
 }
 

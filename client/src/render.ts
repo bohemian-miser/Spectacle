@@ -17,9 +17,8 @@ import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
 import {
   ARROW_MIN_SCALE,
-  circuitDarkening,
+  circuitColor,
   darkenCss,
-  ownCircuitColor,
   parseColor,
   strandColor,
   typeFill,
@@ -204,7 +203,7 @@ export class Renderer {
       }
       if (pick === null) continue;
       const [r, g, b] = this.tintOf(pick);
-      tiles.setTint(tile, r, g, b, pick.owner === store.you ? (pick.status === 'closed' ? 170 : 115) : 85);
+      tiles.setTint(tile, r, g, b, pick.status === 'closed' ? (pick.owner === store.you ? 175 : 150) : pick.owner === store.you ? 115 : 85);
     }
     // Interior wash: the free tiles a closed circuit encloses take its owner's
     // colour, fainter than the loop itself. Washes stack: outer circuits go
@@ -225,15 +224,15 @@ export class Renderer {
       closed.push({ path, inside });
     }
     closed.sort((a, b) => b.inside.length - a.inside.length);
-    const wash = new Map<number, [number, number, number, number]>();
+    const wash = new Map<number, [number, number, number, number, number]>();
     for (const { path, inside } of closed) {
       const [r, g, b] = this.tintOf(path);
-      const a = path.owner === store.you ? 0.38 : 0.22;
+      const a = path.owner === store.you ? 0.42 : 0.34;
       for (const t of inside) {
         if (store.occupancy.has(t)) continue;
         const under = wash.get(t);
         if (!under) {
-          wash.set(t, [r, g, b, a]);
+          wash.set(t, [r, g, b, a, 1]);
           continue;
         }
         // Porter–Duff "over": this loop's colour on top of what is already there.
@@ -243,9 +242,15 @@ export class Renderer {
         under[1] = (g * a + under[1] * ua) / oa;
         under[2] = (b * a + under[2] * ua) / oa;
         under[3] = oa;
+        under[4]++;
       }
     }
-    for (const [t, [r, g, b, a]] of wash) tiles.setTint(t, r, g, b, Math.min(225, a * 255));
+    // Each level of nesting also sinks the wash a step deeper, so depth reads
+    // even where two nested loops happen to share a hue.
+    for (const [t, [r, g, b, a, depth]] of wash) {
+      const k = Math.max(0.45, 1 - 0.14 * (depth - 1));
+      tiles.setTint(t, r * k, g * k, b * k, Math.min(230, a * 255));
+    }
   }
 
   /**
@@ -265,21 +270,17 @@ export class Renderer {
       this.rgbCache.set(css, rgb);
     }
     const k = 1 - dark;
-    // Your own circuits carry their lightness in the colour itself (the length ramp).
-    const own = closed && path.owner === this.store.you;
-    const lift = own ? 0 : closed ? this.board.liftClosed : this.board.lift;
+    // A circuit carries its lightness in the colour itself (the length ramp).
+    const lift = closed ? 0 : this.board.lift;
     const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
     return [ch(rgb[0]), ch(rgb[1]), ch(rgb[2])];
   }
 
-  /** A closed path's colour and darkening: per circuit for yours, by length for a rival's. */
+  /** A closed path's colour (the length ramp) and extra darkening (none, today). */
   private closedLook(path: ClientPath, color: string): readonly [string, number] {
     const hit = this.looks.get(path);
     if (hit && hit[0] === color) return hit[1];
-    const look: [string, number] =
-      path.owner === this.store.you
-        ? [ownCircuitColor(color, path.steps.length, path.id), 0]
-        : [color, circuitDarkening(path.steps.length)];
+    const look: [string, number] = [circuitColor(color, path.steps.length, path.id), 0];
     this.looks.set(path, [color, look]);
     return look;
   }
@@ -376,9 +377,7 @@ export class Renderer {
       const ink =
         path.status !== 'closed'
           ? strandColor(this.board, owner.color)
-          : mine
-            ? darkenCss(this.closedLook(path, owner.color)[0], 0.3)
-            : strandColor(this.board, ...this.closedLook(path, owner.color));
+          : darkenCss(this.closedLook(path, owner.color)[0], 0.3);
       ctx.strokeStyle = ink;
       ctx.lineWidth = w;
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;

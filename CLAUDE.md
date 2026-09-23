@@ -175,12 +175,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   (the shape is identical for every leaf type).
 - **`fieldOutline` is ~1.5 s at hex level 6.** The server and solo build it at
   startup so the first edge-to-edge claim doesn't stall a tick.
-- **Your own circuits are coloured by length** (`ownCircuitColor`): log length
-  walks the hue across 150° and the lightness from 80% to 30%, plus a few
-  degrees per circuit id. The colour is final — no lift, no darkening — so
-  the light board's `liftClosed` can't sink them all into one dark blob.
-  Rivals' circuits keep `circuitDarkening`. Interior washes stack with
-  Porter–Duff "over", outermost first, so nesting reads deeper.
+- **Every circuit is coloured by length** (`circuitColor`): log length walks
+  the hue across 220° (centred on the owner's colour) and the lightness from
+  84% to 26%, plus up to ±14° per circuit id. The colour is final — no lift,
+  no darkening (`--tile-lift-closed` is unused on the board now). Interior
+  washes stack with Porter–Duff "over", outermost first, and each extra level
+  of nesting sinks the wash 14% deeper, so nesting reads even in one hue.
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
   the old one dies (only its SHA-256 is kept server-side). A resume can take
   over a player whose old socket is still open — a refresh usually beats the

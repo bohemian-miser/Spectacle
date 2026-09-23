@@ -51,11 +51,10 @@ you.
    its points, and both combos reset (`mutualCut`; off makes it one-sided).
    You cannot *start* on a rival's line or inside a rival's closed circuit
    (`tapOntoOthers`, `tapInsideRivalCircuits`); you have to grow into them.
-   Closed circuits darken with their length on the board, and wash the tiles
-   they enclose in their owner's colour; the washes stack, so a circuit inside
-   a circuit shows deeper. Your own circuits take their colour from their
-   length — short loops pale, long ones deep, the hue walking as they grow —
-   so loops of different sizes, and loops inside loops, stand apart.
+   Closed circuits take their colour from their length — short loops pale,
+   long ones deep, the hue walking round from the owner's colour as they grow
+   — and wash the tiles they enclose in it. The washes stack and each level of
+   nesting sinks deeper, so a circuit inside a circuit stands apart.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
 **Which way a tile is turned.** Every hexagon in the arena is the same regular
