@@ -48,6 +48,8 @@ export interface Dying {
 export interface Burst {
   readonly at: Pt;
   readonly color: string;
+  /** The cut line was yours (for team colours). */
+  readonly mine: boolean;
   readonly seed: number;
   readonly born: number;
 }
@@ -292,7 +294,7 @@ export class Store {
           const born = performance.now();
           if (color) {
             this.dying.push({ path, color, mine: path.owner === this.you, born });
-            if (ev.at) this.bursts.push({ at: ev.at, color, seed: path.id, born });
+            if (ev.at) this.bursts.push({ at: ev.at, color, mine: path.owner === this.you, seed: path.id, born });
           }
         }
         if (path) {

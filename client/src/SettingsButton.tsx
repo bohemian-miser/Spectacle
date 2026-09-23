@@ -1,7 +1,8 @@
 /**
  * The settings button and its small modal: theme, circuit colouring, plain
- * board. Every control applies as it changes, so the board updates behind the
- * modal without closing it. Lives in the lobby header and the arena HUD.
+ * board, team colours. Every control applies as it changes, so the board
+ * updates behind the modal without closing it. Lives in the lobby header and
+ * the arena HUD.
  */
 
 import { useEffect, useState } from 'react';
@@ -59,6 +60,10 @@ export function SettingsButton(): JSX.Element {
             <label className="setting setting-check">
               <input type="checkbox" checked={settings.plainTiles} onChange={(e) => update({ plainTiles: e.target.checked })} />
               <span>Plain board (hide tile colours and arrows)</span>
+            </label>
+            <label className="setting setting-check">
+              <input type="checkbox" checked={settings.teams} onChange={(e) => update({ teams: e.target.checked })} />
+              <span>Team colours: you blue, everyone else red (T)</span>
             </label>
           </div>
         </div>

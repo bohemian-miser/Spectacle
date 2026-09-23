@@ -236,6 +236,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   arrows (`TileLayer.setArrows`) and strokes `fieldOutline` on the overlay; the
   zoomed-in tile outlines and your rule's pattern stay. On a level-6 arena the
   first plain frame pays the ~1.5 s outline build in the browser.
+- **Team colours** (`settings.teams`, key T in the arena, or the modal): every
+  line of yours draws in `--team-me` (blue), every rival's in `--team-rival`
+  (red) — board, washes, sparks, HUD swatches and pattern tabs alike. Circuits
+  keep the team hue and shade only by length (`circuitShade`); the circuit
+  style's own hues are ignored while it is on. Go through `Renderer.colorOf`,
+  not `store.pathColor`, for anything drawn per path.
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
   the old one dies (only its SHA-256 is kept server-side). A resume can take
   over a player whose old socket is still open — a refresh usually beats the

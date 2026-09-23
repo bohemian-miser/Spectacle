@@ -128,6 +128,9 @@ export interface BoardTheme {
    * pale one; see `strandColor`.
    */
   readonly strandDarken: number;
+  /** Team colours: yours and every rival's, when the teams setting is on. */
+  readonly teamMe: string;
+  readonly teamRival: string;
 }
 
 function rgbCss(c: readonly [number, number, number]): string {
@@ -181,5 +184,7 @@ function readTokens(name: ThemeName): BoardTheme {
     lift: num('--tile-lift', dark ? 70 : -30),
     liftClosed: num('--tile-lift-closed', dark ? 30 : -55),
     strandDarken: num('--strand-darken', dark ? 0 : 0.28),
+    teamMe: str('--team-me', 'hsl(214, 92%, 60%)'),
+    teamRival: str('--team-rival', 'hsl(2, 88%, 60%)'),
   };
 }
