@@ -155,8 +155,10 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 
 /* Arena */
 .arena { position: fixed; inset: 0; overflow: hidden; }
-.arena-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: crosshair; display: block; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
-.arena-canvas.is-painting { cursor: cell; }
+/* Outlined arrow cursors only: a thin crosshair/cell vanishes over the saturated tiles. */
+.arena-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; cursor: default; display: block; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.arena-canvas[data-mode='pan'] { cursor: grabbing; }
+.arena-canvas[data-mode='paint'] { cursor: copy; }
 .arena-tiles { pointer-events: none; }
 .hud {
   position: absolute;
