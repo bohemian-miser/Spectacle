@@ -134,6 +134,18 @@ export function circuitColor(css: string, length: number, id: number): string {
   return `hsl(${h.toFixed(1)}, ${m[2]}%, ${l.toFixed(1)}%)`;
 }
 
+/**
+ * A circuit's colour under team colours: the team hue kept, only the
+ * lightness walking the length ramp, so yours stay blue and theirs red.
+ */
+export function circuitShade(css: string, length: number): string {
+  const m = /hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%/.exec(css);
+  if (!m) return css;
+  const t = circuitLengthT(length);
+  const l = 74 + (34 - 74) * t;
+  return `hsl(${m[1]}, ${m[2]}%, ${l.toFixed(1)}%)`;
+}
+
 /** Turn an `hsl(…)` colour round the wheel by `deg`; any other form comes back as is. */
 export function shiftHue(css: string, deg: number): string {
   const m = /hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%\s*,\s*([\d.]+)%\s*\)/.exec(css);

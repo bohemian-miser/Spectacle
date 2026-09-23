@@ -33,6 +33,11 @@ export interface Settings {
   readonly circuitStyle: CircuitStyle;
   /** Hide the tile palette and arrows: a blank board with the arena's edge. */
   readonly plainTiles: boolean;
+  /**
+   * Team colours: every line of yours in one blue, everyone else's in one red
+   * (circuits keep only their length shading). Toggled with T in the arena.
+   */
+  readonly teams: boolean;
 }
 
 const KEY = 'spectacle.settings';
@@ -52,6 +57,7 @@ function load(): Settings {
   return {
     circuitStyle: parseCircuitStyle(param) ?? parseCircuitStyle(saved.circuitStyle) ?? 'a',
     plainTiles: saved.plainTiles === true,
+    teams: saved.teams === true,
   };
 }
 

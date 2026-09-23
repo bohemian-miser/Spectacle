@@ -432,8 +432,10 @@ describe('engine', () => {
       expect(a.patterns.map((q) => q.rule)).toEqual([BIG, SMALL]);
       expect(a.patterns[1].color).toBe(mixHsl(a.color, b.color, 1 / 3));
       expect(a.active).toBe(0);
-      // Bea keeps her line.
-      expect(b.paths).toHaveLength(1);
+      // With takeEnclosed off, Bea keeps her line.
+      const kept = enclose({ takeEnclosed: false });
+      expect(kept.e.players.get('b')!.paths).toHaveLength(1);
+      expect(kept.ev.some((x) => x.t === 'take')).toBe(false);
       expect(e.publicOf(a)).toMatchObject({ active: 0, patterns: [{ rule: BIG, color: a.color }, { rule: SMALL, from: 'b' }] });
     });
 
@@ -462,7 +464,34 @@ describe('engine', () => {
       expect(growing.every((q) => q.pattern === 1 && q.rule === a.patterns[1].rule)).toBe(true);
       const third = e.tap('a', 0, tileCenter(FIELD, 0)).result;
       expect(third).toEqual({ ok: false, reason: 'your lines are still growing' });
-      expect(e.snapshot().paths.filter((q) => q.owner === 'a' && q.pattern === 1)).toHaveLength(2);
+      // Two new lines, plus Bea's loop that Ann took.
+      expect(e.snapshot().paths.filter((q) => q.owner === 'a' && q.pattern === 1)).toHaveLength(3);
+    });
+
+    it("the area you close is yours: the rival's line and its points change hands", () => {
+      const e = make();
+      e.addPlayer('a', 'Ann', BIG);
+      e.addPlayer('b', 'Bea', SMALL);
+      e.tap('b', 125, chordMid(SMALL, 125));
+      runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+      const b = e.players.get('b')!;
+      const loop = b.paths[0];
+      const carried = loop.points;
+      const bBefore = b.score;
+      expect(carried).toBeGreaterThan(0);
+      e.tap('a', 57, chordMid(BIG, 57));
+      const ev = runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+      const a = e.players.get('a')!;
+      const aBefore = ev.filter((x) => x.t === 'score' && x.id === 'a').at(-2);
+      expect(ev.find((x) => x.t === 'take')).toEqual({ t: 'take', path: loop.id, from: 'b', owner: 'a', pattern: 1 });
+      expect(ev.findIndex((x) => x.t === 'take')).toBeGreaterThan(ev.findIndex((x) => x.t === 'capture'));
+      expect(b.paths).toHaveLength(0);
+      expect(a.paths).toContain(loop);
+      expect(loop).toMatchObject({ owner: 'a', pattern: 1, status: 'closed', points: carried });
+      expect(b.score).toBe(bBefore - carried);
+      expect(aBefore && aBefore.t === 'score' && a.score - aBefore.score).toBe(carried);
+      expect(e.pathsOn(loop.steps[0].tile)).toContain(loop);
+      expect(e.snapshot().paths.find((q) => q.id === loop.id)).toMatchObject({ owner: 'a', pattern: 1 });
     });
 
     it('a new rule drops captured patterns and the extra head', () => {
@@ -522,6 +551,9 @@ describe('engine', () => {
       const { e, ev } = enclose({ captureOnEnclose: false });
       expect(ev.some((x) => x.t === 'capture')).toBe(false);
       expect(e.players.get('a')!.patterns).toHaveLength(1);
+      // Ann can't draw with SMALL, so she can't hold a SMALL line either: Bea keeps it.
+      expect(ev.some((x) => x.t === 'take')).toBe(false);
+      expect(e.players.get('b')!.paths).toHaveLength(1);
     });
 
     describe('overlapOwnLines', () => {

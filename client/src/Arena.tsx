@@ -15,7 +15,7 @@ import { helpSeen, markHelpSeen } from './session';
 import { boardTheme, useTheme } from './theme';
 import { strandColor } from './tiles-layer';
 import { SettingsButton } from './SettingsButton';
-import { useSettings } from './settings';
+import { getSettings, updateSettings, useSettings } from './settings';
 import { useStore } from './useStore';
 
 export interface ArenaProps {
@@ -120,10 +120,15 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     rendererRef.current?.setSettings(settings);
   }, [settings]);
 
-  // 1–9 pick a pattern, like clicking its tab.
+  // 1–9 pick a pattern, like clicking its tab; T toggles team colours.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.target instanceof HTMLInputElement) return;
+      if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === 't' || e.key === 'T') {
+        updateSettings({ teams: !getSettings().teams });
+        return;
+      }
       const n = Number(e.key);
       const me = store.me;
       if (!me || !Number.isInteger(n) || n < 1 || n > me.patterns.length) return;
@@ -295,6 +300,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const meRow = me && rank > top.length ? board[rank - 1] : null;
   const active = me ? (me.patterns[me.active] ?? me.patterns[0]) : undefined;
   const heads = store.heads();
+  // A player's swatch colour: theirs, or their team's (you blue, the rest red).
+  const swatch = (color: string, mine: boolean): string =>
+    strandColor(scheme, settings.teams ? (mine ? scheme.teamMe : scheme.teamRival) : color);
   const speed = me && store.knobs ? (1000 / stepIntervalMs(store.knobs, me.score)).toFixed(1) : '–';
 
   return (
@@ -310,7 +318,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         onContextMenu={(e) => e.preventDefault()}
       />
 
-      <div className="hud hud-me" style={{ ['--me' as string]: me ? strandColor(scheme, me.color) : 'var(--text)' }}>
+      <div className="hud hud-me" style={{ ['--me' as string]: me ? swatch(me.color, true) : 'var(--text)' }}>
         <div className="hud-name">
           <span className="swatch" /> {me?.name ?? '…'}
         </div>
@@ -340,12 +348,12 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         <div className="hud-title">Leaderboard · {store.players.size} playing</div>
         <ol>
           {top.map((p, i) => (
-            <BoardRow key={p.id} rank={i + 1} name={p.name} score={p.score} color={strandColor(scheme, p.color)} me={p.id === store.you} />
+            <BoardRow key={p.id} rank={i + 1} name={p.name} score={p.score} color={swatch(p.color, p.id === store.you)} me={p.id === store.you} />
           ))}
           {meRow && (
             <>
               <li className="board-gap">⋯</li>
-              <BoardRow rank={rank} name={meRow.name} score={meRow.score} color={strandColor(scheme, meRow.color)} me />
+              <BoardRow rank={rank} name={meRow.name} score={meRow.score} color={swatch(meRow.color, true)} me />
             </>
           )}
         </ol>
@@ -364,7 +372,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
                 aria-label={label}
                 title={`${label} (${i + 1})`}
                 className={`pattern-tab${i === me.active ? ' is-active' : ''}`}
-                style={{ background: strandColor(scheme, q.color) }}
+                style={{ background: swatch(q.color, true) }}
                 onClick={() => i !== me.active && conn.send({ t: 'pattern', index: i })}
               />
             );
@@ -378,7 +386,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
           Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
           Loop round someone's line to take its pattern.
           <div className="muted">
-            Drag to pan · hold, then drag across tiles to keep starting lines · wheel or pinch to zoom
+            Drag to pan · hold, then drag across tiles to keep starting lines · wheel or pinch to zoom · T: you blue, rivals red
           </div>
           <button type="button" className="btn" onClick={hideHelp}>
             Got it

@@ -39,7 +39,8 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
                   events (step/wipe/circuit/score/status/join/leave/rule/
-                  capture/active/refused). Client → server adds `pattern`.
+                  capture/take/swap/active/refused). Client → server adds
+                  `pattern` and `swap`.
 server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
                   dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
 client/src/       Vite + React.
@@ -105,7 +106,9 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
 - **One head, unlimited lines.** A player has one growing line at a time
-  (`maxHeads: 1`) until they capture a pattern (then `headsWithCapture: 2`);
+  (`maxHeads: 1`) until they capture a pattern (then `headsWithCapture: 2`,
+  plus one per further captured pattern up to `maxHeadsTotal: 12` while
+  `headPerCapture` is on — `KNOB_HEAD_PER_CAPTURE=0` restores the flat 2);
   a tap past the limit is refused. Finished lines (stuck or
   closed) stay until cut — `maxLivePaths` / `maxCompletedCircuits` exist as
   knobs, default 0. Losing the head in a collision blocks the next tap for
@@ -142,7 +145,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   round a rival's line — every step's midpoint inside — takes that line's
   rule into your `patterns` (index 0 is always your own rule; captures are
   only appended, so a path's `pattern` index stays valid; a new rule clears
-  them). The rival keeps the line. A captured pattern draws in
+  them). The area is yours (`takeEnclosed`, default on): every rival line
+  wholly inside — circuits, claims, growing lines — changes owner (`take`
+  event: new `owner`, `pattern` = its index among yours) and its `points`
+  move with it (two `score`s, zero-sum). A line whose pattern you can't hold
+  (cap, or `captureOnEnclose` off) stays with the rival. A captured pattern draws in
   `mixHsl(yours, theirs, 1/3)`. `active` picks what a tap draws with; only
   the active pattern is sketched on the board. A path carries its own
   `rule`/`table` — use `path.table`, never the owner's, for anything about
@@ -197,8 +204,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   taps, `tilesInsidePolygon`). Tiles the loop passes through get the strong
   tint; the enclosed free tiles get a fainter wash, cached per closed path.
 - **The rule pattern** (your chords, faint, on tiles no rival's line touches —
-  your own lines' tiles included — and not inside a rival's circuit) draws on the overlay past `PATTERN_MIN_SCALE`
-  (1.3 × `ARROW_MIN_SCALE`) and fades in over the next 16 of scale.
+  your own lines' tiles included — and not inside a rival's circuit) draws on
+  the overlay past `PATTERN_MIN_SCALE` (1.3 × `ARROW_MIN_SCALE`, divided by
+  1.5 for 50% more render distance — it now shows before the direction
+  arrows, not after) and fades in over the next 16 of scale.
 - **A theme change has to reach the canvas.** CSS restyles the DOM by itself;
   the board does not. `Arena` hands the renderer the new `BoardTheme`, which
   re-fills the tile layer and invalidates the tints (their lift is per-scheme).
@@ -233,6 +242,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   arrows (`TileLayer.setArrows`) and strokes `fieldOutline` on the overlay; the
   zoomed-in tile outlines and your rule's pattern stay. On a level-6 arena the
   first plain frame pays the ~1.5 s outline build in the browser.
+- **Team colours** (`settings.teams`, key T in the arena, or the modal): every
+  line of yours draws in `--team-me` (blue), every rival's in `--team-rival`
+  (red) — board, washes, sparks, HUD swatches and pattern tabs alike. Circuits
+  keep the team hue and shade only by length (`circuitShade`); the circuit
+  style's own hues are ignored while it is on. Go through `Renderer.colorOf`,
+  not `store.pathColor`, for anything drawn per path.
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
   the old one dies (only its SHA-256 is kept server-side). A resume can take
   over a player whose old socket is still open — a refresh usually beats the

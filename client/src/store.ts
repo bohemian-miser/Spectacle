@@ -11,13 +11,14 @@ import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, 
 
 export interface ClientPath {
   readonly id: number;
-  readonly owner: string;
+  /** Changes hands on a `take`. */
+  owner: string;
   status: PathStatus;
   readonly steps: PathStepWire[];
   /** An edge-to-edge line's claimed region, once closed (else the loop is its own polygon). */
   region?: readonly Pt[];
   /** Which of the owner's patterns drew it (0 = their own rule). */
-  readonly pattern: number;
+  pattern: number;
 }
 
 export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active'> {
@@ -47,6 +48,8 @@ export interface Dying {
 export interface Burst {
   readonly at: Pt;
   readonly color: string;
+  /** The cut line was yours (for team colours). */
+  readonly mine: boolean;
   readonly seed: number;
   readonly born: number;
 }
@@ -247,6 +250,17 @@ export class Store {
         this.geometryVersion++;
         return;
       }
+      case 'take': {
+        const path = this.paths.get(ev.path);
+        if (path) {
+          path.owner = ev.owner;
+          path.pattern = ev.pattern;
+        }
+        if (ev.owner === this.you) this.toast(`Took ${this.players.get(ev.from)?.name ?? 'someone'}'s lines`, 'good');
+        else if (ev.from === this.you) this.toast(`${this.players.get(ev.owner)?.name ?? 'Someone'} took your lines`, 'bad');
+        this.geometryVersion++;
+        return;
+      }
       case 'active': {
         const p = this.players.get(ev.id);
         if (p) p.active = ev.active;
@@ -289,7 +303,7 @@ export class Store {
           const born = performance.now();
           if (color) {
             this.dying.push({ path, color, mine: path.owner === this.you, born });
-            if (ev.at) this.bursts.push({ at: ev.at, color, seed: path.id, born });
+            if (ev.at) this.bursts.push({ at: ev.at, color, mine: path.owner === this.you, seed: path.id, born });
           }
         }
         if (path) {

@@ -20,6 +20,7 @@ import { createGlTiles } from './tiles-gl';
 import {
   ARROW_MIN_SCALE,
   circuitColor,
+  circuitShade,
   darkenCss,
   parseColor,
   strandColor,
@@ -29,9 +30,12 @@ import {
 } from './tiles-layer';
 
 /**
- * Scale at which your rule's pattern starts to show on the free tiles — a
- * little closer in than the direction arrows. It fades in over the next
- * `PATTERN_FADE` of scale, so it dims away as you zoom back out.
+ * Scale at which your rule's pattern starts to show on the free tiles. It
+ * fades in over the next `PATTERN_FADE` of scale, so it dims away as you
+ * zoom back out. Scale is screen px per world unit (see `fitToField`), so
+ * render distance is ∝ 1 / scale — dividing the plain 1.3 × `ARROW_MIN_SCALE`
+ * threshold by 1.5 renders the pattern at 50% more distance (it now shows
+ * before the direction arrows do, not after).
  */
 const MAGMA: readonly (readonly [number, number, number])[] = [
   [252, 214, 120],
@@ -42,7 +46,7 @@ const MAGMA: readonly (readonly [number, number, number])[] = [
   [28, 12, 60],
 ];
 
-export const PATTERN_MIN_SCALE = ARROW_MIN_SCALE * 1.3;
+export const PATTERN_MIN_SCALE = (ARROW_MIN_SCALE * 1.3) / 1.5;
 const PATTERN_FADE = 16;
 const PATTERN_ALPHA = 0.35;
 
@@ -68,6 +72,8 @@ export class Renderer {
   private style: CircuitStyle = getSettings().circuitStyle;
   /** The plain board: tiles in the ground colour, no arrows, the arena's edge drawn. */
   private plain = getSettings().plainTiles;
+  /** Team colours: yours blue, everyone else red. */
+  private teams = getSettings().teams;
   /** A closed circuit's enclosed tiles; a closed path never changes, so once is enough. */
   private readonly interiors = new WeakMap<ClientPath, readonly number[]>();
   /** A closed path's colour and darkening, keyed on the owner colour it was made from. */
@@ -128,6 +134,11 @@ export class Renderer {
       this.looks = new WeakMap();
       this.lastGeometry = -1;
     }
+    if (s.teams !== this.teams) {
+      this.teams = s.teams;
+      this.looks = new WeakMap();
+      this.lastGeometry = -1;
+    }
     if (s.plainTiles !== this.plain) {
       this.plain = s.plainTiles;
       if (this.field) this.tiles?.setTheme(this.board, this.fills(this.field));
@@ -136,8 +147,18 @@ export class Renderer {
     }
   }
 
+  /** The colour a path draws in: its pattern's, or its team's with team colours on. */
+  private colorOf(path: ClientPath): string | undefined {
+    if (this.teams) return this.teamColor(path.owner === this.store.you);
+    return this.store.pathColor(path);
+  }
+
+  private teamColor(mine: boolean): string {
+    return mine ? this.board.teamMe : this.board.teamRival;
+  }
+
   private lengthPalette(): boolean {
-    return this.style === 'b' || this.style === 'd' || this.style === 'e';
+    return !this.teams && this.style === 'b' || this.style === 'd' || this.style === 'e';
   }
 
   fitToField(): void {
@@ -297,9 +318,10 @@ export class Renderer {
 
   /** A washed tile's final tint under the chosen circuit style (0..255 channels + strength). */
   private washTint(r: number, g: number, b: number, a: number, depth: number, inner: ClientPath): [number, number, number, number] {
-    switch (this.style) {
+    // Team colours keep the plain wash: the other styles bring in hues of their own.
+    switch (this.teams ? 'a' : this.style) {
       case 'c': {
-        const base = this.store.pathColor(inner) ?? 'hsl(0, 90%, 62%)';
+        const base = this.colorOf(inner) ?? 'hsl(0, 90%, 62%)';
         const m = /hsl\(\s*([\d.]+)/.exec(base);
         const h = ((m ? Number(m[1]) : 0) + 50 * depth) % 360;
         const [cr, cg, cb] = parseColor(`hsl(${h.toFixed(1)}, 85%, ${Math.max(22, 76 - 12 * (depth - 1))}%)`);
@@ -329,7 +351,7 @@ export class Renderer {
    * circuits each lean their hue a little and darken over a wider range.
    */
   private tintOf(path: ClientPath): [number, number, number] {
-    const color = this.store.pathColor(path);
+    const color = this.colorOf(path);
     if (!color) return [255, 255, 255];
     const closed = path.status === 'closed';
     const [css, dark] = closed ? this.closedLook(path, color) : [color, 0];
@@ -350,7 +372,11 @@ export class Renderer {
     const hit = this.looks.get(path);
     if (hit && hit[0] === color) return hit[1];
     const look: [string, number] = [
-      this.lengthPalette() ? rgbToHex(circuitLengthRgb(path.steps.length)) : circuitColor(color, path.steps.length, path.id),
+      this.teams
+        ? circuitShade(color, path.steps.length)
+        : this.lengthPalette()
+          ? rgbToHex(circuitLengthRgb(path.steps.length))
+          : circuitColor(color, path.steps.length, path.id),
       0,
     ];
     this.looks.set(path, [color, look]);
@@ -386,7 +412,7 @@ export class Renderer {
         ctx.lineTo(bx, by);
       }
     }
-    ctx.strokeStyle = strandColor(this.board, pattern.color);
+    ctx.strokeStyle = strandColor(this.board, this.teams ? this.board.teamMe : pattern.color);
     ctx.lineWidth = Math.max(1, 0.06 * scale * this.dpr);
     ctx.globalAlpha = PATTERN_ALPHA * fade;
     ctx.stroke();
@@ -443,7 +469,7 @@ export class Renderer {
     if (this.plain) this.drawOutline(toScreen);
     this.drawPattern(toScreen, box);
     /** `fade` < 1: a line cut in a collision on its way out (no head, no cross). */
-    const drawPath = (path: ClientPath, mine: boolean, fade = 1, color = store.pathColor(path)): void => {
+    const drawPath = (path: ClientPath, mine: boolean, fade = 1, color = this.colorOf(path)): void => {
       if (!color || path.steps.length === 0) return;
       ctx.globalAlpha = fade;
       const w = Math.max(1.5, 0.14 * s) * (mine ? 1.35 : 1);
@@ -514,7 +540,7 @@ export class Renderer {
       store.dying = store.dying.filter((d) => now - d.born < FADE_MS);
       for (const d of store.dying) {
         const k = 1 - (now - d.born) / FADE_MS;
-        drawPath(d.path, d.mine, k * k, d.color);
+        drawPath(d.path, d.mine, k * k, this.teams ? this.teamColor(d.mine) : d.color);
       }
     }
     if (store.bursts.length > 0) {
@@ -535,7 +561,7 @@ export class Renderer {
     // Tiny on the board, but never smaller than a few pixels when zoomed out.
     const reach = Math.max(18 * this.dpr, 1.2 * this.camera.scale * this.dpr);
     const w = Math.max(2 * this.dpr, 0.08 * this.camera.scale * this.dpr);
-    const ink = strandColor(this.board, b.color);
+    const ink = strandColor(this.board, this.teams ? this.teamColor(b.mine) : b.color);
     // The pop: a ring that swells and thins out in the first third.
     if (u < 0.35) {
       const f = u / 0.35;

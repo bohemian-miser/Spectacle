@@ -93,6 +93,11 @@ export type GameEvent =
    * were wiped just before (`wipe` without `by`), and `pattern` replaces it in place.
    */
   | { readonly t: 'swap'; readonly id: string; readonly index: number; readonly pattern: PatternPublic }
+  /**
+   * `owner` closed a circuit round `from`'s line `path` and took it: it is
+   * theirs now, drawn with their pattern `pattern`. Its points follow as `score`s.
+   */
+  | { readonly t: 'take'; readonly path: number; readonly from: string; readonly owner: string; readonly pattern: number }
   /** `id` switched the pattern their taps draw with. */
   | { readonly t: 'active'; readonly id: string; readonly active: number }
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }

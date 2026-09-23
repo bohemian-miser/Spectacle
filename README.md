@@ -71,15 +71,19 @@ you.
    — and wash the tiles they enclose in it. The washes stack and each level of
    nesting sinks deeper, so a circuit inside a circuit stands apart.
 7. **Capture.** Close a circuit round a rival's line and you take its pattern
-   (the rule that drew it; they keep the line). It becomes yours to draw with,
+   (the rule that drew it) — and the area is yours: every rival line wholly
+   inside, loops and claims included, changes hands with the points it
+   carries (`takeEnclosed`; off, they keep their lines). The pattern becomes yours to draw with,
    in a colour two thirds yours and one third theirs. Your patterns sit as
    tabs on the left wall, bottom left — the one sticking out furthest is
    active, and your next tap draws with it (click a tab, or press 1–9). Only
    the active pattern is sketched on the tiles no rival has touched (your own
    included). Holding a captured
    pattern also gives you a second head (`headsWithCapture`, default 2): two
-   lines growing at once, from any mix of your patterns
-   (`captureOnEnclose`, `maxCapturedPatterns`).
+   lines growing at once, from any mix of your patterns. Every further kind
+   of line you capture adds another head, up to 12 (`headPerCapture`,
+   `maxHeadsTotal`; `KNOB_HEAD_PER_CAPTURE=0` turns it off)
+   (`captureOnEnclose`, `maxCapturedPatterns`, default 11).
 8. **New rule** = restart: your lines and captured patterns go, and (by
    default) your score too. Once you hold a captured pattern, the rule
    screen also offers **Swap for …**: the rule you just built takes that
