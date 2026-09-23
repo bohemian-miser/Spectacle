@@ -696,7 +696,10 @@ describe('engine', () => {
           return [...rules.values()].filter((x) => x.size > 1).length;
         };
         const settle = (e: Engine) =>
-          runUntil(e, () => !e.players.get('a')!.paths.some((q) => q.status === 'growing'), 20000);
+          runUntil(e, () => !e.players.get('a')!.paths.some((q) => q.status === 'growing' || q.burn), 20000);
+        /** Steps of Ann's lines drawn with `key`'s pattern. */
+        const stepsOf = (e: Engine, key: string) =>
+          e.players.get('a')!.paths.filter((q) => q.table.key === key).reduce((n, q) => n + q.steps.length, 0);
 
         /** Ann's closed BIG loop, with SMALL held and active. */
         function withLoop(knobs: Partial<Knobs> = {}) {
@@ -728,19 +731,33 @@ describe('engine', () => {
           return loop.steps.map((q) => q.tile).find((x) => tileChords(FIELD, small, x).length > 0)!;
         }
 
-        it('a line reaching another of your patterns flips it: the old line goes, its tiles sprout the new pattern', () => {
+        it('a line reaching another of your patterns flips it where they meet, and the flip runs along the old line a tile per step', () => {
           const t = grownIn();
           const { e, a, loop } = withLoop();
+          const big = loop.table.key;
+          const length = loop.steps.length;
           const loopTiles = new Set(loop.steps.map((q) => q.tile));
           expect(e.tap('a', t, tileCenter(FIELD, t)).result.ok).toBe(true);
-          const all = runUntil(e, () => e.getPath(loop.id) === undefined);
-          expect(all.some((x) => x.t === 'wipe' && x.path === loop.id && x.by === undefined)).toBe(true);
+          const all = runUntil(e, (ev) => ev.some((x) => x.t === 'split'));
+          const split = all.find((x) => x.t === 'split');
+          expect(split).toMatchObject({ path: loop.id });
+          // Not all at once: the loop opened where they met, most of it is still BIG.
+          expect(stepsOf(e, big)).toBeGreaterThan(length / 2);
+          expect(a.paths.some((q) => q.table.key === big && q.status === 'closed')).toBe(false);
           const pieces = a.paths.filter((q) => q.spawned);
           expect(pieces.length).toBeGreaterThan(0);
           expect(pieces.every((q) => q.pattern === 1 && q.table.key === small.key)).toBe(true);
-          expect(pieces.some((q) => q.steps.some((s) => loopTiles.has(s.tile)))).toBe(true);
           expect(all.some((x) => x.t === 'step' && x.spawned === true && x.pattern === 1)).toBe(true);
+          // The flip travels: a few steps on, some of the loop is gone and some is left.
+          const interval = stepIntervalMs(e.knobs, a.score, FIELD.count);
+          for (let k = 0; k < Math.ceil((3 * interval) / DEFAULT_KNOBS.tickMs); k++) e.tick(DEFAULT_KNOBS.tickMs);
+          const left = stepsOf(e, big);
+          expect(left).toBeLessThan(length - 2);
+          expect(left).toBeGreaterThan(0);
           settle(e);
+          // All of it flipped, SMALL sprouted on its tiles, and no tile holds both patterns.
+          expect(stepsOf(e, big)).toBe(0);
+          expect(a.paths.some((q) => q.steps.some((s) => loopTiles.has(s.tile)))).toBe(true);
           expect(mixed(e)).toBe(0);
           // Nothing lost or scored twice: the score is exactly what Ann's lines carry.
           expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
@@ -750,8 +767,23 @@ describe('engine', () => {
           const tile = onLoop();
           const { e, loop } = withLoop();
           expect(e.tap('a', tile, tileCenter(FIELD, tile)).result.ok).toBe(true);
-          expect(e.getPath(loop.id)).toBeUndefined();
+          expect(e.getPath(loop.id)?.status).not.toBe('closed');
           settle(e);
+          expect(stepsOf(e, loop.table.key)).toBe(0);
+          expect(mixed(e)).toBe(0);
+        });
+
+        it('the newer pattern wins: an older line growing into a newer one is the one that flips', () => {
+          const t = grownIn();
+          const { e, loop } = withLoop();
+          // Make the loop the newer of the two: the SMALL line runs into it and loses.
+          loop.wave = 1_000;
+          const length = loop.steps.length;
+          expect(e.tap('a', t, tileCenter(FIELD, t)).result.ok).toBe(true);
+          settle(e);
+          expect(e.getPath(loop.id)).toMatchObject({ status: 'closed' });
+          expect(loop.steps.length).toBe(length);
+          expect(stepsOf(e, small.key)).toBe(0);
           expect(mixed(e)).toBe(0);
         });
 

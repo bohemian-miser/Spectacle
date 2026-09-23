@@ -43,13 +43,15 @@
  *    line wholly inside the circuit — loops, edge-to-edge claims, lines still
  *    growing — becomes yours, drawn with the captured pattern, and its points
  *    come with it (zero-sum: the rival loses them);
- *  - (`flipOwnLines`) your lines of different patterns never share a tile: a
- *    line reaching a tile one of your lines of another pattern is on flips
- *    that line to its own pattern. The old line goes (its points fold into
- *    the flipping line), every tile it was on is redrawn with the new
- *    pattern's chords, and those pieces grow outward from both ends without
- *    using up a head. The pieces themselves flip nothing: they stop at
- *    another of your patterns, so a flip never cascades.
+ *  - (`flipOwnLines`) your lines of different patterns never share a tile:
+ *    where two of them meet, the one started later wins that tile. The
+ *    loser's steps there go (it splits round the gap), the winner's chords
+ *    sprout there as pieces, and the pieces grow on at the owner's speed —
+ *    into the loser's next tile, which flips in turn. So the newest pattern
+ *    spreads along everything of yours it touches, a tile per step, and never
+ *    stops at your own lines: the flip also runs along the losing line
+ *    itself (`burn`), a tile per step each way, until it is all flipped.
+ *    Newer always beats older, so it settles.
  */
 
 import type { Pt, Segment } from '../tiles';
@@ -95,7 +97,20 @@ export interface Path {
   spawned?: boolean;
   /** When its head stops, it turns round once and grows out of its other end (a flip's pieces). */
   twoWay?: boolean;
+  /**
+   * When the tap that started it (or the line whose flip grew it) happened:
+   * where two of a player's patterns meet, the higher wave wins the tile.
+   */
+  wave: number;
+  /**
+   * A flip is travelling along this line: each step (at the owner's speed)
+   * its `start` and/or `end` tile flips to `strain`, until nothing is left.
+   */
+  burn?: { strain: Strain; start: boolean; end: boolean; progress: number };
 }
+
+/** What a flip spreads: a pattern of the owner's, and the wave it won with. */
+export type Strain = Pick<Path, 'rule' | 'table' | 'pattern' | 'wave'>;
 
 /** A rule a player can draw with, and the colour its lines take. */
 export interface Pattern {
@@ -120,6 +135,10 @@ export interface Player {
   readonly bot: boolean;
   /** Engine time before which a tap may not start a new head (collision cooldown). */
   respawnAt: number;
+  /** Steps banked for this player's flip pieces, shared between them (`flipPieceHeads`). */
+  pieceProgress: number;
+  /** Which piece grows next (round robin). */
+  pieceCursor: number;
   /** `patterns[0]` is `rule`/`table`; captured patterns follow. */
   readonly patterns: Pattern[];
   /** The pattern a tap draws with. */
@@ -163,6 +182,7 @@ export class Engine {
   /** tile → paths that have a step on it. */
   private readonly occupancy = new Map<number, Set<Path>>();
   private nextPathId = 1;
+  private nextWave = 1;
   /** Engine clock: the sum of every `tick` dt, ms. */
   private now = 0;
   private colorIndex = 0;
@@ -193,6 +213,8 @@ export class Engine {
       paths: [],
       bot,
       respawnAt: 0,
+      pieceProgress: 0,
+      pieceCursor: 0,
       patterns: [{ rule, table, color }],
       active: 0,
     };
@@ -359,6 +381,7 @@ export class Engine {
       rule: pattern.rule,
       table: pattern.table,
       pattern: p.patterns.indexOf(pattern),
+      wave: this.nextWave++,
     };
     p.paths.push(path);
     this.pathsById.set(path.id, path);
@@ -439,9 +462,10 @@ export class Engine {
   tick(dtMs: number): GameEvent[] {
     const ev: GameEvent[] = [];
     this.now += dtMs;
+    const shared = this.knobs.flipPieceHeads > 0;
     for (const p of this.players.values()) {
       for (const path of [...p.paths]) {
-        if (path.status !== 'growing') continue;
+        if (path.status !== 'growing' || (shared && path.spawned)) continue;
         path.progress += dtMs / stepIntervalMs(this.knobs, p.score, this.field.count);
         // Guard: a huge dt must not spin for thousands of steps in one tick.
         let budget = 256;
@@ -451,8 +475,70 @@ export class Engine {
         }
         if (path.status !== 'growing') path.progress = 0;
       }
+      if (shared) this.growPieces(p, dtMs, ev);
+      // Flips travel at the owner's speed too: every burning line (and each
+      // run it splits into, which inherits what is left of its progress) takes
+      // as many steps as its progress allows.
+      const step = dtMs / stepIntervalMs(this.knobs, p.score, this.field.count);
+      for (const path of p.paths) if (path.burn) path.burn.progress += step;
+      for (let budget = 256; budget > 0; budget--) {
+        const ready = p.paths.filter((q) => q.burn && q.burn.progress >= 1);
+        if (ready.length === 0) break;
+        for (const path of ready) if (path.burn && this.pathsById.has(path.id)) this.burnOn(p, path, ev);
+      }
     }
     return ev;
+  }
+
+  /**
+   * A flip's pieces share `flipPieceHeads` heads' worth of growth between
+   * them, taking turns — however many there are, a flip spreads outward at
+   * the owner's speed rather than flooding the board.
+   */
+  private growPieces(p: Player, dtMs: number, ev: GameEvent[]): void {
+    let pieces = p.paths.filter((q) => q.spawned && q.status === 'growing');
+    if (pieces.length === 0) {
+      p.pieceProgress = 0;
+      return;
+    }
+    const heads = this.knobs.flipPieceHeads;
+    p.pieceProgress = Math.min(p.pieceProgress + (heads * dtMs) / stepIntervalMs(this.knobs, p.score, this.field.count), 256);
+    while (p.pieceProgress >= 1) {
+      if (pieces.length === 0) {
+        pieces = p.paths.filter((q) => q.spawned && q.status === 'growing');
+        if (pieces.length === 0) break;
+      }
+      p.pieceProgress -= 1;
+      const path = pieces[p.pieceCursor++ % pieces.length];
+      if (path.status === 'growing' && path.spawned && this.pathsById.has(path.id)) this.advance(p, path, ev);
+      if (p.pieceCursor % pieces.length === 0) pieces = [];
+    }
+  }
+
+  /** Carry a flip one step along `path` (see `Path.burn`): a tile from each burning end. */
+  private burnOn(p: Player, path: Path, ev: GameEvent[]): void {
+    const burn = path.burn!;
+    // A swapped-out pattern spreads no further.
+    if (!p.patterns[burn.strain.pattern] || !sameRule(p.patterns[burn.strain.pattern].rule, burn.strain.rule)) {
+      path.burn = undefined;
+      return;
+    }
+    burn.progress -= 1;
+    const tiles = new Set<number>();
+    if (burn.start) tiles.add(path.steps[0].tile);
+    if (burn.end) tiles.add(path.steps[path.steps.length - 1].tile);
+    // Each end burns on in whichever run the split leaves it in.
+    let live: Path[] = [path];
+    for (const t of tiles) {
+      const next: Path[] = [];
+      for (const q of live) {
+        if (!this.pathsById.has(q.id)) continue;
+        if (q.steps.some((x) => x.tile === t)) next.push(...this.splitOff(q, t, ev, burn.strain));
+        else next.push(q);
+      }
+      live = next;
+      this.sprout(p, burn.strain, t, ev);
+    }
   }
 
   // --- internals -----------------------------------------------------------
@@ -495,8 +581,9 @@ export class Engine {
       this.stop(path, ev);
       return;
     }
-    if (own) this.join(p, path, own, ev);
-    else if (!this.addStep(p, path, s, ev)) return; // died in a collision
+    if (own) {
+      if (this.join(p, path, own, ev) !== path) return;
+    } else if (!this.addStep(p, path, s, ev)) return; // died in a collision
     if (this.knobs.maxPathLength > 0 && path.steps.length >= this.knobs.maxPathLength) {
       this.setStatus(path, 'stuck', ev);
     }
@@ -533,12 +620,8 @@ export class Engine {
     const mine: [Pt, Pt] = [s.a, s.b];
     for (const other of occ) {
       if (other.owner !== p.id || other === path) continue;
-      // Another pattern's line is flipped as the step lands (`addStep`) — by a
-      // line you started; a flip's own pieces stop there, or flips would cascade.
-      if (this.knobs.flipOwnLines && !sameRule(other.rule, path.rule)) {
-        if (path.spawned) return 'stop';
-        continue;
-      }
+      // Where two of your patterns meet, the step lands and one of them flips (`addStep`).
+      if (this.knobs.flipOwnLines && !sameRule(other.rule, path.rule)) continue;
       if (other.status !== 'closed' && sameRule(other.rule, path.rule)) {
         const first = other.steps[0];
         const last = other.steps[other.steps.length - 1];
@@ -553,6 +636,11 @@ export class Engine {
         }
       }
       if (!this.knobs.overlapOwnLines && this.pathMeets(other, s.tile, mine)) return 'stop';
+      // A flip's piece that reaches a line of its own pattern has nothing left
+      // to flip that way: running on would only double the line.
+      if (path.spawned && sameRule(other.rule, path.rule) && other.steps.some((q) => q.tile === s.tile && q.chord === s.chord)) {
+        return 'stop';
+      }
     }
     return null;
   }
@@ -561,10 +649,14 @@ export class Engine {
    * Two of a player's lines meet end to end: `other` is folded into `path`
    * (its steps appended, its points carried over — nothing is scored twice) and
    * leaves the board. The joined line grows on from `other`'s far end, so two
-   * lines that each ran off the edge become one edge-to-edge claim.
+   * lines that each ran off the edge become one edge-to-edge claim. Returns
+   * the joined line: `path`, or — when both are a flip's pieces and `other` is
+   * the longer — `other`, with `path` folded into it instead (the same line,
+   * for far fewer events).
    */
-  private join(p: Player, path: Path, meet: { other: Path; tail: WalkStep[] }, ev: GameEvent[]): void {
+  private join(p: Player, path: Path, meet: { other: Path; tail: WalkStep[] }, ev: GameEvent[]): Path {
     const { other, tail } = meet;
+    if (path.spawned && other.spawned && other.steps.length > path.steps.length) return this.foldInto(p, path, meet, ev);
     const i = p.paths.indexOf(other);
     if (i >= 0) p.paths.splice(i, 1);
     this.pathsById.delete(other.id);
@@ -588,11 +680,48 @@ export class Engine {
       occ.add(path);
     }
     path.points += other.points;
+    return path;
   }
 
-  /** Extend `path` by one step. Returns false when the step was a fatal collision. */
+  /**
+   * `join`, the other way round: the joined line is `path`'s steps then
+   * `tail`, kept under `other`'s id. The client gets it as: reverse `other`
+   * if `tail` runs its way, append `path` backwards, reverse back.
+   */
+  private foldInto(p: Player, path: Path, meet: { other: Path; tail: WalkStep[] }, ev: GameEvent[]): Path {
+    const { other, tail } = meet;
+    const forward = tail[0] === other.steps[0];
+    const status = path.status;
+    const progress = path.progress;
+    const twoWay = path.twoWay;
+    const moved = path.steps.slice();
+    other.points += path.points;
+    path.points = 0;
+    this.dropPath(path, undefined, ev);
+    if (forward) ev.push({ t: 'reverse', path: other.id });
+    for (let i = moved.length - 1; i >= 0; i--) {
+      const q = moved[i];
+      ev.push({ t: 'step', path: other.id, owner: p.id, step: { tile: q.tile, chord: q.chord, a: q.b, b: q.a } });
+      let occ = this.occupancy.get(q.tile);
+      if (!occ) this.occupancy.set(q.tile, (occ = new Set()));
+      occ.add(other);
+    }
+    ev.push({ t: 'reverse', path: other.id });
+    other.steps.length = 0;
+    other.steps.push(...moved, ...tail);
+    other.status = status;
+    other.progress = progress;
+    other.twoWay = twoWay;
+    other.wave = Math.max(other.wave, path.wave);
+    if (status !== 'growing') ev.push({ t: 'status', path: other.id, status });
+    return other;
+  }
+
+  /**
+   * Extend `path` by one step. Returns false when the path can't grow on: the
+   * step was a fatal collision, or it lost the tile to a newer pattern of its owner's.
+   */
   private addStep(p: Player, path: Path, s: WalkStep, ev: GameEvent[]): boolean {
-    const flipped = this.knobs.flipOwnLines && !path.spawned ? this.flipOwn(p, path, s.tile, ev) : null;
     const hitOwner = this.cutRivals(p, s, ev);
     if (hitOwner !== null && this.knobs.mutualCut) {
       // The collision is drawn (so both players see where it happened), then
@@ -601,7 +730,6 @@ export class Engine {
       path.steps.push(s);
       p.combo = this.knobs.comboStart;
       this.dropPath(path, hitOwner, ev, chordMid(s));
-      if (flipped) this.sprout(p, path, flipped, ev);
       return false;
     }
     const stepEv = this.stepEvent(p, path, s);
@@ -615,48 +743,174 @@ export class Engine {
     ev.push(stepEv);
     path.points += this.knobs.pointsPerTile;
     this.addScore(p, this.knobs.pointsPerTile, ev);
-    if (flipped) this.sprout(p, path, flipped, ev);
-    return true;
+    if (this.knobs.flipOwnLines) this.flipTile(p, path, s.tile, ev);
+    return path.status === 'growing' && this.pathsById.has(path.id);
   }
 
   /**
-   * `path` is about to step onto `tile`: every line of its owner's of another
-   * pattern on that tile goes, its points folded into `path` (nothing is lost
-   * or scored twice). Returns the tiles those lines were on, or null when
-   * there were none.
+   * `path` just stepped onto `tile`. Every line of its owner's there of
+   * another pattern meets it: the newest line (highest `wave`) wins the tile.
+   * Each line of another pattern than the winner's loses its steps on the
+   * tile (`splitOff`), its points going to the winner — nothing is lost or
+   * scored twice — and the winner's pattern sprouts on the tile. Its pieces
+   * grow into the losers' next tiles and flip those, so a flip travels.
    */
-  private flipOwn(p: Player, path: Path, tile: number, ev: GameEvent[]): Set<number> | null {
+  private flipTile(p: Player, path: Path, tile: number, ev: GameEvent[]): void {
     const occ = this.occupancy.get(tile);
-    if (!occ) return null;
-    let tiles: Set<number> | null = null;
-    for (const other of [...occ]) {
-      if (other.owner !== p.id || other === path || sameRule(other.rule, path.rule)) continue;
-      tiles ??= new Set();
-      for (const q of other.steps) tiles.add(q.tile);
-      path.points += other.points;
-      other.points = 0;
-      this.dropPath(other, undefined, ev);
+    if (!occ) return;
+    const met = [...occ].filter((q) => q.owner === p.id && q !== path && !sameRule(q.rule, path.rule));
+    if (met.length === 0) return;
+    let winner = path;
+    for (const q of met) if (q.wave > winner.wave) winner = q;
+    for (const q of [path, ...met]) {
+      if (sameRule(q.rule, winner.rule)) continue;
+      winner.points += q.points;
+      q.points = 0;
+      this.splitOff(q, tile, ev, winner);
     }
-    return tiles;
+    this.sprout(p, winner, tile, ev);
   }
 
   /**
-   * Redraw flipped `tiles` with `path`'s pattern: each of its chords there
-   * that no line is on or meets, strung into runs along the strand. Each run
-   * becomes a line of `p`'s that grows outward from both ends (a run that
-   * already closes is a circuit on the spot). Placing them scores nothing —
-   * the tiles were already paid for.
+   * Take `path`'s steps on `tile` out of it. What is left splits into runs:
+   * the first keeps the path's id, the rest become new lines of the same
+   * owner, pattern and wave. A run that still ends at a growing head keeps
+   * growing; the rest are stuck, and a closed loop opens (one run, wrapping
+   * round). Nothing left: the path goes. Points stay where they are. Each
+   * run end next to the gap burns on with `strain` (`Path.burn`); ends that
+   * were already burning keep burning. Returns the runs.
    */
-  private sprout(p: Player, path: Path, tiles: ReadonlySet<number>, ev: GameEvent[]): void {
+  private splitOff(path: Path, tile: number, ev: GameEvent[], strain: Strain): Path[] {
+    const n = path.steps.length;
+    const runs: { start: number; end: number }[] = [];
+    for (let i = 0; i < n; i++) {
+      if (path.steps[i].tile === tile) continue;
+      const last = runs[runs.length - 1];
+      if (last && last.end === i) last.end++;
+      else runs.push({ start: i, end: i + 1 });
+    }
+    if (runs.length === 1 && runs[0].start === 0 && runs[0].end === n) return [path];
+    if (runs.length === 0) {
+      this.dropPath(path, undefined, ev);
+      return [];
+    }
+    const closed = path.status === 'closed';
+    // A loop opens by wrapping round; an edge-to-edge claim is closed but its
+    // ends are on the field's edge, not joined.
+    const loop = closed && !path.region;
+    if (runs.length === 1 && !loop) return [this.trimEnds(path, tile, runs[0], strain, ev)];
+    if (loop && runs.length > 1 && runs[0].start === 0 && runs[runs.length - 1].end === n) {
+      const first = runs.shift()!;
+      runs[runs.length - 1].end = n + first.end;
+    }
+    const old = path.steps.slice();
+    const head = (r: { end: number }) => !closed && path.status === 'growing' && r.end === n;
+    for (const q of old) {
+      const occ = this.occupancy.get(q.tile);
+      if (!occ) continue;
+      occ.delete(path);
+      if (occ.size === 0) this.occupancy.delete(q.tile);
+    }
+    const owner = this.players.get(path.owner);
+    const wire: { id: number; start: number; end: number; status: PathStatus }[] = [];
+    const was = path.burn;
+    // The newer of the two flips carries on along the whole line.
+    const carry = was && was.strain.wave > strain.wave ? was.strain : strain;
+    const out: Path[] = [];
+    runs.forEach((r, k) => {
+      const status: PathStatus = head(r) ? 'growing' : 'stuck';
+      let q = path;
+      if (k > 0) {
+        q = {
+          id: this.nextPathId++,
+          owner: path.owner,
+          status,
+          steps: [],
+          progress: 0,
+          points: 0,
+          rule: path.rule,
+          table: path.table,
+          pattern: path.pattern,
+          spawned: path.spawned,
+          twoWay: path.twoWay,
+          wave: path.wave,
+        };
+        owner?.paths.push(q);
+        this.pathsById.set(q.id, q);
+      }
+      q.steps.length = 0;
+      for (let i = r.start; i < r.end; i++) q.steps.push(old[i % n]);
+      if (status !== 'growing') {
+        q.progress = 0;
+        q.twoWay = false;
+      }
+      q.status = status;
+      for (const st of q.steps) {
+        let occ = this.occupancy.get(st.tile);
+        if (!occ) this.occupancy.set(st.tile, (occ = new Set()));
+        occ.add(q);
+      }
+      // An end burns when the gap is right behind it, or when it burned already.
+      const start = loop || r.start > 0 || !!was?.start;
+      const end = loop || r.end < n || !!was?.end;
+      q.burn = { strain: carry, start, end, progress: was?.progress ?? 0 };
+      out.push(q);
+      wire.push({ id: q.id, start: r.start, end: r.end, status });
+    });
+    path.region = undefined;
+    ev.push({ t: 'split', path: path.id, runs: wire });
+    return out;
+  }
+
+  /**
+   * `splitOff` when the tile only held the line's ends (a flip burning in from
+   * them, the usual case): drop those steps in place instead of rebuilding.
+   */
+  private trimEnds(path: Path, tile: number, run: { start: number; end: number }, strain: Strain, ev: GameEvent[]): Path {
+    const n = path.steps.length;
+    const was = path.burn;
+    const growing = path.status === 'growing' && run.end === n;
+    path.steps.splice(run.end);
+    path.steps.splice(0, run.start);
+    path.region = undefined;
+    if (!path.steps.some((q) => q.tile === tile)) {
+      const occ = this.occupancy.get(tile);
+      if (occ) {
+        occ.delete(path);
+        if (occ.size === 0) this.occupancy.delete(tile);
+      }
+    }
+    const status: PathStatus = growing ? 'growing' : 'stuck';
+    if (!growing) {
+      path.progress = 0;
+      path.twoWay = false;
+    }
+    path.status = status;
+    path.burn = {
+      strain: was && was.strain.wave > strain.wave ? was.strain : strain,
+      start: run.start > 0 || !!was?.start,
+      end: run.end < n || !!was?.end,
+      progress: was?.progress ?? 0,
+    };
+    ev.push({ t: 'split', path: path.id, runs: [{ id: path.id, start: run.start, end: run.end, status }] });
+    return path;
+  }
+
+  /**
+   * Redraw flipped `tile` with `path`'s pattern: each of its chords there that
+   * no line is on or meets, strung into runs along the strand. Each run
+   * becomes a line of `p`'s (same pattern and wave as `path`) that grows
+   * outward from both ends (a run that already closes is a circuit on the
+   * spot). Placing them scores nothing — the tile was already paid for.
+   */
+  private sprout(p: Player, path: Strain, tile: number, ev: GameEvent[]): void {
     const { field } = this;
     const table = path.table;
     const key = (t: number, c: number): number => t * 64 + c;
     const free = new Set<number>();
-    for (const t of tiles) {
-      tileChords(field, table, t).forEach((_, c) => {
-        if (!this.sproutBlocked(p, path.rule, t, worldChord(field, table, t, c))) free.add(key(t, c));
-      });
-    }
+    tileChords(field, table, tile).forEach((_, c) => {
+      if (!this.sproutBlocked(p, path.rule, tile, worldChord(field, table, tile, c))) free.add(key(tile, c));
+    });
     const used = new Set<number>();
     const next = (cur: WalkStep): WalkStep | ChordEnd | null => {
       const o = continuations(field, table, cur.tile, cur.chord, cur.b).find((e) => free.has(key(e.tile, e.chord)));
@@ -705,6 +959,7 @@ export class Engine {
         pattern: path.pattern,
         spawned: true,
         twoWay: !closed,
+        wave: path.wave,
       };
       p.paths.push(piece);
       this.pathsById.set(piece.id, piece);
@@ -905,6 +1160,7 @@ export class Engine {
     to.paths.push(path);
     path.owner = to.id;
     path.pattern = index;
+    path.burn = undefined;
     ev.push({ t: 'take', path: path.id, from: from.id, owner: to.id, pattern: index });
     if (path.points > 0) {
       this.addScore(from, -path.points, ev);

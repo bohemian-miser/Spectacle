@@ -217,6 +217,16 @@ export class Store {
     set.add(path);
   }
 
+  private unoccupy(path: ClientPath): void {
+    for (const s of path.steps) {
+      const set = this.occupancy.get(s.tile);
+      if (set) {
+        set.delete(path);
+        if (set.size === 0) this.occupancy.delete(s.tile);
+      }
+    }
+  }
+
   private apply(ev: GameEvent): void {
     switch (ev.t) {
       case 'join':
@@ -288,6 +298,24 @@ export class Store {
         this.geometryVersion++;
         return;
       }
+      case 'split': {
+        const path = this.paths.get(ev.path);
+        if (path) {
+          this.unoccupy(path);
+          this.paths.delete(path.id);
+          const n = path.steps.length;
+          for (const r of ev.runs) {
+            const steps: PathStepWire[] = [];
+            for (let i = r.start; i < r.end; i++) steps.push(path.steps[i % n]);
+            const run: ClientPath = { id: r.id, owner: path.owner, status: r.status, steps, pattern: path.pattern };
+            if (path.spawned) run.spawned = true;
+            this.paths.set(run.id, run);
+            for (const s of steps) this.occupy(s.tile, run);
+          }
+        }
+        this.geometryVersion++;
+        return;
+      }
       case 'reverse': {
         const path = this.paths.get(ev.path);
         if (path) {
@@ -312,13 +340,7 @@ export class Store {
         }
         if (path) {
           this.paths.delete(ev.path);
-          for (const s of path.steps) {
-            const set = this.occupancy.get(s.tile);
-            if (set) {
-              set.delete(path);
-              if (set.size === 0) this.occupancy.delete(s.tile);
-            }
-          }
+          this.unoccupy(path);
         }
         if (ev.by !== undefined) {
           const by = this.players.get(ev.by)?.name ?? 'someone';
