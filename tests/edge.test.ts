@@ -81,7 +81,7 @@ describe('the field edge', () => {
     const firstLeg = path.steps.length;
     const oldEnd = path.steps[firstLeg - 1];
 
-    const turn = e.tap('a', tile, tileCenter(FIELD, tile));
+    const turn = tapChord(e, 'a', tile, chord);
     expect(turn.result).toEqual({ ok: true, path: path.id });
     expect(turn.events).toContainEqual({ t: 'reverse', path: path.id });
     expect(path.status).toBe('growing');
@@ -134,7 +134,7 @@ describe('the field edge', () => {
     expect(e.players.get('a')!.score).toBe(lineB.steps.length * DEFAULT_KNOBS.pointsPerTile);
 
     // Turned round, it runs to the other edge and claims.
-    const turn = e.tap('a', lineB.steps[0].tile, tileCenter(FIELD, lineB.steps[0].tile));
+    const turn = tapChord(e, 'a', lineB.steps[0].tile, lineB.steps[0].chord);
     expect(turn.result).toEqual({ ok: true, path: b.path });
     const ev = run(e, (all) => all.some((x) => x.t === 'circuit' || (x.t === 'status' && x.path === b.path)));
     const circuit = ev.find((x) => x.t === 'circuit');

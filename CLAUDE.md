@@ -109,7 +109,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit —
-  nor on your own line. The one exception: tapping the first tile of your stuck
+  nor on your own line. "On a line" is per chord, not per tile (`freeChord`):
+  a tap takes the nearest chord of the tile that no line runs along or
+  conflicts with (`pathMeets`, the same test a growing line uses), and is
+  refused only when every chord there is blocked. The one exception: tapping the first chord of your stuck
   line that ran off the field's edge turns it round (`reverse` event; steps
   flip, it grows again). A line that runs edge to edge closes as a circuit
   whose polygon is the line plus the smaller arc of `fieldOutline` (`region`
