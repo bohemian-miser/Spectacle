@@ -10,6 +10,7 @@
 
 import { pathPolygon, tilesInBox, tilesInsidePolygon, type Box, type Field } from '../../shared/game/field';
 import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand';
+import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { ClientPath, Store } from './store';
 import { boardTheme, type BoardTheme } from './theme';
@@ -17,9 +18,8 @@ import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
 import {
   ARROW_MIN_SCALE,
-  circuitDarkening,
-  ownCircuitColor,
-  ownCircuitDarkening,
+  circuitColor,
+  darkenCss,
   parseColor,
   strandColor,
   typeFill,
@@ -32,6 +32,34 @@ import {
  * little closer in than the direction arrows. It fades in over the next
  * `PATTERN_FADE` of scale, so it dims away as you zoom back out.
  */
+/**
+ * Circuit colouring, while we choose one (`?circuits=a…e`):
+ *  a  owner ramp — hue ±110° round the owner's colour and lightness by length;
+ *     each nesting level darkens the wash 14%.
+ *  b  Spectre's length palette (`circuitLengthRgb`, as in the rule lab) for
+ *     loops and washes alike; nesting darkens as in a.
+ *  c  depth bands — loops on the owner ramp; the wash steps its hue 50° and
+ *     its lightness down with every level of nesting.
+ *  d  contour stripes — loops on the length palette; nesting levels alternate
+ *     light and dark like a topographic map.
+ *  e  depth heatmap — loops on the length palette; the wash is a magma scale
+ *     by depth (yellow, orange, red, purple, near-black).
+ */
+type CircuitStyle = 'a' | 'b' | 'c' | 'd' | 'e';
+const CIRCUIT_STYLE: CircuitStyle = (() => {
+  const v = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('circuits');
+  return v === 'b' || v === 'c' || v === 'd' || v === 'e' ? v : 'a';
+})();
+const LENGTH_PALETTE = CIRCUIT_STYLE === 'b' || CIRCUIT_STYLE === 'd' || CIRCUIT_STYLE === 'e';
+const MAGMA: readonly (readonly [number, number, number])[] = [
+  [252, 214, 120],
+  [247, 146, 64],
+  [222, 74, 76],
+  [160, 44, 122],
+  [84, 24, 112],
+  [28, 12, 60],
+];
+
 export const PATTERN_MIN_SCALE = ARROW_MIN_SCALE * 1.3;
 const PATTERN_FADE = 16;
 const PATTERN_ALPHA = 0.35;
@@ -204,7 +232,7 @@ export class Renderer {
       }
       if (pick === null) continue;
       const [r, g, b] = this.tintOf(pick);
-      tiles.setTint(tile, r, g, b, pick.owner === store.you ? 115 : 85);
+      tiles.setTint(tile, r, g, b, pick.status === 'closed' ? (pick.owner === store.you ? 175 : 150) : pick.owner === store.you ? 115 : 85);
     }
     // Interior wash: the free tiles a closed circuit encloses take its owner's
     // colour, fainter than the loop itself. Washes stack: outer circuits go
@@ -225,15 +253,17 @@ export class Renderer {
       closed.push({ path, inside });
     }
     closed.sort((a, b) => b.inside.length - a.inside.length);
-    const wash = new Map<number, [number, number, number, number]>();
+    const wash = new Map<number, [number, number, number, number, number]>();
+    const innermost = new Map<number, ClientPath>();
     for (const { path, inside } of closed) {
       const [r, g, b] = this.tintOf(path);
-      const a = path.owner === store.you ? 0.3 : 0.22;
+      const a = path.owner === store.you ? 0.42 : 0.34;
       for (const t of inside) {
         if (store.occupancy.has(t)) continue;
+        innermost.set(t, path);
         const under = wash.get(t);
         if (!under) {
-          wash.set(t, [r, g, b, a]);
+          wash.set(t, [r, g, b, a, 1]);
           continue;
         }
         // Porter–Duff "over": this loop's colour on top of what is already there.
@@ -243,9 +273,42 @@ export class Renderer {
         under[1] = (g * a + under[1] * ua) / oa;
         under[2] = (b * a + under[2] * ua) / oa;
         under[3] = oa;
+        under[4]++;
       }
     }
-    for (const [t, [r, g, b, a]] of wash) tiles.setTint(t, r, g, b, Math.min(210, a * 255));
+    // Each level of nesting also sinks the wash a step deeper, so depth reads
+    // even where two nested loops happen to share a hue.
+    for (const [t, [r, g, b, a, depth]] of wash) {
+      const tint = this.washTint(r, g, b, a, depth, innermost.get(t)!);
+      tiles.setTint(t, tint[0], tint[1], tint[2], tint[3]);
+    }
+  }
+
+  /** A washed tile's final tint under the chosen circuit style (0..255 channels + strength). */
+  private washTint(r: number, g: number, b: number, a: number, depth: number, inner: ClientPath): [number, number, number, number] {
+    switch (CIRCUIT_STYLE) {
+      case 'c': {
+        const base = this.store.players.get(inner.owner)?.color ?? 'hsl(0, 90%, 62%)';
+        const m = /hsl\(\s*([\d.]+)/.exec(base);
+        const h = ((m ? Number(m[1]) : 0) + 50 * depth) % 360;
+        const [cr, cg, cb] = parseColor(`hsl(${h.toFixed(1)}, 85%, ${Math.max(22, 76 - 12 * (depth - 1))}%)`);
+        return [cr, cg, cb, Math.min(240, (0.62 + 0.1 * (depth - 1)) * 255)];
+      }
+      case 'd': {
+        const [ir, ig, ib] = this.tintOf(inner);
+        const k = depth % 2 === 1 ? 1.35 : 0.45;
+        const ch = (c: number): number => Math.max(0, Math.min(255, c * k));
+        return [ch(ir), ch(ig), ch(ib), Math.min(240, 0.78 * 255)];
+      }
+      case 'e': {
+        const [mr, mg, mb] = MAGMA[Math.min(MAGMA.length - 1, depth - 1)];
+        return [mr, mg, mb, Math.min(240, (0.68 + 0.06 * (depth - 1)) * 255)];
+      }
+      default: {
+        const k = Math.max(0.45, 1 - 0.14 * (depth - 1));
+        return [r * k, g * k, b * k, Math.min(230, a * 255)];
+      }
+    }
   }
 
   /**
@@ -265,19 +328,20 @@ export class Renderer {
       this.rgbCache.set(css, rgb);
     }
     const k = 1 - dark;
-    const lift = closed ? this.board.liftClosed : this.board.lift;
+    // A circuit carries its lightness in the colour itself (the length ramp).
+    const lift = closed ? 0 : this.board.lift;
     const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
     return [ch(rgb[0]), ch(rgb[1]), ch(rgb[2])];
   }
 
-  /** A closed path's colour and darkening: per circuit for yours, by length for a rival's. */
+  /** A closed path's colour (the length ramp) and extra darkening (none, today). */
   private closedLook(path: ClientPath, color: string): readonly [string, number] {
     const hit = this.looks.get(path);
     if (hit && hit[0] === color) return hit[1];
-    const look: [string, number] =
-      path.owner === this.store.you
-        ? [ownCircuitColor(color, path.id), ownCircuitDarkening(path.steps.length, path.id)]
-        : [color, circuitDarkening(path.steps.length)];
+    const look: [string, number] = [
+      LENGTH_PALETTE ? rgbToHex(circuitLengthRgb(path.steps.length)) : circuitColor(color, path.steps.length, path.id),
+      0,
+    ];
     this.looks.set(path, [color, look]);
     return look;
   }
@@ -371,7 +435,10 @@ export class Renderer {
         ctx.lineWidth = w + Math.max(2, 0.08 * s);
         ctx.stroke();
       }
-      const ink = path.status === 'closed' ? strandColor(this.board, ...this.closedLook(path, owner.color)) : strandColor(this.board, owner.color);
+      const ink =
+        path.status !== 'closed'
+          ? strandColor(this.board, owner.color)
+          : darkenCss(this.closedLook(path, owner.color)[0], 0.3);
       ctx.strokeStyle = ink;
       ctx.lineWidth = w;
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;
