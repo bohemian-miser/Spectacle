@@ -15,9 +15,8 @@ import {
   EDGE_CLASS_COLORS,
   centroid,
   connectionPoints,
-  edgeLabels,
+  metaEdges,
   leafPts,
-  parseEdgeLabel,
   straightOutline,
   type Pt,
   type TileFamilyId,
@@ -41,6 +40,49 @@ export interface TileThumbProps {
 const DOT_R = 0.16;
 const HIT_R = 0.34;
 
+/** Twice the signed area: its sign says which side of an edge is outside. */
+function signedArea(pts: readonly Pt[]): number {
+  let a = 0;
+  for (let i = 0; i < pts.length; i++) {
+    const p = pts[i];
+    const q = pts[(i + 1) % pts.length];
+    a += p.x * q.y - q.x * p.y;
+  }
+  return a;
+}
+
+/**
+ * Where a seam's number goes: the middle of the seam (the middle edge's
+ * midpoint, or the vertex between the two middle edges) and the outward
+ * normal there, so the number sits just outside the tile.
+ */
+function seamLabelAt(pts: readonly Pt[], edges: readonly number[], orient: number): { x: number; y: number; nx: number; ny: number } {
+  const n = pts.length;
+  const normal = (i: number): Pt => {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    const dx = b.x - a.x;
+    const dy = b.y - a.y;
+    const len = Math.hypot(dx, dy) || 1;
+    return { x: (orient * dy) / len, y: (-orient * dx) / len };
+  };
+  const k = edges.length;
+  if (k % 2 === 1) {
+    const i = edges[(k - 1) / 2];
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    const m = normal(i);
+    return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, nx: m.x, ny: m.y };
+  }
+  const i = edges[k / 2 - 1];
+  const j = edges[k / 2];
+  const v = pts[j];
+  const m1 = normal(i);
+  const m2 = normal(j);
+  const len = Math.hypot(m1.x + m2.x, m1.y + m2.y) || 1;
+  return { x: v.x, y: v.y, nx: (m1.x + m2.x) / len, ny: (m1.y + m2.y) / len };
+}
+
 export function TileThumb(props: TileThumbProps): JSX.Element {
   const { family, type, subset, pairs, size = 110, color = 'currentColor', title, onToggleClass, onPair, onUnpair } = props;
   // The thumb wears the board's own fill for this tile type, so subscribing to
@@ -48,7 +90,8 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
   useTheme();
   const fill = cssRgb(typeFill(type, boardTheme().tileDim));
   const pts = leafPts(family, type);
-  const labels = edgeLabels(family, type);
+  const seams = metaEdges(family, type);
+  const orient = Math.sign(signedArea(pts)) || 1;
   const c = centroid(pts);
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ from: number; x: number; y: number } | null>(null);
@@ -140,30 +183,33 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
           the numbers below can be read off a tile out there. */}
       {family === 'hex' && <path d={straightOutline(directionArrow(pts))} className="thumb-arrow" />}
 
-      {/* Edges: clickable, with their class number outside. */}
-      {labels.map((raw, i) => {
-        const { major } = parseEdgeLabel(raw);
-        const a = pts[i];
-        const b = pts[(i + 1) % pts.length];
-        const mx = (a.x + b.x) / 2;
-        const my = (a.y + b.y) / 2;
-        const dx = mx - c.x;
-        const dy = my - c.y;
-        const len = Math.hypot(dx, dy) || 1;
+      {/* Seams: every physical edge is clickable, and the seam wears one class
+          number outside it — a Spectre's seam runs over two or three edges. */}
+      {seams.map((seam) => {
+        const { major } = seam;
         const on = selected.has(major);
         const col = EDGE_CLASS_COLORS[major];
+        const at = seamLabelAt(pts, seam.edgeIndices, orient);
         return (
           <g
-            key={i}
+            key={seam.id}
             className={`thumb-edge${on ? ' is-on' : ''}`}
             onClick={(e) => {
               e.stopPropagation();
               onToggleClass?.(major);
             }}
           >
-            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={col} strokeWidth={on ? 0.12 : 0.06} strokeOpacity={on ? 0.9 : 0.35} strokeLinecap="round" />
-            <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={0.4} />
-            <text x={mx + (dx / len) * font} y={my + (dy / len) * font} fontSize={font} fill={col} fillOpacity={on ? 1 : 0.7} textAnchor="middle" dominantBaseline="central" fontWeight={700}>
+            {seam.edgeIndices.map((i) => {
+              const a = pts[i];
+              const b = pts[(i + 1) % pts.length];
+              return (
+                <g key={i}>
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={col} strokeWidth={on ? 0.12 : 0.06} strokeOpacity={on ? 0.9 : 0.35} strokeLinecap="round" />
+                  <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={0.4} />
+                </g>
+              );
+            })}
+            <text x={at.x + at.nx * font} y={at.y + at.ny * font} fontSize={font} fill={col} fillOpacity={on ? 1 : 0.7} textAnchor="middle" dominantBaseline="central" fontWeight={700}>
               {major}
             </text>
           </g>
