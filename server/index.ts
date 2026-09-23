@@ -261,6 +261,14 @@ wss.on('connection', (ws) => {
         pending.push(...engine.setRule(client.id, rule));
         return;
       }
+      case 'swap': {
+        if (!client.joined) return;
+        const rule = validateRule(msg.rule, field.family);
+        const r = rule ? engine.swapPattern(client.id, Number(msg.index), rule) : { ok: false as const, reason: 'invalid rule' };
+        if (!r.ok) send(ws, { t: 'events', ev: [{ t: 'refused', reason: r.reason }] });
+        else pending.push(...r.events);
+        return;
+      }
       case 'pattern': {
         if (!client.joined) return;
         pending.push(...engine.setActive(client.id, Number(msg.index)));
