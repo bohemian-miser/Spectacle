@@ -140,7 +140,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
           </button>
         )}
         <button type="button" className="btn btn-accent btn-big" disabled={!ready || !hello} onClick={onEnter}>
-          {inArena ? 'Restart with this rule' : mode === 'solo' ? 'Play solo' : 'Enter the arena'}
+          {inArena ? 'Restart with this rule' : SOLO_ONLY ? 'Play' : mode === 'solo' ? 'Play solo' : 'Enter the arena'}
         </button>
         {drafting.length > 0 && <span className="tag tag-bad">finish pairing {drafting.join(', ')} first</span>}
         {inArena && <span className="muted">Restarting wipes your lines{store.knobs?.resetScoreOnRule ? ' and score' : ''}.</span>}

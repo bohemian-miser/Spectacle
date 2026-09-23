@@ -52,7 +52,6 @@ export function RuleEditor({ family, rule, color = 'currentColor', onChange, onD
   const isClean = rule.subset.length > 0 && cleanMasks.has(rule.subset.join(''));
   const [drafts, setDrafts] = useState<Partial<Record<TileTypeId, Pair[]>>>({});
   const [note, setNote] = useState<string | null>(null);
-  const [showNumbers, setShowNumbers] = useState(true);
 
   const drafting = order.filter((t) => drafts[t] !== undefined);
   useEffect(() => {
@@ -132,38 +131,9 @@ export function RuleEditor({ family, rule, color = 'currentColor', onChange, onD
 
   return (
     <div className="rule-editor">
-      <div className="rule-row">
-        <span className="rule-label">Edge classes</span>
-        <div className="chips">
-          {majors.map((m) => (
-            <button
-              key={m}
-              type="button"
-              className={`chip${selected.has(m) ? ' is-on' : ''}`}
-              style={{ ['--chip' as string]: EDGE_CLASS_COLORS[m] }}
-              aria-pressed={selected.has(m)}
-              onClick={() => toggle(m)}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
-        <div className="rule-buttons">
-          <label className="check">
-            <input type="checkbox" checked={showNumbers} onChange={(e) => setShowNumbers(e.target.checked)} /> numbers
-          </label>
-          <button type="button" className="btn" onClick={() => setRule(randomCleanRule(family, mathRandomRng))}>
-            Surprise me
-          </button>
-          <button type="button" className="btn" onClick={() => setRule(withSubset(family, [], rule.matching))}>
-            Clear
-          </button>
-        </div>
-      </div>
-
       <p className="muted rule-hint">
-        Click an edge number to switch its class on everywhere. Drag from dot to dot to draw a line; click a dot to
-        remove its line. Lines never cross inside a tile.
+        Click an edge number — on a tile or in the row below — to switch its class on everywhere. Drag from dot to dot
+        to draw a line; click a dot to remove its line. Lines never cross inside a tile.
       </p>
 
       <div className="thumbs">
@@ -181,8 +151,6 @@ export function RuleEditor({ family, rule, color = 'currentColor', onChange, onD
                 subset={rule.subset}
                 pairs={pairs}
                 color={color}
-                size={116}
-                showNumbers={showNumbers}
                 title={`${type}: ${isOdd ? 'odd — a tail' : n === 0 ? 'no lines' : `${n} dots, ${allowed.length} way${allowed.length === 1 ? '' : 's'} to pair`}`}
                 onToggleClass={toggle}
                 onPair={(a, b) => pair(i, a, b)}
@@ -203,6 +171,32 @@ export function RuleEditor({ family, rule, color = 'currentColor', onChange, onD
             </div>
           );
         })}
+      </div>
+
+      <div className="rule-row">
+        <span className="rule-label">Edge classes</span>
+        <div className="chips">
+          {majors.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={`chip${selected.has(m) ? ' is-on' : ''}`}
+              style={{ ['--chip' as string]: EDGE_CLASS_COLORS[m] }}
+              aria-pressed={selected.has(m)}
+              onClick={() => toggle(m)}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
+        <div className="rule-buttons">
+          <button type="button" className="btn" onClick={() => setRule(randomCleanRule(family, mathRandomRng))}>
+            Surprise me
+          </button>
+          <button type="button" className="btn" onClick={() => setRule(withSubset(family, [], rule.matching))}>
+            Clear
+          </button>
+        </div>
       </div>
 
       <div className="rule-readout">
