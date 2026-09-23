@@ -1,8 +1,19 @@
 import { describe, expect, it } from 'vitest';
-import { buildField, tileAt, tileCenter, tileNeighbours, tilePolygon } from '../shared/game/field';
+import { buildField, pointInPolygon, tileAt, tileCenter, tileNeighbours, tilePolygon, tilesInsidePolygon } from '../shared/game/field';
 import { pointKey } from '../shared/tiles';
 
 describe('field', () => {
+  it('tilesInsidePolygon finds exactly the tiles whose centres a loop encloses', () => {
+    const f = buildField({ family: 'hex', level: 3, rootTile: 'Delta' });
+    const c = tileCenter(f, Math.floor(f.count / 2));
+    const r = 3;
+    const poly = [0, 1, 2, 3, 4, 5].map((k) => ({ x: c.x + r * Math.cos((k * Math.PI) / 3), y: c.y + r * Math.sin((k * Math.PI) / 3) }));
+    const inside = tilesInsidePolygon(f, poly);
+    const brute = [...Array(f.count).keys()].filter((i) => pointInPolygon(tileCenter(f, i), poly));
+    expect(inside.length).toBeGreaterThan(1);
+    expect([...inside].sort((a, b) => a - b)).toEqual(brute);
+  });
+
   it('hex level 3 tiles abut: every edge is shared by at most two tiles, interiors by exactly two', () => {
     const f = buildField({ family: 'hex', level: 3, rootTile: 'Delta' });
     expect(f.count).toBeGreaterThan(50);

@@ -185,8 +185,35 @@ describe('engine', () => {
     }
   });
 
-  it('every tap adds a line; nothing is dropped, and circuits accumulate without limit', () => {
+  it('one head: a tap while a line is growing is refused, and allowed once it closes', () => {
     const e = make();
+    e.addPlayer('a', 'Ann', SEL15);
+    const { tile } = loopTile();
+    const table = chordTableFor(FIELD, SEL15);
+    const other = [...Array(FIELD.count).keys()].find((i) => i !== tile && tileChords(FIELD, table, i).length > 0)!;
+    expect(e.tap('a', tile, tileCenter(FIELD, tile)).result.ok).toBe(true);
+    expect(e.tap('a', other, tileCenter(FIELD, other)).result).toEqual({ ok: false, reason: 'your line is still growing' });
+    runUntil(e, (all) => all.some((x) => x.t === 'circuit'));
+    expect(e.tap('a', other, tileCenter(FIELD, other)).result.ok).toBe(true);
+  });
+
+  it('losing a head in a collision blocks the next tap for respawnDelayMs', () => {
+    const e = make({ crossingMode: 'tile', tapOntoOthers: true });
+    e.addPlayer('a', 'Ann', SEL15);
+    e.addPlayer('b', 'Bob', SEL15);
+    const { tile } = loopTile();
+    e.tap('a', tile, tileCenter(FIELD, tile));
+    const tb = e.tap('b', tile, tileCenter(FIELD, tile));
+    expect(tb.events.filter((x) => x.t === 'wipe')).toHaveLength(2);
+    for (const id of ['a', 'b']) {
+      expect(e.tap(id, tile, tileCenter(FIELD, tile)).result).toEqual({ ok: false, reason: 'still recovering from that collision' });
+    }
+    for (let t = 0; t < DEFAULT_KNOBS.respawnDelayMs; t += DEFAULT_KNOBS.tickMs) e.tick(DEFAULT_KNOBS.tickMs);
+    expect(e.tap('a', tile, tileCenter(FIELD, tile)).result.ok).toBe(true);
+  });
+
+  it('every tap adds a line; nothing is dropped, and circuits accumulate without limit', () => {
+    const e = make({ maxHeads: 0 });
     e.addPlayer('a', 'Ann', SEL15);
     const table = chordTableFor(FIELD, SEL15);
     // Five distinct loop tiles, each on its own circuit.
@@ -210,7 +237,7 @@ describe('engine', () => {
   });
 
   it('maxLivePaths caps the lines in play, dropping the oldest', () => {
-    const e = make({ maxLivePaths: 1 });
+    const e = make({ maxLivePaths: 1, maxHeads: 0 });
     e.addPlayer('a', 'Ann', SEL15);
     const table = chordTableFor(FIELD, SEL15);
     const tiles = [...Array(FIELD.count).keys()].filter((i) => tileChords(FIELD, table, i).length > 0).slice(0, 2);

@@ -176,6 +176,8 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .hud-board li.is-me { font-weight: 700; }
 .board-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .board-score { font-variant-numeric: tabular-nums; }
+.board-rank { width: 1.4em; text-align: right; color: var(--muted); font-variant-numeric: tabular-nums; font-size: 12px; }
+.board-gap { justify-content: center; color: var(--muted); line-height: 0.8; }
 .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .hud-help { left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(92vw, 520px); display: grid; gap: 8px; }
 .toasts { position: absolute; left: 50%; top: 14px; transform: translateX(-50%); display: grid; gap: 6px; pointer-events: none; }
@@ -186,7 +188,11 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); font-size: 20px; }
 
 @media (max-width: 640px) {
-  .hud-board { display: none; }
+  /* Still top right on a phone, just compact, and the player card makes room. */
+  .hud-me { max-width: calc(100vw - 172px); padding: 8px 10px; }
+  .hud-board { right: 8px; top: 8px; min-width: 0; width: 148px; padding: 8px 10px; }
+  .hud-board li { font-size: 12px; gap: 5px; }
+  .hud-board li:nth-child(n + 6):not(.is-me):not(.board-gap) { display: none; }
   .hud-score { font-size: 26px; }
   .rule-buttons { margin-left: 0; }
 }

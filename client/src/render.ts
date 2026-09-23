@@ -2,16 +2,28 @@
  * Arena renderer: a tile layer in the bottom canvas (WebGL2 instanced, or
  * Canvas2D where WebGL is missing) and a Canvas2D overlay on top for the
  * live things — every path as a polyline, a pulsing head on each growing
- * one, a cross on each stuck one. Claimed tiles are tinted in the tile layer.
+ * one, a cross on each stuck one. Claimed tiles are tinted in the tile layer,
+ * and a closed circuit washes the tiles it encloses in its owner's colour.
+ * Zoomed in close, your own rule is sketched faintly over the free tiles.
  */
 
-import type { Box, Field } from '../../shared/game/field';
+import { tilesInBox, tilesInsidePolygon, type Box, type Field } from '../../shared/game/field';
+import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand';
 import type { Camera } from './camera';
 import type { ClientPath, Store } from './store';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
-import { circuitDarkening, parseColor, strandColor, typeFill, type Rgb01, type TileLayer } from './tiles-layer';
+import { ARROW_MIN_SCALE, circuitDarkening, parseColor, strandColor, typeFill, type Rgb01, type TileLayer } from './tiles-layer';
+
+/**
+ * Scale at which your rule's pattern starts to show on the free tiles — a
+ * little closer in than the direction arrows. It fades in over the next
+ * `PATTERN_FADE` of scale, so it dims away as you zoom back out.
+ */
+export const PATTERN_MIN_SCALE = ARROW_MIN_SCALE * 1.3;
+const PATTERN_FADE = 16;
+const PATTERN_ALPHA = 0.35;
 
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
@@ -26,6 +38,11 @@ export class Renderer {
   private lastGeometry = -1;
   private lastPlayersVersion = -1;
   private board: BoardTheme = boardTheme();
+  /** A closed circuit's enclosed tiles; a closed path never changes, so once is enough. */
+  private readonly interiors = new WeakMap<ClientPath, readonly number[]>();
+  /** Tiles inside anyone else's closed circuit (rebuilt with the tints). */
+  private rivalInterior = new Set<number>();
+  private readonly visible: number[] = [];
 
   constructor(
     private readonly tileCanvas: HTMLCanvasElement,
@@ -189,6 +206,72 @@ export class Renderer {
       const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
       tiles.setTint(tile, ch(rgb[0]), ch(rgb[1]), ch(rgb[2]), mine ? 115 : 85);
     }
+    // Interior wash: the free tiles a closed circuit encloses take its owner's
+    // colour, fainter than the loop itself. Yours first, so it wins an overlap.
+    const field = this.field;
+    this.rivalInterior = new Set();
+    if (!field) return;
+    const closed = [...store.paths.values()].filter((p) => p.status === 'closed' && p.steps.length >= 3);
+    closed.sort((a, b) => Number(b.owner === store.you) - Number(a.owner === store.you));
+    const washed = new Set<number>();
+    for (const path of closed) {
+      const player = store.players.get(path.owner);
+      if (!player) continue;
+      let inside = this.interiors.get(path);
+      if (!inside) {
+        inside = tilesInsidePolygon(field, path.steps.map((s) => s.a));
+        this.interiors.set(path, inside);
+      }
+      const mine = path.owner === store.you;
+      if (!mine) for (const t of inside) this.rivalInterior.add(t);
+      let rgb = colors.get(path.owner);
+      if (!rgb) {
+        rgb = parseColor(player.color);
+        colors.set(path.owner, rgb);
+      }
+      const k = 1 - circuitDarkening(path.steps.length);
+      const lift = this.board.liftClosed;
+      const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
+      const [r, g, b] = [ch(rgb[0]), ch(rgb[1]), ch(rgb[2])];
+      for (const t of inside) {
+        if (washed.has(t) || store.occupancy.has(t)) continue;
+        washed.add(t);
+        tiles.setTint(t, r, g, b, mine ? 70 : 55);
+      }
+    }
+  }
+
+  /**
+   * Your rule, sketched faintly on every tile nobody has touched and that is
+   * not inside a rival's circuit — where a tap would take you. Only when
+   * zoomed in; it fades out on the way back.
+   */
+  private drawPattern(toScreen: (x: number, y: number) => [number, number], box: Box): void {
+    const field = this.field;
+    const me = this.store.me;
+    const scale = this.camera.scale;
+    if (!field || !me || scale <= PATTERN_MIN_SCALE) return;
+    const fade = Math.min(1, (scale - PATTERN_MIN_SCALE) / PATTERN_FADE);
+    const table = chordTableFor(field, me.rule);
+    const occupancy = this.store.occupancy;
+    const ctx = this.ctx;
+    ctx.beginPath();
+    for (const i of tilesInBox(field, box, this.visible)) {
+      if (occupancy.has(i) || this.rivalInterior.has(i)) continue;
+      const n = tileChords(field, table, i).length;
+      for (let c = 0; c < n; c++) {
+        const [a, b] = worldChord(field, table, i, c);
+        const [ax, ay] = toScreen(a.x, a.y);
+        const [bx, by] = toScreen(b.x, b.y);
+        ctx.moveTo(ax, ay);
+        ctx.lineTo(bx, by);
+      }
+    }
+    ctx.strokeStyle = strandColor(this.board, me.color);
+    ctx.lineWidth = Math.max(1, 0.06 * scale * this.dpr);
+    ctx.globalAlpha = PATTERN_ALPHA * fade;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
   }
 
   private draw(t: number): void {
@@ -217,6 +300,7 @@ export class Renderer {
     ];
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
+    this.drawPattern(toScreen, box);
     const drawPath = (path: ClientPath, mine: boolean): void => {
       const owner = store.players.get(path.owner);
       if (!owner || path.steps.length === 0) return;

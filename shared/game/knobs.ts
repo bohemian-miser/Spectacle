@@ -37,6 +37,10 @@ export interface Knobs {
   speedPerPoint: number;
   /** Fastest allowed step interval. */
   minStepMs: number;
+  /** Growing lines ("heads") a player may have at once; a tap beyond it is refused (0 = unlimited). */
+  maxHeads: number;
+  /** After losing a head in a collision, how long before a tap may start a new one. */
+  respawnDelayMs: number;
   /** Stop growing after this many tiles (0 = unlimited). */
   maxPathLength: number;
   /** At a class-0 junction (three chord ends meet) pick at random, or stop. */
@@ -81,9 +85,11 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   comboMax: 5,
   stealFraction: 0,
 
-  baseStepMs: 500,
-  speedPerPoint: 0.01,
-  minStepMs: 40,
+  baseStepMs: 200,
+  speedPerPoint: 0.015,
+  minStepMs: 10,
+  maxHeads: 1,
+  respawnDelayMs: 500,
   maxPathLength: 0,
   junctionPolicy: 'random',
 

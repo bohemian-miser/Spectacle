@@ -160,7 +160,11 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   if (growing.length) parts.push(`${growing.length} growing`);
   if (stuck) parts.push(`${stuck} stuck`);
   if (closed) parts.push(`${closed} circuit${closed > 1 ? 's' : ''}`);
-  const status = parts.length ? `${parts.join(' · ')} · ${tiles} tiles · tap to add a line` : 'tap a tile to start a line';
+  // One head at a time: a tap only lands once the growing line has ended.
+  const next = growing.length ? 'wait for it to finish' : 'tap to start a line';
+  const status = parts.length ? `${parts.join(' · ')} · ${tiles} tiles · ${next}` : 'tap a tile to start a line';
+  const top = board.slice(0, 8);
+  const meRow = me && rank > top.length ? board[rank - 1] : null;
   const speed = me && store.knobs ? (1000 / stepIntervalMs(store.knobs, me.score)).toFixed(1) : '–';
 
   return (
@@ -202,15 +206,17 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
       </div>
 
       <div className="hud hud-board">
-        <div className="hud-title">Arena · {store.players.size} playing</div>
+        <div className="hud-title">Leaderboard · {store.players.size} playing</div>
         <ol>
-          {board.slice(0, 10).map((p) => (
-            <li key={p.id} className={p.id === store.you ? 'is-me' : ''}>
-              <span className="swatch" style={{ background: strandColor(scheme, p.color) }} />
-              <span className="board-name">{p.name}</span>
-              <span className="board-score">{p.score}</span>
-            </li>
+          {top.map((p, i) => (
+            <BoardRow key={p.id} rank={i + 1} name={p.name} score={p.score} color={strandColor(scheme, p.color)} me={p.id === store.you} />
           ))}
+          {meRow && (
+            <>
+              <li className="board-gap">⋯</li>
+              <BoardRow rank={rank} name={meRow.name} score={meRow.score} color={strandColor(scheme, meRow.color)} me />
+            </>
+          )}
         </ol>
       </div>
 
@@ -235,5 +241,16 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
 
       {!store.connected && <div className="overlay">Reconnecting…</div>}
     </div>
+  );
+}
+
+function BoardRow({ rank, name, score, color, me }: { rank: number; name: string; score: number; color: string; me: boolean }): JSX.Element {
+  return (
+    <li className={me ? 'is-me' : ''}>
+      <span className="board-rank">{rank}</span>
+      <span className="swatch" style={{ background: color }} />
+      <span className="board-name">{name}</span>
+      <span className="board-score">{score}</span>
+    </li>
   );
 }

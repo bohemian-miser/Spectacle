@@ -14,7 +14,7 @@ set -euo pipefail
 
 REGION="${REGION:-us-central1}"
 NAME="${NAME:-spectacle}"
-BOTS="${BOTS:-3}"
+BOTS="${BOTS:-1}"
 cd "$(dirname "$0")/../.."
 
 gcloud run deploy "$NAME" \

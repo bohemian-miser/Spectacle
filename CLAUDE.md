@@ -91,8 +91,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   README must not name them. Default rule is selection `15`.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
-- **Unlimited lines.** Every tap adds a line; nothing is dropped until cut.
-  `maxLivePaths` / `maxCompletedCircuits` exist as knobs, default 0.
+- **One head, unlimited lines.** A player has one growing line at a time
+  (`maxHeads: 1`); a tap while it grows is refused. Finished lines (stuck or
+  closed) stay until cut — `maxLivePaths` / `maxCompletedCircuits` exist as
+  knobs, default 0. Losing the head in a collision blocks the next tap for
+  `respawnDelayMs` (500 ms, engine clock = summed tick dt).
+- **One bot on the server** (`BOTS=1` everywhere it is deployed).
 - **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit.
@@ -135,8 +139,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **`tapOntoOthers` defaults false** — tests that tap onto a rival must set it.
 - **Bots compound.** Speed ∝ score and lines multiply; bots on the FASS rule
   can run away. That's tuning, not a bug — see knobs.
-- **Point-in-polygon on the circuit's `a` points** decides "inside"; tiles the
-  loop passes through are tinted, the interior is not (yet).
+- **Point-in-polygon on the circuit's `a` points** decides "inside" (engine
+  taps, `tilesInsidePolygon`). Tiles the loop passes through get the strong
+  tint; the enclosed free tiles get a fainter wash, cached per closed path.
+- **The rule pattern** (your chords, faint, on untouched tiles not inside a
+  rival's circuit) draws on the overlay past `PATTERN_MIN_SCALE`
+  (1.3 × `ARROW_MIN_SCALE`) and fades in over the next 16 of scale.
 - **A theme change has to reach the canvas.** CSS restyles the DOM by itself;
   the board does not. `Arena` hands the renderer the new `BoardTheme`, which
   re-fills the tile layer and invalidates the tints (their lift is per-scheme).
@@ -172,7 +180,6 @@ first four and builds the Docker image.
 ## Next / open
 
 - Balance knobs: score→speed curve, circuit area vs length, steal share.
-- Wash circuit interiors with the owner's colour.
 - Shared growth budget across a player's lines.
 - Infinite field via Spectre's un-rooted engine; binary wire format;
   persistence; rooms.
