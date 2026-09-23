@@ -41,7 +41,7 @@
 import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, type Field } from './field';
-import { stepIntervalMs, type Knobs } from './knobs';
+import { headLimit, stepIntervalMs, type Knobs } from './knobs';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
@@ -223,10 +223,7 @@ export class Engine {
 
   /** How many lines `p` may have growing at once (0 = unlimited). */
   headLimit(p: Player): number {
-    const k = this.knobs;
-    if (p.patterns.length < 2) return k.maxHeads;
-    if (k.maxHeads === 0 || k.headsWithCapture === 0) return 0;
-    return Math.max(k.maxHeads, k.headsWithCapture);
+    return headLimit(this.knobs, p.patterns.length);
   }
 
   /** Choose which pattern `id`'s taps draw with. */

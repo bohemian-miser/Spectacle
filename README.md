@@ -22,7 +22,10 @@ you.
    random clean rule (one from the family's kernel, so every tile pairs up).
    The rules that draw one endless line exist; finding them is the game.
 2. **Tap a tile.** It fades and takes your colour, and the chord nearest your tap
-   starts growing out of one end, picked at random.
+   starts growing out of one end, picked at random. Or **drag** (finger or
+   mouse): every tile you pass over becomes the next start, tapped as soon as
+   you have a head free — sweep across an area you hold to keep filling it in.
+   Pan with two fingers, or a right-, middle- or shift-drag; wheel or pinch zooms.
 3. **It grows.** One tile per step; the step interval shrinks with your score
    (`baseStepMs / (1 + score × speedPerPoint)`, floored at `minStepMs`). Each tile
    entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
@@ -39,21 +42,21 @@ you.
    refused, and once it closes, sticks or dies you tap again to start the next.
    Nothing you drew is dropped until someone cuts it (`maxLivePaths` and
    `maxCompletedCircuits` cap this if you want; both default to unlimited).
-   Lines block chords, not tiles: a tap on a tile a line already runs
-   through starts on the nearest chord of it that no line is on or crosses.
-   You cannot start on your own line — except its first chord when it ran off the
-   edge of the field: that turns it round to grow out of its other end. A
-   line that runs edge to edge cuts the field in two and closes like a
-   circuit, claiming the smaller side (scored on that side's area).
-   A growing line that runs into another of your own lines stops there —
-   unless it meets that line's loose end on the same chord: then the two join
-   into one line (nothing is scored twice). Two lines that each ran off the
-   edge join into one edge-to-edge line and claim their side.
-   With `overlapOwnLines` (`KNOB_OVERLAP_OWN_LINES=1`) your lines no longer
-   stop each other: a growing line runs on over the top of your own, but a
-   tap may not start on any tile one of your lines already passes through.
-   Start off to the side and grow in, and the layered lines are defence in
-   depth — a rival has to cut each of them.
+   You cannot start on a tile any of your own lines already passes through —
+   except the first chord of a line that ran off the edge of the field: that
+   turns it round to grow out of its other end. A rival's line blocks chords,
+   not tiles: a tap on a tile it runs through starts on the nearest chord of
+   it that no line is on or crosses. A line that runs edge to edge cuts the
+   field in two and closes like a circuit, claiming the smaller side (scored
+   on that side's area).
+   A growing line runs on over the top of your own lines rather than stopping,
+   so start one off to the side and grow it in: layered lines are defence in
+   depth — a rival has to cut each of them. If it meets one of your lines'
+   loose ends on the same chord, the two join into one line (nothing is scored
+   twice); two lines that each ran off the edge join into one edge-to-edge
+   line and claim their side. `overlapOwnLines` off (`KNOB_OVERLAP_OWN_LINES=0`)
+   is the older mode: a line that runs into your own stops there, and your own
+   lines block only the chords they are on, like a rival's.
    Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
    next tap lands.
 6. **Crossing.** When a line enters a tile where another player's chord crosses
@@ -215,7 +218,7 @@ server/         Node + ws: one arena, ticks the engine, broadcasts batched event
 client/         Vite + React: lobby with the rule editor (interactive SVG
                 tiles, level-3 preview), the arena — a WebGL2 instanced tile
                 layer (Canvas2D fallback) under a Canvas2D strand overlay —
-                pan/zoom/tap and the HUD.
+                tap/paint/pan/zoom and the HUD.
 ```
 
 The server is authoritative and the field is deterministic from its spec, so a

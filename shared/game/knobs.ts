@@ -116,7 +116,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   mutualCut: true,
   tapOntoOthers: false,
   tapInsideRivalCircuits: false,
-  overlapOwnLines: false,
+  overlapOwnLines: true,
 
   maxCompletedCircuits: 0,
   maxLivePaths: 0,
@@ -129,6 +129,13 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
 export function stepIntervalMs(knobs: Knobs, score: number): number {
   const ms = knobs.baseStepMs / (1 + Math.max(0, score) * knobs.speedPerPoint);
   return Math.max(knobs.minStepMs, ms);
+}
+
+/** How many lines a player holding `patterns` patterns may grow at once (0 = unlimited). */
+export function headLimit(knobs: Knobs, patterns: number): number {
+  if (patterns < 2) return knobs.maxHeads;
+  if (knobs.maxHeads === 0 || knobs.headsWithCapture === 0) return 0;
+  return Math.max(knobs.maxHeads, knobs.headsWithCapture);
 }
 
 /**
