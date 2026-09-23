@@ -32,7 +32,6 @@ export interface TileThumbProps {
   readonly pairs: readonly Pair[];
   readonly size?: number;
   readonly color?: string;
-  readonly showNumbers?: boolean;
   readonly title?: string;
   onToggleClass?(major: number): void;
   onPair?(a: number, b: number): void;
@@ -43,7 +42,7 @@ const DOT_R = 0.16;
 const HIT_R = 0.34;
 
 export function TileThumb(props: TileThumbProps): JSX.Element {
-  const { family, type, subset, pairs, size = 110, color = 'currentColor', showNumbers = true, title, onToggleClass, onPair, onUnpair } = props;
+  const { family, type, subset, pairs, size = 110, color = 'currentColor', title, onToggleClass, onPair, onUnpair } = props;
   // The thumb wears the board's own fill for this tile type, so subscribing to
   // the theme is what repaints it.
   useTheme();
@@ -54,18 +53,21 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
   const svgRef = useRef<SVGSVGElement>(null);
   const [drag, setDrag] = useState<{ from: number; x: number; y: number } | null>(null);
 
-  const view = useMemo(() => {
+  // The edge numbers scale with the tile's extent, so a big Spectre's read as
+  // well as a hexagon's once both thumbs are drawn at the same size.
+  const { view, font } = useMemo(() => {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const p of pts) {
       minX = Math.min(minX, p.x); maxX = Math.max(maxX, p.x);
       minY = Math.min(minY, p.y); maxY = Math.max(maxY, p.y);
     }
-    const pad = showNumbers ? 0.75 : 0.35;
+    const font = Math.max(0.52, 0.15 * Math.max(maxX - minX, maxY - minY));
+    const pad = font * 1.8;
     const w = maxX - minX + 2 * pad;
     const h = maxY - minY + 2 * pad;
     const s = Math.max(w, h);
-    return `${minX - pad - (s - w) / 2} ${minY - pad - (s - h) / 2} ${s} ${s}`;
-  }, [pts, showNumbers]);
+    return { view: `${minX - pad - (s - w) / 2} ${minY - pad - (s - h) / 2} ${s} ${s}`, font };
+  }, [pts]);
 
   const selected = useMemo(() => new Set(subset), [subset]);
   const cps = connectionPoints(family, type, selected);
@@ -161,11 +163,9 @@ export function TileThumb(props: TileThumbProps): JSX.Element {
           >
             <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke={col} strokeWidth={on ? 0.12 : 0.06} strokeOpacity={on ? 0.9 : 0.35} strokeLinecap="round" />
             <line x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="transparent" strokeWidth={0.4} />
-            {showNumbers && (
-              <text x={mx + (dx / len) * 0.42} y={my + (dy / len) * 0.42} fontSize={0.36} fill={col} fillOpacity={on ? 1 : 0.5} textAnchor="middle" dominantBaseline="central" fontWeight={700}>
-                {major}
-              </text>
-            )}
+            <text x={mx + (dx / len) * font} y={my + (dy / len) * font} fontSize={font} fill={col} fillOpacity={on ? 1 : 0.7} textAnchor="middle" dominantBaseline="central" fontWeight={700}>
+              {major}
+            </text>
           </g>
         );
       })}

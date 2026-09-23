@@ -137,7 +137,9 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
    takes dark ink. */
 .chip.is-on { background: var(--chip); color: #171a1f; opacity: 1; }
 .rule-buttons { display: flex; gap: 6px; margin-left: auto; }
-.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); gap: 10px; }
+.thumbs { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 10px; }
+/* The rule picker's tiles fill their card: big enough to read the numbers. */
+.thumbs .thumb { width: 100%; height: auto; aspect-ratio: 1; }
 .thumb-card { background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; padding: 6px; display: grid; justify-items: center; gap: 2px; }
 .thumb-card.is-odd { border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
 .thumb { display: block; }
@@ -150,7 +152,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .thumb-stub { stroke: var(--bad); }
 /* Which way the tile is turned; the board draws the same dart. */
 .thumb-arrow { fill: var(--text); opacity: 0.2; }
-.thumb-caption { display: flex; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); }
+.thumb-caption { display: flex; gap: 6px; align-items: center; font-size: 14px; color: var(--muted); }
 .rule-readout { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
 
 /* Arena */
@@ -208,6 +210,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); font-size: 20px; }
 
 @media (max-width: 640px) {
+  .thumbs { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }
   /* Still top right on a phone, just compact, and the player card makes room. */
   .hud-me { max-width: calc(100vw - 172px); padding: 8px 10px; }
   .hud-board { right: 8px; top: 8px; min-width: 0; width: 148px; padding: 8px 10px; }
@@ -236,7 +239,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .tag-btn { cursor: pointer; font: inherit; font-size: 12px; }
 .tag-btn:hover { border-color: var(--accent); color: var(--text); }
 .check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
-.rule-hint { margin: -6px 0 0; font-size: 13px; }
+.rule-hint { margin: 0; font-size: 13px; }
 .patch-preview { display: grid; gap: 6px; }
 .patch-svg { width: 100%; height: auto; justify-self: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
 .patch-tiles path { stroke: color-mix(in srgb, var(--text) 16%, transparent); stroke-width: 0.05; }
