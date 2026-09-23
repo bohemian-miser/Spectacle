@@ -10,7 +10,7 @@
 import { Bots } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
 import { buildField, fieldOutline, type FieldSpec } from '../../shared/game/field';
-import { DEFAULT_KNOBS, type Knobs } from '../../shared/game/knobs';
+import { DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
 import type { ClientMessage, GameEvent, ServerMessage } from '../../shared/game/protocol';
 import { validateRule } from '../../shared/game/rule';
 import { mulberry32 } from '../../shared/game/rng';
@@ -38,12 +38,16 @@ export class LocalConnection implements GameConnection {
   private timer = 0;
   private last = 0;
   private joined = false;
+  private readonly knobs: Knobs;
 
   constructor(
     private readonly store: Store,
     private readonly opts: SoloOptions,
-    private readonly knobs: Knobs = DEFAULT_KNOBS,
-  ) {}
+    mode: GameMode = 'normal',
+    base: Knobs = DEFAULT_KNOBS,
+  ) {
+    this.knobs = knobsForMode(base, mode);
+  }
 
   open(onOpen: () => void, _onClose: () => void): void {
     const spec: FieldSpec = { family: this.opts.family, level: this.opts.level, rootTile: 'Delta' };

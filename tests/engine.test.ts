@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { Engine, type Path } from '../shared/game/engine';
 import { buildField, pointInPolygon, tileCenter } from '../shared/game/field';
-import { DEFAULT_KNOBS, maxSpeedFor, stepIntervalMs, type Knobs } from '../shared/game/knobs';
+import { DEFAULT_KNOBS, maxSpeedFor, speedFor, stepIntervalMs, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
 import { defaultRule, fassRule, oddTypes, randomCleanRule, ruleFromCombo, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
@@ -92,8 +92,12 @@ describe('engine', () => {
 
   it('speed rises with score and is clamped', () => {
     const ref = DEFAULT_KNOBS.maxSpeedRefTiles;
-    expect(stepIntervalMs(DEFAULT_KNOBS, 0, ref)).toBe(DEFAULT_KNOBS.baseStepMs);
-    expect(stepIntervalMs(DEFAULT_KNOBS, 100, ref)).toBeLessThan(DEFAULT_KNOBS.baseStepMs);
+    // (1000 / 200) × (1 + score × 0.015) / 10 + 5 tiles per second, capped at 500.
+    expect(speedFor(DEFAULT_KNOBS, 0, ref)).toBeCloseTo(5.5);
+    expect(speedFor(DEFAULT_KNOBS, 1000, ref)).toBeCloseTo(5 * 16 / 10 + 5);
+    expect(stepIntervalMs(DEFAULT_KNOBS, 0, ref)).toBeCloseTo(1000 / 5.5);
+    expect(stepIntervalMs(DEFAULT_KNOBS, 100, ref)).toBeLessThan(stepIntervalMs(DEFAULT_KNOBS, 0, ref));
+    expect(speedFor(DEFAULT_KNOBS, 1e9, ref)).toBe(500);
     expect(1000 / stepIntervalMs(DEFAULT_KNOBS, 1e9, ref)).toBeCloseTo(DEFAULT_KNOBS.maxSpeed);
     // The cap scales with the log of the field size.
     expect(maxSpeedFor(DEFAULT_KNOBS, ref * ref)).toBeCloseTo(2 * DEFAULT_KNOBS.maxSpeed);
@@ -441,6 +445,37 @@ describe('engine', () => {
       expect(kept.e.players.get('b')!.paths).toHaveLength(1);
       expect(kept.ev.some((x) => x.t === 'take')).toBe(false);
       expect(e.publicOf(a)).toMatchObject({ active: 0, patterns: [{ rule: BIG, color: a.color }, { rule: SMALL, from: 'b' }] });
+    });
+
+    describe('normal mode', () => {
+      it("converts the enclosed line to your own pattern: no pattern taken, but a head gained", () => {
+        const { e, ev } = enclose({ mode: 'normal' });
+        const a = e.players.get('a')!;
+        const b = e.players.get('b')!;
+        expect(ev.some((x) => x.t === 'capture' || x.t === 'take')).toBe(false);
+        expect(ev.find((x) => x.t === 'convert')).toEqual({ t: 'convert', id: 'a', from: 'b', converted: 1 });
+        expect(a.patterns.map((q) => q.rule)).toEqual([BIG]);
+        expect(e.headLimit(a)).toBe(2);
+        expect(e.publicOf(a).converted).toBe(1);
+        // Bea's line is gone, and on its tiles only Ann's own pattern is left.
+        expect(b.paths).toHaveLength(0);
+        expect(b.score).toBe(0);
+        expect(a.paths.every((q) => q.rule === BIG && q.pattern === 0)).toBe(true);
+        expect(a.paths.some((q) => q.spawned)).toBe(true);
+        // Zero-sum: Ann's score is exactly what her lines carry.
+        expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
+        // A new rule drops the head again.
+        e.setRule('a', BIG);
+        expect(e.headLimit(a)).toBe(1);
+      });
+
+      it('the same kind of line again adds no second head', () => {
+        const { e } = enclose({ mode: 'normal', takeEnclosed: false });
+        const a = e.players.get('a')!;
+        expect(e.players.get('b')!.paths).toHaveLength(1);
+        expect(a.converted).toHaveLength(1);
+        expect(e.headLimit(a)).toBe(2);
+      });
     });
 
     it('a captured pattern gives a second head, and taps draw with the active pattern', () => {

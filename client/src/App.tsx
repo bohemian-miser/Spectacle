@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { isGameMode, type GameMode } from '../../shared/game/knobs';
 import { defaultRule, type PlayerRule } from '../../shared/game/rule';
 import { Arena } from './Arena';
 import { Lobby } from './Lobby';
@@ -25,6 +26,19 @@ function loadName(): string {
   }
 }
 
+/** The game mode (normal or conquest): ?mode=, else the last one picked, else normal. */
+function initialGameMode(): GameMode {
+  const q = new URLSearchParams(location.search).get('mode');
+  if (isGameMode(q)) return q;
+  try {
+    const saved = localStorage.getItem('spectacle.mode');
+    if (isGameMode(saved)) return saved;
+  } catch {
+    /* private mode */
+  }
+  return 'normal';
+}
+
 function initialMode(): Mode {
   if (SOLO_ONLY) return 'solo';
   return new URLSearchParams(location.search).has('solo') ? 'solo' : 'online';
@@ -35,6 +49,7 @@ export function App(): JSX.Element {
   useStore(store);
   const [mode, setMode] = useState<Mode>(initialMode);
   const [solo, setSolo] = useState<SoloOptions>(DEFAULT_SOLO);
+  const [gameMode, setGameMode] = useState<GameMode>(initialGameMode);
   const [screen, setScreen] = useState<Screen>('lobby');
   const [name, setName] = useState(loadName);
   const [rule, setRule] = useState<PlayerRule | null>(null);
@@ -42,7 +57,7 @@ export function App(): JSX.Element {
   const joined = useRef(false);
   const retry = useRef(0);
   /** What to send on reconnect so the player is picked up where they were. */
-  const rejoin = useRef<{ name: string; rule: PlayerRule; resume: { id: string; token: string } | null } | null>(null);
+  const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null } | null>(null);
 
   // One connection per (mode, solo options); reconnect online with backoff.
   useEffect(() => {
@@ -50,12 +65,13 @@ export function App(): JSX.Element {
     let disposed = false;
     joined.current = false;
     // A refresh lands here with the tab's saved session: go straight back in.
-    rejoin.current = mode === 'online' ? loadSession() : null;
+    const saved = mode === 'online' ? loadSession() : null;
+    rejoin.current = saved ? { ...saved, mode: saved.mode ?? 'normal' } : null;
     store.reset();
     setScreen(rejoin.current ? 'arena' : 'lobby');
     const connect = (): void => {
       if (disposed) return;
-      const conn: GameConnection = mode === 'solo' ? new LocalConnection(store, solo) : new Connection(store);
+      const conn: GameConnection = mode === 'solo' ? new LocalConnection(store, solo, gameMode) : new Connection(store);
       connRef.current = conn;
       conn.open(
         () => {
@@ -65,7 +81,7 @@ export function App(): JSX.Element {
           // lobby.
           const r = rejoin.current;
           if (r && conn.kind === 'online') {
-            conn.send({ t: 'join', name: r.name, rule: r.rule, resume: r.resume ?? undefined });
+            conn.send({ t: 'join', name: r.name, rule: r.rule, mode: r.mode, resume: r.resume ?? undefined });
             joined.current = true;
             setScreen('arena');
           }
@@ -88,7 +104,8 @@ export function App(): JSX.Element {
       connRef.current?.close();
       connRef.current = null;
     };
-  }, [mode, solo, store]);
+    // A solo board is rebuilt for a new game mode; online, the mode only picks the room on join.
+  }, [mode, solo, store, mode === 'solo' ? gameMode : null]);
 
   // Every welcome carries a fresh token (the server rotates it on resume):
   // keep the latest, for the next drop and the next refresh.
@@ -98,7 +115,7 @@ export function App(): JSX.Element {
     if (r.resume && r.resume.id !== store.resume.id) store.toast('Your last session had expired — you are a new player', 'info');
     r.resume = store.resume;
     const rule = store.me?.rule ?? r.rule;
-    saveSession({ name: r.name, rule, resume: store.resume });
+    saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume });
   }, [mode, store.resume, store]);
 
   // A saved session from an arena that has since changed family (a redeploy)
@@ -128,11 +145,12 @@ export function App(): JSX.Element {
     }
     if (joined.current) conn.send({ t: 'rule', rule });
     else {
-      conn.send({ t: 'join', name, rule });
+      conn.send({ t: 'join', name, rule, mode: gameMode });
       joined.current = true;
     }
-    rejoin.current = { name, rule, resume: rejoin.current?.resume ?? null };
-    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, resume: rejoin.current.resume });
+    const playing = rejoin.current?.mode ?? gameMode;
+    rejoin.current = { name, rule, mode: playing, resume: rejoin.current?.resume ?? null };
+    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, mode: playing, resume: rejoin.current.resume });
     setScreen('arena');
   };
 
@@ -152,6 +170,15 @@ export function App(): JSX.Element {
       store={store}
       mode={mode}
       solo={solo}
+      gameMode={gameMode}
+      onGameMode={(m) => {
+        setGameMode(m);
+        try {
+          localStorage.setItem('spectacle.mode', m);
+        } catch {
+          /* private mode */
+        }
+      }}
       rule={rule ?? defaultRule(solo.family)}
       name={name}
       inArena={joined.current && !!store.you}

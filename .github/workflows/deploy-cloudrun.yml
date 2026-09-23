@@ -59,7 +59,7 @@ jobs:
             --allow-unauthenticated
             --min-instances=0 --max-instances=1
             --concurrency=1000 --timeout=3600
-            --cpu=1 --memory=512Mi
+            --cpu=1 --memory=1Gi
             --session-affinity
           env_vars: |
             BOTS=${{ vars.SPECTACLE_BOTS || '1' }}

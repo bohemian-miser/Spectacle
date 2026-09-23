@@ -52,6 +52,11 @@
  *    stops at your own lines: the flip also runs along the losing line
  *    itself (`burn`), a tile per step each way, until it is all flipped.
  *    Newer always beats older, so it settles.
+ *  - `mode: 'normal'` changes capturing: a rival line wholly inside your
+ *    circuit is converted — it leaves the board and your own pattern sprouts
+ *    on its tiles, carrying its points — and you never draw with the rival's
+ *    pattern. Each new kind of line you convert still adds a head
+ *    (`Player.converted`), exactly as a captured pattern would.
  */
 
 import type { Pt, Segment } from '../tiles';
@@ -143,6 +148,8 @@ export interface Player {
   readonly patterns: Pattern[];
   /** The pattern a tap draws with. */
   active: number;
+  /** Normal mode: the kinds (rules) of rival line converted so far — a head each, like a captured pattern. */
+  readonly converted: PlayerRule[];
 }
 
 export type TapResult = { ok: true; path: number } | { ok: false; reason: string };
@@ -217,6 +224,7 @@ export class Engine {
       pieceCursor: 0,
       patterns: [{ rule, table, color }],
       active: 0,
+      converted: [],
     };
     this.players.set(id, player);
     return [{ t: 'join', player: this.publicOf(player) }];
@@ -243,6 +251,7 @@ export class Engine {
     p.patterns.length = 0;
     p.patterns.push({ rule, table: p.table, color: p.color });
     p.active = 0;
+    p.converted.length = 0;
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     ev.push({ t: 'rule', id, rule, score: p.score, combo: p.combo });
@@ -250,7 +259,7 @@ export class Engine {
   }
 
   publicOf(p: Player): PlayerPublic {
-    return {
+    const pub: PlayerPublic = {
       id: p.id,
       name: p.name,
       color: p.color,
@@ -261,11 +270,12 @@ export class Engine {
       patterns: p.patterns.map(patternPublic),
       active: p.active,
     };
+    return p.converted.length > 0 ? { ...pub, converted: p.converted.length } : pub;
   }
 
   /** How many lines `p` may have growing at once (0 = unlimited). */
   headLimit(p: Player): number {
-    return headLimit(this.knobs, p.patterns.length);
+    return headLimit(this.knobs, p.patterns.length + p.converted.length);
   }
 
   /** Lines of `p`'s that are growing and take up a head (a flip's pieces don't). */
@@ -537,7 +547,7 @@ export class Engine {
         else next.push(q);
       }
       live = next;
-      this.sprout(p, burn.strain, t, ev);
+      this.sprout(p, burn.strain, [t], ev);
     }
   }
 
@@ -768,7 +778,7 @@ export class Engine {
       q.points = 0;
       this.splitOff(q, tile, ev, winner);
     }
-    this.sprout(p, winner, tile, ev);
+    this.sprout(p, winner, [tile], ev);
   }
 
   /**
@@ -897,20 +907,24 @@ export class Engine {
   }
 
   /**
-   * Redraw flipped `tile` with `path`'s pattern: each of its chords there that
+   * Redraw flipped `tiles` with `path`'s pattern: each of their chords that
    * no line is on or meets, strung into runs along the strand. Each run
    * becomes a line of `p`'s (same pattern and wave as `path`) that grows
    * outward from both ends (a run that already closes is a circuit on the
-   * spot). Placing them scores nothing — the tile was already paid for.
+   * spot). Placing them scores nothing — the tiles were already paid for.
+   * Returns the lines it made.
    */
-  private sprout(p: Player, path: Strain, tile: number, ev: GameEvent[]): void {
+  private sprout(p: Player, path: Strain, tiles: readonly number[], ev: GameEvent[]): Path[] {
     const { field } = this;
     const table = path.table;
     const key = (t: number, c: number): number => t * 64 + c;
     const free = new Set<number>();
-    tileChords(field, table, tile).forEach((_, c) => {
-      if (!this.sproutBlocked(p, path.rule, tile, worldChord(field, table, tile, c))) free.add(key(tile, c));
-    });
+    for (const tile of tiles) {
+      tileChords(field, table, tile).forEach((_, c) => {
+        if (!this.sproutBlocked(p, path.rule, tile, worldChord(field, table, tile, c))) free.add(key(tile, c));
+      });
+    }
+    const made: Path[] = [];
     const used = new Set<number>();
     const next = (cur: WalkStep): WalkStep | ChordEnd | null => {
       const o = continuations(field, table, cur.tile, cur.chord, cur.b).find((e) => free.has(key(e.tile, e.chord)));
@@ -963,6 +977,7 @@ export class Engine {
       };
       p.paths.push(piece);
       this.pathsById.set(piece.id, piece);
+      made.push(piece);
       for (const q of steps) {
         ev.push(this.stepEvent(p, piece, q));
         piece.steps.push(q);
@@ -975,6 +990,7 @@ export class Engine {
       }
       if (closed) this.closeCircuit(p, piece, ev);
     }
+    return made;
   }
 
   /** May a flip's piece be laid on segment `seg` of `tile`? Not over or across any line. */
@@ -1133,9 +1149,14 @@ export class Engine {
     for (const rival of [...this.players.values()]) {
       if (rival.id === p.id) continue;
       for (const other of [...rival.paths]) {
-        if (other.steps.length === 0) continue;
+        // A conversion's pieces can close circuits of their own and take lines mid-loop.
+        if (other.steps.length === 0 || other.owner !== rival.id || !this.pathsById.has(other.id)) continue;
         const enclosed = other.steps.every((s) => inside({ x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 }));
         if (!enclosed) continue;
+        if (k.mode === 'normal') {
+          this.convertPath(other, rival, p, ev);
+          continue;
+        }
         let index = p.patterns.findIndex((q) => sameRule(q.rule, other.rule));
         if (index < 0 && k.captureOnEnclose && !(cap > 0 && p.patterns.length - 1 >= cap)) {
           const pattern: Pattern = {
@@ -1150,6 +1171,44 @@ export class Engine {
         }
         if (k.takeEnclosed && index >= 0) this.takePath(other, rival, p, index, ev);
       }
+    }
+  }
+
+  /**
+   * Normal mode: `to` closed a circuit round `from`'s `path`. A new kind of
+   * line earns `to` a head (`converted`, capped like captured patterns); with
+   * `takeEnclosed` the line itself turns into `to`'s own pattern: it leaves
+   * the board (its points leave `from`), and `to`'s rule sprouts on its tiles
+   * as pieces that carry those points and grow on like a flip's.
+   */
+  private convertPath(path: Path, from: Player, to: Player, ev: GameEvent[]): void {
+    const k = this.knobs;
+    const own = sameRule(path.rule, to.rule);
+    const cap = k.maxCapturedPatterns;
+    if (
+      k.captureOnEnclose &&
+      !own &&
+      !to.converted.some((r) => sameRule(r, path.rule)) &&
+      !(cap > 0 && to.converted.length >= cap)
+    ) {
+      to.converted.push(path.rule);
+    }
+    ev.push({ t: 'convert', id: to.id, from: from.id, converted: to.converted.length });
+    if (!k.takeEnclosed) return;
+    // Already your pattern: nothing to convert, the line just changes hands.
+    if (own) {
+      this.takePath(path, from, to, 0, ev);
+      return;
+    }
+    const tiles = [...new Set(path.steps.map((q) => q.tile))];
+    const points = path.points;
+    this.dropPath(path, undefined, ev);
+    const mine = to.patterns[0];
+    const pieces = this.sprout(to, { rule: mine.rule, table: mine.table, pattern: 0, wave: this.nextWave++ }, tiles, ev);
+    const holder = pieces.find((q) => this.pathsById.has(q.id) && q.owner === to.id);
+    if (holder && points > 0) {
+      holder.points += points;
+      this.addScore(to, points, ev);
     }
   }
 

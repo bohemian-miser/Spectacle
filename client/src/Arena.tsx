@@ -6,7 +6,7 @@
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { tileAt } from '../../shared/game/field';
-import { stepIntervalMs } from '../../shared/game/knobs';
+import { MODE_LABELS, speedFor } from '../../shared/game/knobs';
 import { describeRule } from '../../shared/game/rule';
 import type { GameConnection } from './net';
 import { Renderer } from './render';
@@ -303,7 +303,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   // A player's swatch colour: theirs, or their team's (you blue, the rest red).
   const swatch = (color: string, mine: boolean): string =>
     strandColor(scheme, settings.teams ? (mine ? scheme.teamMe : scheme.teamRival) : color);
-  const speed = me && store.knobs && store.field ? (1000 / stepIntervalMs(store.knobs, me.score, store.field.count)).toFixed(1) : '–';
+  const speed = me && store.knobs && store.field ? speedFor(store.knobs, me.score, store.field.count).toFixed(1) : '–';
+  const gameMode = store.knobs?.mode ?? 'normal';
+  const roomNo = /-(\d+)$/.exec(store.room)?.[1];
 
   return (
     <div className="arena">
@@ -345,7 +347,10 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
       </div>
 
       <div className="hud hud-board">
-        <div className="hud-title">Leaderboard · {store.players.size} playing</div>
+        <div className="hud-title">
+          {MODE_LABELS[gameMode]}
+          {roomNo ? ` #${roomNo}` : ''} · {store.players.size} playing
+        </div>
         <ol>
           {top.map((p, i) => (
             <BoardRow key={p.id} rank={i + 1} name={p.name} score={p.score} color={swatch(p.color, p.id === store.you)} me={p.id === store.you} />
@@ -384,7 +389,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         <div className="hud hud-help">
           <b>Tap a tile</b> to start a line along your rule. It grows on its own, faster as you score.
           Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
-          Loop round someone's line to take its pattern.
+          {gameMode === 'normal'
+            ? " Loop round someone's line to turn it into yours — and gain a head."
+            : " Loop round someone's line to take its pattern."}
           <div className="muted">
             Drag to pan · hold, then drag across tiles to keep starting lines · wheel or pinch to zoom · T: you blue, rivals red
           </div>

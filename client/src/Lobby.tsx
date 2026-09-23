@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { GAME_MODES, MODE_LABELS, type GameMode } from '../../shared/game/knobs';
 import type { PlayerRule } from '../../shared/game/rule';
 import { FAMILY_DISPLAY_NAMES, buildSystem, countTiles, type TileFamilyId } from '../../shared/tiles';
 import { ONLINE_URL, SOLO_ONLY, type Mode } from './App';
@@ -11,12 +12,14 @@ export interface LobbyProps {
   readonly store: Store;
   readonly mode: Mode;
   readonly solo: SoloOptions;
+  readonly gameMode: GameMode;
   readonly rule: PlayerRule;
   readonly name: string;
   /** Already in the arena: this is a "new rule" restart, not a first entry. */
   readonly inArena: boolean;
   onMode(mode: Mode): void;
   onSolo(opts: SoloOptions): void;
+  onGameMode(mode: GameMode): void;
   onRule(rule: PlayerRule): void;
   onName(name: string): void;
   onEnter(): void;
@@ -25,12 +28,19 @@ export interface LobbyProps {
   onCancel(): void;
 }
 
+const MODE_BLURBS: Readonly<Record<GameMode, string>> = {
+  normal:
+    "Loop round a rival's line and it turns into yours — your pattern, on their tiles. Each new kind of line you convert gives you another head.",
+  conquest:
+    "Loop round a rival's line and you take their pattern: a new tab to draw with, their lines kept as they are, and another head.",
+};
+
 function tileCount(family: TileFamilyId, level: number): number {
   return countTiles(buildSystem(family, level)['Delta']);
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, rule, name, inArena, onMode, onSolo, onRule, onName, onEnter, onSwap, onCancel } = props;
+  const { store, mode, solo, gameMode, rule, name, inArena, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel } = props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
@@ -66,6 +76,26 @@ export function Lobby(props: LobbyProps): JSX.Element {
               </button>
             </div>
           )}
+          <div className="mode-row" role="radiogroup" aria-label="Game mode">
+            {GAME_MODES.map((m) => {
+              const rooms = hello && mode === 'online' ? hello.rooms.filter((r) => r.mode === m) : [];
+              const playing = rooms.reduce((n, r) => n + r.players, 0);
+              return (
+                <button
+                  key={m}
+                  type="button"
+                  role="radio"
+                  aria-checked={gameMode === m}
+                  className={`btn${gameMode === m ? ' is-on' : ''}`}
+                  onClick={() => onGameMode(m)}
+                >
+                  {MODE_LABELS[m]}
+                  {rooms.length > 0 && <span className="muted"> · {playing} playing</span>}
+                </button>
+              );
+            })}
+          </div>
+          <p className="muted mode-blurb">{MODE_BLURBS[gameMode]}</p>
           {mode === 'solo' && (
             <div className="solo-row">
               <label>

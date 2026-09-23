@@ -39,10 +39,12 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
                   events (step/wipe/circuit/score/status/join/leave/rule/
-                  capture/take/swap/active/split/refused). Client → server adds
+                  capture/convert/take/swap/active/split/refused). Client → server adds
                   `pattern` and `swap`.
-server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
-                  dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
+server/index.ts   Node + ws. Rooms per game mode (`Room`: engine + bots +
+                  clients), one 50 ms loop ticking them all, batched broadcast
+                  per room, static dist/, resume tokens (RESUME_GRACE_MS),
+                  env config. tests/rooms.test.ts spawns it.
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
   session.ts      The tab's resume ticket (sessionStorage) and the
@@ -114,7 +116,29 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   closed) stay until cut — `maxLivePaths` / `maxCompletedCircuits` exist as
   knobs, default 0. Losing the head in a collision blocks the next tap for
   `respawnDelayMs` (500 ms, engine clock = summed tick dt).
-- **One bot on the server** (`BOTS=1` everywhere it is deployed).
+- **One bot per room** (`BOTS=1` everywhere it is deployed).
+- **Two game modes** (`knobs.mode`, per room): **Normal** (default in the
+  lobby and on the server) and **Conquest (beta)** — everything described
+  under "Captured patterns" below. In normal mode a rival line wholly inside
+  your circuit is converted (`convertPath`): wiped (no `by`), your pattern 0
+  sprouts on its tiles (`sprout` takes a tile list) and the first piece
+  carries its points; a `convert` event carries `converted`, the count of
+  distinct rules converted (`Player.converted`), and `headLimit` counts
+  `patterns.length + converted` — so the heads match Conquest while
+  `patterns` stays `[own]`. `DEFAULT_KNOBS.mode` stays `'conquest'` so the
+  engine tests keep pinning it; normal-mode tests set `mode: 'normal'`.
+- **Rooms.** The server keeps rooms per mode (`normal-1`, `conquest-1`, …),
+  all sharing one `Field`. A join goes to the fullest room of its mode under
+  `ROOM_SIZE` (10) humans (held-for-resume players count), else a new room
+  (up to `MAX_ROOMS`, 24), else the emptiest. A room with no sockets doesn't
+  tick; an extra one empty for `ROOM_IDLE_MS` closes (one per mode stays).
+  Player ids are global, so a resume ticket finds its room. It is one Node
+  process by design (`--max-instances=1`): at level 6 the field is ~540 MB
+  RSS idle and 80 players in 9 rooms add ~30 MB and ~10% of a core, hence
+  `--memory=1Gi`.
+- **Speed** in tiles/s: `(1000 / baseStepMs)(1 + score·speedPerPoint) /
+  speedDivisor + speedOffset` (÷10, +5), capped at `maxSpeedFor` (500 at the
+  242k-tile reference, log-scaled). `speedFor` / `stepIntervalMs`.
 - **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit —
