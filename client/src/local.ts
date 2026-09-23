@@ -116,6 +116,9 @@ export class LocalConnection implements GameConnection {
         this.pending.push(...e.setRule(YOU, rule));
         return;
       }
+      case 'pattern':
+        this.pending.push(...e.setActive(YOU, Number(msg.index)));
+        return;
       case 'ping':
         this.deliver({ t: 'pong', n: msg.n });
         return;

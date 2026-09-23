@@ -294,7 +294,7 @@ export class Renderer {
   private washTint(r: number, g: number, b: number, a: number, depth: number, inner: ClientPath): [number, number, number, number] {
     switch (this.style) {
       case 'c': {
-        const base = this.store.players.get(inner.owner)?.color ?? 'hsl(0, 90%, 62%)';
+        const base = this.store.pathColor(inner) ?? 'hsl(0, 90%, 62%)';
         const m = /hsl\(\s*([\d.]+)/.exec(base);
         const h = ((m ? Number(m[1]) : 0) + 50 * depth) % 360;
         const [cr, cg, cb] = parseColor(`hsl(${h.toFixed(1)}, 85%, ${Math.max(22, 76 - 12 * (depth - 1))}%)`);
@@ -324,10 +324,10 @@ export class Renderer {
    * circuits each lean their hue a little and darken over a wider range.
    */
   private tintOf(path: ClientPath): [number, number, number] {
-    const player = this.store.players.get(path.owner);
-    if (!player) return [255, 255, 255];
+    const color = this.store.pathColor(path);
+    if (!color) return [255, 255, 255];
     const closed = path.status === 'closed';
-    const [css, dark] = closed ? this.closedLook(path, player.color) : [player.color, 0];
+    const [css, dark] = closed ? this.closedLook(path, color) : [color, 0];
     let rgb = this.rgbCache.get(css);
     if (!rgb) {
       rgb = parseColor(css);
@@ -353,7 +353,7 @@ export class Renderer {
   }
 
   /**
-   * Your rule, sketched faintly on every tile nobody has touched and that is
+   * Your active pattern, sketched faintly on every tile nobody has touched and that is
    * not inside a rival's circuit — where a tap would take you. Only when
    * zoomed in; it fades out on the way back.
    */
@@ -363,7 +363,8 @@ export class Renderer {
     const scale = this.camera.scale;
     if (!field || !me || scale <= PATTERN_MIN_SCALE) return;
     const fade = Math.min(1, (scale - PATTERN_MIN_SCALE) / PATTERN_FADE);
-    const table = chordTableFor(field, me.rule);
+    const pattern = me.patterns[me.active] ?? { rule: me.rule, color: me.color };
+    const table = chordTableFor(field, pattern.rule);
     const occupancy = this.store.occupancy;
     const ctx = this.ctx;
     ctx.beginPath();
@@ -378,7 +379,7 @@ export class Renderer {
         ctx.lineTo(bx, by);
       }
     }
-    ctx.strokeStyle = strandColor(this.board, me.color);
+    ctx.strokeStyle = strandColor(this.board, pattern.color);
     ctx.lineWidth = Math.max(1, 0.06 * scale * this.dpr);
     ctx.globalAlpha = PATTERN_ALPHA * fade;
     ctx.stroke();
@@ -435,8 +436,8 @@ export class Renderer {
     if (this.plain) this.drawOutline(toScreen);
     this.drawPattern(toScreen, box);
     const drawPath = (path: ClientPath, mine: boolean): void => {
-      const owner = store.players.get(path.owner);
-      if (!owner || path.steps.length === 0) return;
+      const color = store.pathColor(path);
+      if (!color || path.steps.length === 0) return;
       const w = Math.max(1.5, 0.14 * s) * (mine ? 1.35 : 1);
       ctx.beginPath();
       let pen = false;
@@ -465,8 +466,8 @@ export class Renderer {
       }
       const ink =
         path.status !== 'closed'
-          ? strandColor(this.board, owner.color)
-          : darkenCss(this.closedLook(path, owner.color)[0], 0.3);
+          ? strandColor(this.board, color)
+          : darkenCss(this.closedLook(path, color)[0], 0.3);
       ctx.strokeStyle = ink;
       ctx.lineWidth = w;
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;

@@ -1,7 +1,7 @@
 /**
  * Bots: enough opposition to see the mechanics move when you are the only
  * human in the arena. Each bot plays a random clean rule and, whenever it has
- * nothing growing, taps a tile after a short pause — usually somewhere random,
+ * a head to spare, taps a tile after a short pause — usually somewhere random,
  * sometimes onto a rival's path to cut it.
  */
 
@@ -10,7 +10,7 @@ import { tileCenter, tileNeighbours } from './field';
 import type { GameEvent } from './protocol';
 import { randomCleanRule } from './rule';
 import type { Rng } from './rng';
-import { chordTableFor, tileChords } from './strand';
+import { tileChords } from './strand';
 
 const NAMES = [
   'hexbot', 'psi', 'mystic', 'delta', 'theta', 'lambda', 'xi', 'sigma', 'phi', 'gamma',
@@ -47,9 +47,12 @@ export class Bots {
     for (const bot of this.bots) {
       const p = this.engine.players.get(bot.id);
       if (!p) continue;
-      if (p.paths.some((path) => path.status === 'growing')) continue;
+      const heads = this.engine.headLimit(p);
+      if (heads > 0 && p.paths.filter((path) => path.status === 'growing').length >= heads) continue;
       if (now < bot.nextTapAt) continue;
       bot.nextTapAt = now + 1000 + this.rng.int(3000);
+      // A bot holding captured patterns draws with any of them.
+      if (p.patterns.length > 1) ev.push(...this.engine.setActive(bot.id, this.rng.int(p.patterns.length)));
       const tile = this.pickTile(bot.id);
       if (tile < 0) continue;
       this.engine.tap(bot.id, tile, tileCenter(this.engine.field, tile), ev);
@@ -59,7 +62,7 @@ export class Bots {
   private pickTile(id: string): number {
     const field = this.engine.field;
     const me = this.engine.players.get(id)!;
-    const table = chordTableFor(field, me.rule);
+    const table = (me.patterns[me.active] ?? me.patterns[0]).table;
     if (this.rng.next() < this.aggression) {
       // Find a rival step to land on.
       const rivals = [...this.engine.players.values()].filter((q) => q.id !== id && q.paths.length > 0);

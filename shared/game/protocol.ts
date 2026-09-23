@@ -28,6 +28,21 @@ export interface PathWire {
   readonly steps: readonly PathStepWire[];
   /** A closed line that runs edge to edge: the region it claims (line + field outline). */
   readonly region?: readonly Pt[];
+  /** Which of the owner's patterns drew it (index into `PlayerPublic.patterns`); absent = 0, their own. */
+  readonly pattern?: number;
+}
+
+/**
+ * A pattern a player drew lines with. Index 0 is always their own rule; the
+ * rest were captured by closing a circuit around someone else's line.
+ */
+export interface PatternPublic {
+  readonly rule: PlayerRule;
+  /** The line colour it draws in: the owner's own, or a blend with its source's. */
+  readonly color: string;
+  /** Whose line it was taken from (absent on the player's own). */
+  readonly from?: string;
+  readonly fromName?: string;
 }
 
 export interface PlayerPublic {
@@ -38,6 +53,10 @@ export interface PlayerPublic {
   readonly score: number;
   readonly combo: number;
   readonly bot: boolean;
+  /** `patterns[0]` is `rule` itself; captured ones follow in the order they were taken. */
+  readonly patterns: readonly PatternPublic[];
+  /** The pattern a tap starts a line with. */
+  readonly active: number;
 }
 
 // --- client → server ---------------------------------------------------------
@@ -52,6 +71,8 @@ export type ClientMessage =
   | { readonly t: 'join'; readonly name: string; readonly rule: PlayerRule; readonly resume?: ResumeTicket }
   | { readonly t: 'tap'; readonly tile: number; readonly x: number; readonly y: number }
   | { readonly t: 'rule'; readonly rule: PlayerRule }
+  /** Choose which of your patterns the next tap draws with. */
+  | { readonly t: 'pattern'; readonly index: number }
   | { readonly t: 'ping'; readonly n: number };
 
 // --- server → client ---------------------------------------------------------
@@ -59,9 +80,14 @@ export type ClientMessage =
 export type GameEvent =
   | { readonly t: 'join'; readonly player: PlayerPublic }
   | { readonly t: 'leave'; readonly id: string }
+  /** A new rule is a restart: paths gone, captured patterns gone, own pattern active. */
   | { readonly t: 'rule'; readonly id: string; readonly rule: PlayerRule; readonly score: number; readonly combo: number }
-  /** A path grew by one step (the first step creates it). */
-  | { readonly t: 'step'; readonly path: number; readonly owner: string; readonly step: PathStepWire }
+  /** A path grew by one step (the first step creates it; it carries `pattern` when that is not 0). */
+  | { readonly t: 'step'; readonly path: number; readonly owner: string; readonly step: PathStepWire; readonly pattern?: number }
+  /** `id` closed a circuit round a rival's line and took its pattern (appended to their patterns). */
+  | { readonly t: 'capture'; readonly id: string; readonly pattern: PatternPublic }
+  /** `id` switched the pattern their taps draw with. */
+  | { readonly t: 'active'; readonly id: string; readonly active: number }
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }
   /** A line that ran off the board turned round: its steps now run the other way, and it grows again. */
   | { readonly t: 'reverse'; readonly path: number }

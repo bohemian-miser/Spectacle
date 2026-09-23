@@ -7,7 +7,7 @@
 import { buildField, type Field } from '../../shared/game/field';
 import type { Knobs } from '../../shared/game/knobs';
 import type { Pt } from '../../shared/tiles';
-import type { GameEvent, PathStatus, PathStepWire, PlayerPublic, ServerMessage } from '../../shared/game/protocol';
+import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, ServerMessage } from '../../shared/game/protocol';
 
 export interface ClientPath {
   readonly id: number;
@@ -16,12 +16,16 @@ export interface ClientPath {
   readonly steps: PathStepWire[];
   /** An edge-to-edge line's claimed region, once closed (else the loop is its own polygon). */
   region?: readonly Pt[];
+  /** Which of the owner's patterns drew it (0 = their own rule). */
+  readonly pattern: number;
 }
 
-export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule'> {
+export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active'> {
   rule: PlayerPublic['rule'];
   score: number;
   combo: number;
+  patterns: PatternPublic[];
+  active: number;
 }
 
 export interface Toast {
@@ -63,6 +67,13 @@ export class Store {
 
   get me(): ClientPlayer | undefined {
     return this.players.get(this.you);
+  }
+
+  /** The colour a path draws in: its pattern's, which for a player's own rule is theirs. */
+  pathColor(path: ClientPath): string | undefined {
+    const owner = this.players.get(path.owner);
+    if (!owner) return undefined;
+    return owner.patterns[path.pattern]?.color ?? owner.color;
   }
 
   myPaths(): ClientPath[] {
@@ -119,9 +130,9 @@ export class Store {
         if (!this.field || this.field.spec.family !== msg.field.family || this.field.spec.level !== msg.field.level || this.field.spec.rootTile !== msg.field.rootTile) {
           this.field = buildField(msg.field);
         }
-        for (const p of msg.players) this.players.set(p.id, { ...p });
+        for (const p of msg.players) this.players.set(p.id, { ...p, patterns: [...p.patterns] });
         for (const pw of msg.paths) {
-          const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps] };
+          const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps], pattern: pw.pattern ?? 0 };
           if (pw.region) path.region = pw.region;
           this.paths.set(path.id, path);
           for (const s of path.steps) this.occupy(s.tile, path);
@@ -154,7 +165,7 @@ export class Store {
   private apply(ev: GameEvent): void {
     switch (ev.t) {
       case 'join':
-        this.players.set(ev.player.id, { ...ev.player });
+        this.players.set(ev.player.id, { ...ev.player, patterns: [...ev.player.patterns] });
         return;
       case 'leave':
         this.players.delete(ev.id);
@@ -165,13 +176,29 @@ export class Store {
           p.rule = ev.rule;
           p.score = ev.score;
           p.combo = ev.combo;
+          p.patterns = [{ rule: ev.rule, color: p.color }];
+          p.active = 0;
         }
+        return;
+      }
+      case 'capture': {
+        const p = this.players.get(ev.id);
+        if (p) p.patterns = [...p.patterns, ev.pattern];
+        if (ev.id === this.you) this.toast(`Took ${ev.pattern.fromName || 'someone'}'s pattern`, 'good');
+        else if (ev.pattern.from === this.you) this.toast(`${p?.name ?? 'Someone'} took your pattern`, 'bad');
+        this.geometryVersion++;
+        return;
+      }
+      case 'active': {
+        const p = this.players.get(ev.id);
+        if (p) p.active = ev.active;
+        if (ev.id === this.you) this.geometryVersion++;
         return;
       }
       case 'step': {
         let path = this.paths.get(ev.path);
         if (!path) {
-          path = { id: ev.path, owner: ev.owner, status: 'growing', steps: [] };
+          path = { id: ev.path, owner: ev.owner, status: 'growing', steps: [], pattern: ev.pattern ?? 0 };
           this.paths.set(path.id, path);
         }
         path.steps.push(ev.step);
