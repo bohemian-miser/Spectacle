@@ -259,6 +259,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const top = board.slice(0, 8);
   const meRow = me && rank > top.length ? board[rank - 1] : null;
   const active = me ? (me.patterns[me.active] ?? me.patterns[0]) : undefined;
+  const heads = store.heads();
   const speed = me && store.knobs ? (1000 / stepIntervalMs(store.knobs, me.score)).toFixed(1) : '–';
 
   return (
@@ -278,7 +279,12 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         <div className="hud-name">
           <span className="swatch" /> {me?.name ?? '…'}
         </div>
-        <div className="hud-score">{me?.score ?? 0}</div>
+        <div className="hud-score-row">
+          <div className="hud-score">{me?.score ?? 0}</div>
+          <span className="hud-heads" title="Heads free / total — lines you can start now">
+            {heads.total === 0 ? '∞' : `${heads.free}/${heads.total}`} {heads.total === 1 ? 'head' : 'heads'}
+          </span>
+        </div>
         <div className="hud-line">
           combo ×{(me?.combo ?? 1).toFixed(1)} · {speed} tiles/s · #{rank || '–'}
         </div>
