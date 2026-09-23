@@ -9,7 +9,7 @@
  *   FIELD_ROOT    (Delta)    root tile type
  *   BOTS          (1)        number of bot players
  *   SEED          (random)   RNG seed
- *   RESUME_GRACE_MS (90000)  how long a dropped player is kept for `join.resume`
+ *   RESUME_GRACE_MS (300000) how long a dropped player is kept for `join.resume`
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
  */
 
@@ -20,7 +20,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { Engine } from '../shared/game/engine';
-import { buildField, DEFAULT_FIELD_SPEC, type FieldSpec } from '../shared/game/field';
+import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../shared/game/field';
 import { knobsFromEnv } from '../shared/game/knobs';
 import type { ClientMessage, GameEvent, ServerMessage } from '../shared/game/protocol';
 import { PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
@@ -45,6 +45,8 @@ const knobs = knobsFromEnv(process.env);
 const spec = fieldSpecFromEnv();
 const t0 = Date.now();
 const field = buildField(spec);
+// The outline is only needed when a line runs edge to edge; build it now, not mid-tick.
+fieldOutline(field);
 console.log(`[spectacle] field ${spec.family} level ${spec.level} root ${spec.rootTile}: ${field.count} tiles in ${Date.now() - t0} ms`);
 
 const seed = process.env.SEED ? Number(process.env.SEED) : (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
@@ -131,7 +133,7 @@ let pending: GameEvent[] = [];
  *   refresh often reconnects before the server has seen the old page go. The
  *   token proves ownership; the old socket is detached and closed.
  */
-const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 90_000);
+const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 300_000);
 const tokenHashes = new Map<string, Buffer>(); // player id → sha256(token)
 const detached = new Map<string, ReturnType<typeof setTimeout>>(); // player id → expiry
 

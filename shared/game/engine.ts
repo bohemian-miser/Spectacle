@@ -18,12 +18,16 @@
  *    circuit (both knobs);
  *  - a tail (no continuation) leaves the path stuck; tap elsewhere to start
  *    another — every line a player draws stays until it is cut;
+ *  - a tap may not land on your own line, with one exception: tapping the
+ *    start of a line that ran off the edge of the field turns it round to
+ *    grow the other way. A line that runs edge to edge closes like a circuit
+ *    and claims the smaller side of the board it cuts off;
  *  - a player has at most `maxHeads` growing lines, and losing one in a
  *    collision blocks the next tap for `respawnDelayMs`.
  */
 
 import type { Pt } from '../tiles';
-import { pointInPolygon, polygonArea, tileCenter, type Field } from './field';
+import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, type Field } from './field';
 import { stepIntervalMs, type Knobs } from './knobs';
 import type { GameEvent, PathStatus, PathWire, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
@@ -31,6 +35,7 @@ import type { Rng } from './rng';
 import {
   chordTableFor,
   chordsConflict,
+  continuations,
   nearestChord,
   randomJunctionPicker,
   startStep,
@@ -50,7 +55,10 @@ export interface Path {
   progress: number;
   /** Points this path has earned; they go with it when it goes. */
   points: number;
+  /** An edge-to-edge line's claimed region (line + field outline), once closed. */
+  region?: Pt[];
 }
+
 
 export interface Player {
   readonly id: string;
@@ -147,7 +155,11 @@ export class Engine {
     const paths: PathWire[] = [];
     for (const p of this.players.values()) {
       for (const path of p.paths) {
-        paths.push({ id: path.id, owner: path.owner, status: path.status, steps: path.steps });
+        paths.push(
+          path.region
+            ? { id: path.id, owner: path.owner, status: path.status, steps: path.steps, region: path.region }
+            : { id: path.id, owner: path.owner, status: path.status, steps: path.steps },
+        );
       }
     }
     return { players, paths };
@@ -166,6 +178,14 @@ export class Engine {
     }
     if (!Number.isInteger(tile) || tile < 0 || tile >= this.field.count) {
       return { result: { ok: false, reason: 'no such tile' }, events: ev };
+    }
+    const turn = p.paths.find((q) => q.status === 'stuck' && q.steps[0].tile === tile && this.canTurn(p, q));
+    if (turn) {
+      this.turnRound(turn, ev);
+      return { result: { ok: true, path: turn.id }, events: ev };
+    }
+    if (this.occupancy.get(tile) && [...this.occupancy.get(tile)!].some((path) => path.owner === id)) {
+      return { result: { ok: false, reason: "that's your own line" }, events: ev };
     }
     if (tileChords(this.field, p.table, tile).length === 0) {
       return { result: { ok: false, reason: 'your rule draws no line on this tile' }, events: ev };
@@ -235,6 +255,15 @@ export class Engine {
       cur,
       this.knobs.junctionPolicy === 'random' ? this.pickJunction : undefined,
     );
+    if (out.kind === 'dead' && onFieldBoundary(this.field, cur.tile, cur.b) && this.startsAtEdge(p, path)) {
+      // Edge to edge: the line cuts the board in two and claims the smaller side.
+      const line = [...path.steps.map((q) => q.a), cur.b];
+      const region = boundaryRegion(this.field, line);
+      if (region) {
+        this.closeCircuit(p, path, ev, region);
+        return;
+      }
+    }
     if (out.kind === 'dead' || out.kind === 'junction') {
       this.setStatus(path, 'stuck', ev);
       return;
@@ -315,17 +344,47 @@ export class Engine {
     return hitOwner;
   }
 
-  private closeCircuit(p: Player, path: Path, ev: GameEvent[]): void {
+  /** Does the line's start sit on the field's edge, with nowhere to go behind it? */
+  private startsAtEdge(p: Player, path: Path): boolean {
+    const s = path.steps[0];
+    return continuations(this.field, p.table, s.tile, s.chord, s.a).length === 0 && onFieldBoundary(this.field, s.tile, s.a);
+  }
+
+  /** A stuck line that ran off the edge, whose start still has somewhere to go. */
+  private canTurn(p: Player, path: Path): boolean {
+    const last = path.steps[path.steps.length - 1];
+    if (continuations(this.field, p.table, last.tile, last.chord, last.b).length > 0) return false;
+    if (!onFieldBoundary(this.field, last.tile, last.b)) return false;
+    const s = path.steps[0];
+    return continuations(this.field, p.table, s.tile, s.chord, s.a).length > 0;
+  }
+
+  /** Run the line's steps the other way and let it grow again from its old start. */
+  private turnRound(path: Path, ev: GameEvent[]): void {
+    const turned = path.steps.map((q) => ({ tile: q.tile, chord: q.chord, a: q.b, b: q.a })).reverse();
+    path.steps.length = 0;
+    path.steps.push(...turned);
+    path.status = 'growing';
+    path.progress = 0;
+    ev.push({ t: 'reverse', path: path.id });
+  }
+
+  private closeCircuit(p: Player, path: Path, ev: GameEvent[], region?: Pt[]): void {
     const k = this.knobs;
     const length = path.steps.length;
-    const area = polygonArea(path.steps.map((s) => s.a)) / this.field.tileArea;
+    const area = polygonArea(region ?? path.steps.map((s) => s.a)) / this.field.tileArea;
     const combo = p.combo;
     const bonus = Math.round(
       combo * (k.circuitBase + k.circuitLengthWeight * length + k.circuitAreaWeight * area),
     );
     path.status = 'closed';
     path.progress = 0;
-    ev.push({ t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo });
+    if (region) path.region = region;
+    ev.push(
+      region
+        ? { t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo, region }
+        : { t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo },
+    );
     p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
     path.points += bonus;
     this.addScore(p, bonus, ev);
@@ -347,17 +406,19 @@ export class Engine {
     for (const rival of this.players.values()) {
       if (rival.id === id) continue;
       for (const path of rival.paths) {
-        if (path.status !== 'closed' || path.steps.length < 3) continue;
+        if (path.status !== 'closed') continue;
+        const poly = pathPolygon(path);
+        if (poly.length < 3) continue;
         // Cheap bounding-box reject before the polygon test.
         let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const s of path.steps) {
-          if (s.a.x < minX) minX = s.a.x;
-          if (s.a.x > maxX) maxX = s.a.x;
-          if (s.a.y < minY) minY = s.a.y;
-          if (s.a.y > maxY) maxY = s.a.y;
+        for (const q of poly) {
+          if (q.x < minX) minX = q.x;
+          if (q.x > maxX) maxX = q.x;
+          if (q.y < minY) minY = q.y;
+          if (q.y > maxY) maxY = q.y;
         }
         if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;
-        if (pointInPolygon(p, path.steps.map((s) => s.a))) return true;
+        if (pointInPolygon(p, poly)) return true;
       }
     }
     return false;

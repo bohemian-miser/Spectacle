@@ -9,7 +9,7 @@
 
 import { Bots } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
-import { buildField, type FieldSpec } from '../../shared/game/field';
+import { buildField, fieldOutline, type FieldSpec } from '../../shared/game/field';
 import { DEFAULT_KNOBS, type Knobs } from '../../shared/game/knobs';
 import type { ClientMessage, GameEvent, ServerMessage } from '../../shared/game/protocol';
 import { validateRule } from '../../shared/game/rule';
@@ -48,6 +48,8 @@ export class LocalConnection implements GameConnection {
   open(onOpen: () => void, _onClose: () => void): void {
     const spec: FieldSpec = { family: this.opts.family, level: this.opts.level, rootTile: 'Delta' };
     const field = buildField(spec);
+    // Edge-to-edge claims need the outline; build it with the field, not mid-game.
+    fieldOutline(field);
     const rng = mulberry32((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
     this.engine = new Engine(field, this.knobs, rng);
     this.bots = new Bots(this.engine, rng);

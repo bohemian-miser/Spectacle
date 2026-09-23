@@ -141,18 +141,6 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     pinchDist.current = 0;
   };
 
-  const findMe = (): void => {
-    const r = rendererRef.current;
-    const mine = store.myPaths();
-    const live = [...mine].reverse().find((p) => p.status === 'growing') ?? mine[mine.length - 1];
-    if (!r || !live) {
-      store.toast('You have no line yet — tap a tile', 'info');
-      return;
-    }
-    const head = live.steps[live.steps.length - 1].b;
-    r.centerOn(head.x, head.y);
-  };
-
   const me = store.me;
   const board = [...store.players.values()].sort((a, b) => b.score - a.score);
   const rank = me ? board.findIndex((p) => p.id === me.id) + 1 : 0;
@@ -165,9 +153,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   if (growing.length) parts.push(`${growing.length} growing`);
   if (stuck) parts.push(`${stuck} stuck`);
   if (closed) parts.push(`${closed} circuit${closed > 1 ? 's' : ''}`);
-  // One head at a time: a tap only lands once the growing line has ended.
-  const next = growing.length ? 'wait for it to finish' : 'tap to start a line';
-  const status = parts.length ? `${parts.join(' · ')} · ${tiles} tiles · ${next}` : 'tap a tile to start a line';
+  const status = parts.length ? `${parts.join(' · ')} · ${tiles} tiles` : '';
   const top = board.slice(0, 8);
   const meRow = me && rank > top.length ? board[rank - 1] : null;
   const speed = me && store.knobs ? (1000 / stepIntervalMs(store.knobs, me.score)).toFixed(1) : '–';
@@ -192,17 +178,11 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         <div className="hud-line">
           combo ×{(me?.combo ?? 1).toFixed(1)} · {speed} tiles/s · #{rank || '–'}
         </div>
-        <div className="hud-line hud-status">{status}</div>
+        {status && <div className="hud-line hud-status">{status}</div>}
         <div className="hud-line hud-rule">
           <code>{me ? describeRule(me.rule) : ''}</code>
         </div>
         <div className="hud-actions">
-          <button type="button" className="btn" onClick={findMe}>
-            Find my line
-          </button>
-          <button type="button" className="btn" onClick={() => rendererRef.current?.fitToField()}>
-            Whole arena
-          </button>
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
             New rule
           </button>

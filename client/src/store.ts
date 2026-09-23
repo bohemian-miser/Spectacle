@@ -6,6 +6,7 @@
 
 import { buildField, type Field } from '../../shared/game/field';
 import type { Knobs } from '../../shared/game/knobs';
+import type { Pt } from '../../shared/tiles';
 import type { GameEvent, PathStatus, PathStepWire, PlayerPublic, ServerMessage } from '../../shared/game/protocol';
 
 export interface ClientPath {
@@ -13,6 +14,8 @@ export interface ClientPath {
   readonly owner: string;
   status: PathStatus;
   readonly steps: PathStepWire[];
+  /** An edge-to-edge line's claimed region, once closed (else the loop is its own polygon). */
+  region?: readonly Pt[];
 }
 
 export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule'> {
@@ -66,12 +69,14 @@ export class Store {
     return [...this.paths.values()].filter((p) => p.owner === this.you);
   }
 
+  /** At most two at once; a repeat of one still showing just refreshes it. */
   toast(text: string, tone: Toast['tone'] = 'info'): void {
-    this.toasts = [...this.toasts.slice(-4), { id: this.nextToast++, text, tone, at: Date.now() }];
+    const rest = this.toasts.filter((t) => t.text !== text);
+    this.toasts = [...rest.slice(-1), { id: this.nextToast++, text, tone, at: Date.now() }];
     this.emit();
   }
 
-  pruneToasts(maxAgeMs = 4000): void {
+  pruneToasts(maxAgeMs = 2500): void {
     const cut = Date.now() - maxAgeMs;
     const keep = this.toasts.filter((t) => t.at > cut);
     if (keep.length !== this.toasts.length) {
@@ -117,6 +122,7 @@ export class Store {
         for (const p of msg.players) this.players.set(p.id, { ...p });
         for (const pw of msg.paths) {
           const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps] };
+          if (pw.region) path.region = pw.region;
           this.paths.set(path.id, path);
           for (const s of path.steps) this.occupy(s.tile, path);
         }
@@ -149,14 +155,10 @@ export class Store {
     switch (ev.t) {
       case 'join':
         this.players.set(ev.player.id, { ...ev.player });
-        if (ev.player.id !== this.you && !ev.player.bot) this.toast(`${ev.player.name} entered the arena`);
         return;
-      case 'leave': {
-        const p = this.players.get(ev.id);
+      case 'leave':
         this.players.delete(ev.id);
-        if (p && !p.bot) this.toast(`${p.name} left`);
         return;
-      }
       case 'rule': {
         const p = this.players.get(ev.id);
         if (p) {
@@ -180,7 +182,17 @@ export class Store {
       case 'status': {
         const path = this.paths.get(ev.path);
         if (path) path.status = ev.status;
-        if (path && path.owner === this.you && ev.status === 'stuck') this.toast('Tail — that line ran out. Tap elsewhere to start another.', 'bad');
+        this.geometryVersion++;
+        return;
+      }
+      case 'reverse': {
+        const path = this.paths.get(ev.path);
+        if (path) {
+          const turned = path.steps.map((q) => ({ tile: q.tile, chord: q.chord, a: q.b, b: q.a })).reverse();
+          path.steps.length = 0;
+          path.steps.push(...turned);
+          path.status = 'growing';
+        }
         this.geometryVersion++;
         return;
       }
@@ -198,18 +210,19 @@ export class Store {
         }
         if (ev.by !== undefined) {
           const by = this.players.get(ev.by)?.name ?? 'someone';
-          if (ev.owner === this.you) this.toast(`Collided with ${by} — your line is gone`, 'bad');
-          else if (ev.by === this.you) this.toast(`You took out ${this.players.get(ev.owner)?.name ?? 'someone'}'s line`, 'good');
+          if (ev.owner === this.you) this.toast(`Cut by ${by}`, 'bad');
+          else if (ev.by === this.you) this.toast(`Cut ${this.players.get(ev.owner)?.name ?? 'someone'}`, 'good');
         }
         this.geometryVersion++;
         return;
       }
       case 'circuit': {
         const path = this.paths.get(ev.path);
-        if (path) path.status = 'closed';
-        if (ev.owner === this.you) {
-          this.toast(`Circuit! ${ev.length} tiles, area ${ev.area.toFixed(1)} → +${ev.bonus} (×${ev.combo.toFixed(1)})`, 'good');
+        if (path) {
+          path.status = 'closed';
+          if (ev.region) path.region = ev.region;
         }
+        if (ev.owner === this.you) this.toast(`${ev.region ? 'Claimed' : 'Circuit'} +${ev.bonus}`, 'good');
         this.geometryVersion++;
         return;
       }

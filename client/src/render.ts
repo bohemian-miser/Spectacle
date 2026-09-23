@@ -3,18 +3,29 @@
  * Canvas2D where WebGL is missing) and a Canvas2D overlay on top for the
  * live things — every path as a polyline, a pulsing head on each growing
  * one, a cross on each stuck one. Claimed tiles are tinted in the tile layer,
- * and a closed circuit washes the tiles it encloses in its owner's colour.
+ * and a closed circuit washes the tiles it encloses in its owner's colour —
+ * the washes stack, so a loop inside a loop shows deeper.
  * Zoomed in close, your own rule is sketched faintly over the free tiles.
  */
 
-import { tilesInBox, tilesInsidePolygon, type Box, type Field } from '../../shared/game/field';
+import { pathPolygon, tilesInBox, tilesInsidePolygon, type Box, type Field } from '../../shared/game/field';
 import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand';
 import type { Camera } from './camera';
 import type { ClientPath, Store } from './store';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
-import { ARROW_MIN_SCALE, circuitDarkening, parseColor, strandColor, typeFill, type Rgb01, type TileLayer } from './tiles-layer';
+import {
+  ARROW_MIN_SCALE,
+  circuitDarkening,
+  ownCircuitColor,
+  ownCircuitDarkening,
+  parseColor,
+  strandColor,
+  typeFill,
+  type Rgb01,
+  type TileLayer,
+} from './tiles-layer';
 
 /**
  * Scale at which your rule's pattern starts to show on the free tiles — a
@@ -40,6 +51,9 @@ export class Renderer {
   private board: BoardTheme = boardTheme();
   /** A closed circuit's enclosed tiles; a closed path never changes, so once is enough. */
   private readonly interiors = new WeakMap<ClientPath, readonly number[]>();
+  /** A closed path's colour and darkening, keyed on the owner colour it was made from. */
+  private readonly looks = new WeakMap<ClientPath, readonly [string, readonly [string, number]]>();
+  private readonly rgbCache = new Map<string, [number, number, number]>();
   /** Tiles inside anyone else's closed circuit (rebuilt with the tints). */
   private rivalInterior = new Set<number>();
   private readonly visible: number[] = [];
@@ -178,7 +192,6 @@ export class Renderer {
     this.lastGeometry = store.geometryVersion;
     this.lastPlayersVersion = store.version;
     tiles.clearTints();
-    const colors = new Map<string, [number, number, number]>();
     for (const [tile, paths] of store.occupancy) {
       // Your own claim wins the tint; otherwise the first path on the tile.
       let pick: ClientPath | null = null;
@@ -190,55 +203,83 @@ export class Renderer {
         if (pick === null) pick = p;
       }
       if (pick === null) continue;
-      const player = store.players.get(pick.owner);
-      if (!player) continue;
-      let rgb = colors.get(pick.owner);
-      if (!rgb) {
-        rgb = parseColor(player.color);
-        colors.set(pick.owner, rgb);
-      }
-      // The tile "fades" and takes the owner's hue, lifted off it so the claim
-      // reads against the ground — toward white on the dark board, the other
-      // way on the light one. A closed circuit's tiles darken with its length.
-      const mine = pick.owner === store.you;
-      const k = pick.status === 'closed' ? 1 - circuitDarkening(pick.steps.length) : 1;
-      const lift = pick.status === 'closed' ? this.board.liftClosed : this.board.lift;
-      const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
-      tiles.setTint(tile, ch(rgb[0]), ch(rgb[1]), ch(rgb[2]), mine ? 115 : 85);
+      const [r, g, b] = this.tintOf(pick);
+      tiles.setTint(tile, r, g, b, pick.owner === store.you ? 115 : 85);
     }
     // Interior wash: the free tiles a closed circuit encloses take its owner's
-    // colour, fainter than the loop itself. Yours first, so it wins an overlap.
+    // colour, fainter than the loop itself. Washes stack: outer circuits go
+    // down first and each one inside lays its colour over them, so nesting
+    // deepens the tile rather than hiding behind the first loop to claim it.
     const field = this.field;
     this.rivalInterior = new Set();
     if (!field) return;
-    const closed = [...store.paths.values()].filter((p) => p.status === 'closed' && p.steps.length >= 3);
-    closed.sort((a, b) => Number(b.owner === store.you) - Number(a.owner === store.you));
-    const washed = new Set<number>();
-    for (const path of closed) {
-      const player = store.players.get(path.owner);
-      if (!player) continue;
+    const closed: { path: ClientPath; inside: readonly number[] }[] = [];
+    for (const path of store.paths.values()) {
+      if (path.status !== 'closed' || path.steps.length < 2 || !store.players.has(path.owner)) continue;
       let inside = this.interiors.get(path);
       if (!inside) {
-        inside = tilesInsidePolygon(field, path.steps.map((s) => s.a));
+        inside = tilesInsidePolygon(field, pathPolygon(path));
         this.interiors.set(path, inside);
       }
-      const mine = path.owner === store.you;
-      if (!mine) for (const t of inside) this.rivalInterior.add(t);
-      let rgb = colors.get(path.owner);
-      if (!rgb) {
-        rgb = parseColor(player.color);
-        colors.set(path.owner, rgb);
-      }
-      const k = 1 - circuitDarkening(path.steps.length);
-      const lift = this.board.liftClosed;
-      const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
-      const [r, g, b] = [ch(rgb[0]), ch(rgb[1]), ch(rgb[2])];
+      if (path.owner !== store.you) for (const t of inside) this.rivalInterior.add(t);
+      closed.push({ path, inside });
+    }
+    closed.sort((a, b) => b.inside.length - a.inside.length);
+    const wash = new Map<number, [number, number, number, number]>();
+    for (const { path, inside } of closed) {
+      const [r, g, b] = this.tintOf(path);
+      const a = path.owner === store.you ? 0.3 : 0.22;
       for (const t of inside) {
-        if (washed.has(t) || store.occupancy.has(t)) continue;
-        washed.add(t);
-        tiles.setTint(t, r, g, b, mine ? 70 : 55);
+        if (store.occupancy.has(t)) continue;
+        const under = wash.get(t);
+        if (!under) {
+          wash.set(t, [r, g, b, a]);
+          continue;
+        }
+        // Porter–Duff "over": this loop's colour on top of what is already there.
+        const ua = under[3] * (1 - a);
+        const oa = a + ua;
+        under[0] = (r * a + under[0] * ua) / oa;
+        under[1] = (g * a + under[1] * ua) / oa;
+        under[2] = (b * a + under[2] * ua) / oa;
+        under[3] = oa;
       }
     }
+    for (const [t, [r, g, b, a]] of wash) tiles.setTint(t, r, g, b, Math.min(210, a * 255));
+  }
+
+  /**
+   * A claimed tile's tint: the owner's colour, lifted off it so the claim reads
+   * against the ground — toward white on the dark board, the other way on the
+   * light one. A closed circuit's tiles darken with its length; your own
+   * circuits each lean their hue a little and darken over a wider range.
+   */
+  private tintOf(path: ClientPath): [number, number, number] {
+    const player = this.store.players.get(path.owner);
+    if (!player) return [255, 255, 255];
+    const closed = path.status === 'closed';
+    const [css, dark] = closed ? this.closedLook(path, player.color) : [player.color, 0];
+    let rgb = this.rgbCache.get(css);
+    if (!rgb) {
+      rgb = parseColor(css);
+      this.rgbCache.set(css, rgb);
+    }
+    const k = 1 - dark;
+    const lift = closed ? this.board.liftClosed : this.board.lift;
+    const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
+    return [ch(rgb[0]), ch(rgb[1]), ch(rgb[2])];
+  }
+
+  /** A closed path's colour and darkening: per circuit for yours, by length for a rival's. */
+  private closedLook(path: ClientPath, color: string): readonly [string, number] {
+    const hit = this.looks.get(path);
+    if (hit && hit[0] === color) return hit[1];
+    const look: [string, number] =
+      path.owner === this.store.you
+        ? [ownCircuitColor(color, path.id), ownCircuitDarkening(path.steps.length, path.id)]
+        : [color, circuitDarkening(path.steps.length)];
+    this.looks.set(path, [color, look]);
+    return look;
   }
 
   /**
@@ -319,7 +360,8 @@ export class Renderer {
         ctx.lineTo(bx, by);
         pen = true;
       }
-      if (path.status === 'closed' && pen) {
+      // A loop joins back to its start; an edge-to-edge claim ends at the edge.
+      if (path.status === 'closed' && pen && !path.region) {
         const first = path.steps[0];
         const [ax, ay] = toScreen(first.a.x, first.a.y);
         ctx.lineTo(ax, ay);
@@ -329,7 +371,7 @@ export class Renderer {
         ctx.lineWidth = w + Math.max(2, 0.08 * s);
         ctx.stroke();
       }
-      const ink = strandColor(this.board, owner.color, path.status === 'closed' ? circuitDarkening(path.steps.length) : 0);
+      const ink = path.status === 'closed' ? strandColor(this.board, ...this.closedLook(path, owner.color)) : strandColor(this.board, owner.color);
       ctx.strokeStyle = ink;
       ctx.lineWidth = w;
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;

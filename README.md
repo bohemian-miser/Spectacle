@@ -39,6 +39,10 @@ you.
    refused, and once it closes, sticks or dies you tap again to start the next.
    Nothing you drew is dropped until someone cuts it (`maxLivePaths` and
    `maxCompletedCircuits` cap this if you want; both default to unlimited).
+   You cannot tap your own line — except its first tile when it ran off the
+   edge of the field: that turns it round to grow out of its other end. A
+   line that runs edge to edge cuts the field in two and closes like a
+   circuit, claiming the smaller side (scored on that side's area).
    Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
    next tap lands.
 6. **Crossing.** When a line enters a tile where another player's chord crosses
@@ -48,7 +52,9 @@ you.
    You cannot *start* on a rival's line or inside a rival's closed circuit
    (`tapOntoOthers`, `tapInsideRivalCircuits`); you have to grow into them.
    Closed circuits darken with their length on the board, and wash the tiles
-   they enclose in their owner's colour.
+   they enclose in their owner's colour; the washes stack, so a circuit inside
+   a circuit shows deeper. Your own circuits each lean their hue a little and
+   darken over a wider range, so you can tell them apart.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
 **Which way a tile is turned.** Every hexagon in the arena is the same regular
@@ -136,7 +142,7 @@ While people are connected you pay for one small instance; when the last one
 leaves it is retired after about fifteen idle minutes, and idle costs nothing.
 The free tier covers roughly fifty instance-hours a month. Cloud Run caps a
 request, and so a WebSocket, at an hour; the client reconnects and resumes the
-same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 90 s), so
+same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 5 min), so
 nobody notices. A page refresh does the same: the tab keeps its resume ticket
 in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
 

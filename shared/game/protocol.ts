@@ -26,6 +26,8 @@ export interface PathWire {
   readonly owner: string;
   readonly status: PathStatus;
   readonly steps: readonly PathStepWire[];
+  /** A closed line that runs edge to edge: the region it claims (line + field outline). */
+  readonly region?: readonly Pt[];
 }
 
 export interface PlayerPublic {
@@ -61,6 +63,8 @@ export type GameEvent =
   /** A path grew by one step (the first step creates it). */
   | { readonly t: 'step'; readonly path: number; readonly owner: string; readonly step: PathStepWire }
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }
+  /** A line that ran off the board turned round: its steps now run the other way, and it grows again. */
+  | { readonly t: 'reverse'; readonly path: number }
   /** A path was cut (`by`) or abandoned (`by` absent) and is gone. */
   | { readonly t: 'wipe'; readonly path: number; readonly owner: string; readonly by?: string }
   | {
@@ -71,6 +75,8 @@ export type GameEvent =
       readonly area: number;
       readonly bonus: number;
       readonly combo: number;
+      /** Present when an edge-to-edge line closed against the field's outline. */
+      readonly region?: readonly Pt[];
     }
   | { readonly t: 'score'; readonly id: string; readonly score: number; readonly combo: number }
   /** Your tap was refused, with a reason to show. */
