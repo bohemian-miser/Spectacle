@@ -11,13 +11,14 @@ import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, 
 
 export interface ClientPath {
   readonly id: number;
-  readonly owner: string;
+  /** Changes hands on a `take`. */
+  owner: string;
   status: PathStatus;
   readonly steps: PathStepWire[];
   /** An edge-to-edge line's claimed region, once closed (else the loop is its own polygon). */
   region?: readonly Pt[];
   /** Which of the owner's patterns drew it (0 = their own rule). */
-  readonly pattern: number;
+  pattern: number;
 }
 
 export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active'> {
@@ -235,6 +236,17 @@ export class Store {
         if (p) p.patterns = [...p.patterns, ev.pattern];
         if (ev.id === this.you) this.toast(`Took ${ev.pattern.fromName || 'someone'}'s pattern`, 'good');
         else if (ev.pattern.from === this.you) this.toast(`${p?.name ?? 'Someone'} took your pattern`, 'bad');
+        this.geometryVersion++;
+        return;
+      }
+      case 'take': {
+        const path = this.paths.get(ev.path);
+        if (path) {
+          path.owner = ev.owner;
+          path.pattern = ev.pattern;
+        }
+        if (ev.owner === this.you) this.toast(`Took ${this.players.get(ev.from)?.name ?? 'someone'}'s lines`, 'good');
+        else if (ev.from === this.you) this.toast(`${this.players.get(ev.owner)?.name ?? 'Someone'} took your lines`, 'bad');
         this.geometryVersion++;
         return;
       }

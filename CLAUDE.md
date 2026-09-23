@@ -39,7 +39,7 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
                   events (step/wipe/circuit/score/status/join/leave/rule/
-                  capture/active/refused). Client → server adds `pattern`.
+                  capture/take/active/refused). Client → server adds `pattern`.
 server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
                   dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
 client/src/       Vite + React.
@@ -144,7 +144,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   round a rival's line — every step's midpoint inside — takes that line's
   rule into your `patterns` (index 0 is always your own rule; captures are
   only appended, so a path's `pattern` index stays valid; a new rule clears
-  them). The rival keeps the line. A captured pattern draws in
+  them). The area is yours (`takeEnclosed`, default on): every rival line
+  wholly inside — circuits, claims, growing lines — changes owner (`take`
+  event: new `owner`, `pattern` = its index among yours) and its `points`
+  move with it (two `score`s, zero-sum). A line whose pattern you can't hold
+  (cap, or `captureOnEnclose` off) stays with the rival. A captured pattern draws in
   `mixHsl(yours, theirs, 1/3)`. `active` picks what a tap draws with; only
   the active pattern is sketched on the board. A path carries its own
   `rule`/`table` — use `path.table`, never the owner's, for anything about

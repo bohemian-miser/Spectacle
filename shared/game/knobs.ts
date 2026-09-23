@@ -50,6 +50,11 @@ export interface Knobs {
   maxHeadsTotal: number;
   /** Close a circuit round a rival's line and you take its pattern. */
   captureOnEnclose: boolean;
+  /**
+   * Close a circuit round a rival's line and the line itself becomes yours
+   * (with the points it carries): everything inside the area you close.
+   */
+  takeEnclosed: boolean;
   /** Captured patterns a player may hold; later captures are ignored (0 = unlimited). */
   maxCapturedPatterns: number;
   /** After losing a head in a collision, how long before a tap may start a new one. */
@@ -115,6 +120,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   headPerCapture: true,
   maxHeadsTotal: 12,
   captureOnEnclose: true,
+  takeEnclosed: true,
   maxCapturedPatterns: 11,
   respawnDelayMs: 500,
   maxPathLength: 0,

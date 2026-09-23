@@ -86,6 +86,11 @@ export type GameEvent =
   | { readonly t: 'step'; readonly path: number; readonly owner: string; readonly step: PathStepWire; readonly pattern?: number }
   /** `id` closed a circuit round a rival's line and took its pattern (appended to their patterns). */
   | { readonly t: 'capture'; readonly id: string; readonly pattern: PatternPublic }
+  /**
+   * `owner` closed a circuit round `from`'s line `path` and took it: it is
+   * theirs now, drawn with their pattern `pattern`. Its points follow as `score`s.
+   */
+  | { readonly t: 'take'; readonly path: number; readonly from: string; readonly owner: string; readonly pattern: number }
   /** `id` switched the pattern their taps draw with. */
   | { readonly t: 'active'; readonly id: string; readonly active: number }
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }
