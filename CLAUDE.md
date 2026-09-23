@@ -73,6 +73,7 @@ tests/            vitest. strand.test.ts pins the local walker against the
                   core's global analyze() — the most important test here.
                   resume.test.ts spawns the real server.
 scripts/smoke.ts  Headless Chromium round (needs PW_EXE or playwright browsers).
+scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
