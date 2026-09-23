@@ -115,6 +115,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   whose polygon is the line plus the smaller arc of `fieldOutline` (`region`
   on the path, the `circuit` event and `PathWire`); use `pathPolygon()` for
   any "inside" test so both kinds of circuit count.
+- **Your own lines stop you.** A growing line entering a tile where another of
+  your lines conflicts (same test as a rival hit) goes `stuck` — no cut. If
+  instead it meets that line's loose end on the same chord (same rule, not
+  closed), `join` folds the other line in: `wipe` (no `by`) for it, then its
+  steps re-sent as `step`s of the joiner, its points carried over, never
+  re-scored. Two dead ends at the edge thus become one edge-to-edge claim.
 - **Captured patterns.** Closing a circuit (loop or edge-to-edge region)
   round a rival's line — every step's midpoint inside — takes that line's
   rule into your `patterns` (index 0 is always your own rule; captures are
@@ -168,8 +174,8 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Point-in-polygon on the circuit's `a` points** decides "inside" (engine
   taps, `tilesInsidePolygon`). Tiles the loop passes through get the strong
   tint; the enclosed free tiles get a fainter wash, cached per closed path.
-- **The rule pattern** (your chords, faint, on untouched tiles not inside a
-  rival's circuit) draws on the overlay past `PATTERN_MIN_SCALE`
+- **The rule pattern** (your chords, faint, on tiles no rival's line touches —
+  your own lines' tiles included — and not inside a rival's circuit) draws on the overlay past `PATTERN_MIN_SCALE`
   (1.3 × `ARROW_MIN_SCALE`) and fades in over the next 16 of scale.
 - **A theme change has to reach the canvas.** CSS restyles the DOM by itself;
   the board does not. `Arena` hands the renderer the new `BoardTheme`, which

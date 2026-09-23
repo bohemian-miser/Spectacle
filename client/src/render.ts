@@ -353,8 +353,8 @@ export class Renderer {
   }
 
   /**
-   * Your active pattern, sketched faintly on every tile nobody has touched and that is
-   * not inside a rival's circuit — where a tap would take you. Only when
+   * Your active pattern, sketched faintly on every tile no rival's line touches and that
+   * is not inside a rival's circuit — your own tiles included. Only when
    * zoomed in; it fades out on the way back.
    */
   private drawPattern(toScreen: (x: number, y: number) => [number, number], box: Box): void {
@@ -369,7 +369,9 @@ export class Renderer {
     const ctx = this.ctx;
     ctx.beginPath();
     for (const i of tilesInBox(field, box, this.visible)) {
-      if (occupancy.has(i) || this.rivalInterior.has(i)) continue;
+      if (this.rivalInterior.has(i)) continue;
+      const occ = occupancy.get(i);
+      if (occ && [...occ].some((q) => q.owner !== me.id)) continue;
       const n = tileChords(field, table, i).length;
       for (let c = 0; c < n; c++) {
         const [a, b] = worldChord(field, table, i, c);

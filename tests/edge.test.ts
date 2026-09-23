@@ -4,8 +4,8 @@ import { buildField, fieldOutline, onFieldBoundary, pathPolygon, polygonArea, ti
 import { DEFAULT_KNOBS } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
 import { fassRule } from '../shared/game/rule';
-import { mulberry32 } from '../shared/game/rng';
-import { chordTableFor, tileChords, walkStrand, worldChord } from '../shared/game/strand';
+import { mulberry32, type Rng } from '../shared/game/rng';
+import { chordTableFor, startStep, tileChords, walkStrand, worldChord } from '../shared/game/strand';
 
 const FIELD = buildField({ family: 'spectre', level: 3, rootTile: 'Delta' });
 // The endless-line rule: in a finite patch every strand runs edge to edge (tests only).
@@ -32,6 +32,19 @@ function edgeToEdge(): { tile: number; chord: number } {
     }
   }
   throw new Error('no edge-to-edge strand');
+}
+
+/** An Rng whose next tap leaves through the end the test sets in `exit.end`. */
+function steered(): { rng: Rng; exit: { end: 0 | 1 } } {
+  const exit = { end: 0 as 0 | 1 };
+  const next = (): number => (exit.end === 0 ? 0.25 : 0.75);
+  return { rng: { next, int: (n) => Math.floor(next() * n) }, exit };
+}
+
+/** The exit end that starts chord (tile, c) heading out through point `to`. */
+function exitThrough(tile: number, c: number, to: { x: number; y: number }): 0 | 1 {
+  const b = startStep(FIELD, TABLE, tile, c, 1).b;
+  return Math.abs(b.x - to.x) < 1e-9 && Math.abs(b.y - to.y) < 1e-9 ? 1 : 0;
 }
 
 function tapChord(e: Engine, id: string, tile: number, chord: number) {
@@ -85,5 +98,81 @@ describe('the field edge', () => {
     // The smaller side: at most half the field.
     expect(area).toBeLessThanOrEqual((FIELD.count * FIELD.tileArea) / 2 + 1e-6);
     expect(e.snapshot().paths[0].region).toEqual(circuit.region);
+  });
+
+  it('a line that meets the loose end of your own line joins it; two dead ends make one edge-to-edge claim', () => {
+    const { rng, exit } = steered();
+    const e = new Engine(FIELD, { ...DEFAULT_KNOBS, junctionPolicy: 'stop' }, rng);
+    e.addPlayer('a', 'Ann', FASS);
+    const { tile, chord } = edgeToEdge();
+    const fwd = walkStrand(FIELD, TABLE, tile, chord, 1);
+
+    // A: from the middle chord back to one edge.
+    exit.end = 0;
+    const a = tapChord(e, 'a', tile, chord).result;
+    if (!a.ok) throw new Error('tap A refused');
+    run(e, (all) => all.some((x) => x.t === 'status' && x.path === a.path));
+    const lineA = e.getPath(a.path)!;
+    expect(lineA.status).toBe('stuck');
+
+    // B: further along the strand, heading back towards A's loose start.
+    const k = 3;
+    const bs = fwd.steps[k];
+    exit.end = exitThrough(bs.tile, bs.chord, bs.a);
+    const b = tapChord(e, 'a', bs.tile, bs.chord).result;
+    if (!b.ok) throw new Error('tap B refused');
+    const joined = run(e, (all) => all.some((x) => x.t === 'wipe' && x.path === a.path));
+    expect(joined).toContainEqual({ t: 'wipe', path: a.path, owner: 'a' });
+    const lineB = e.getPath(b.path)!;
+    expect(e.getPath(a.path)).toBeUndefined();
+    expect(e.players.get('a')!.paths).toEqual([lineB]);
+    run(e, () => lineB.status !== 'growing');
+    expect(lineB.status).toBe('stuck');
+    // B took A's steps once: no chord twice, and every tile scored once.
+    const keys = lineB.steps.map((q) => `${q.tile}:${q.chord}`);
+    expect(new Set(keys).size).toBe(keys.length);
+    expect(e.players.get('a')!.score).toBe(lineB.steps.length * DEFAULT_KNOBS.pointsPerTile);
+
+    // Turned round, it runs to the other edge and claims.
+    const turn = e.tap('a', lineB.steps[0].tile, tileCenter(FIELD, lineB.steps[0].tile));
+    expect(turn.result).toEqual({ ok: true, path: b.path });
+    const ev = run(e, (all) => all.some((x) => x.t === 'circuit' || (x.t === 'status' && x.path === b.path)));
+    const circuit = ev.find((x) => x.t === 'circuit');
+    if (circuit?.t !== 'circuit') throw new Error('no claim');
+    expect(circuit.region).toBeDefined();
+    expect(lineB.status).toBe('closed');
+    expect(lineB.steps.length).toBe(fwd.steps.length + walkStrand(FIELD, TABLE, tile, chord, 0).steps.length - 1);
+  });
+
+  it('a line stops as soon as it runs into another of your lines', () => {
+    const { rng, exit } = steered();
+    const e = new Engine(FIELD, { ...DEFAULT_KNOBS, junctionPolicy: 'stop', crossingMode: 'tile' }, rng);
+    e.addPlayer('a', 'Ann', FASS);
+    // A tile with two chords on different strands; B's approach avoids A's strand.
+    let setup: { t: number; bTile: number; bChord: number; toward: { x: number; y: number } } | null = null;
+    for (let t = 0; t < FIELD.count && !setup; t++) {
+      if (tileChords(FIELD, TABLE, t).length < 2) continue;
+      const aTiles = new Set([
+        ...walkStrand(FIELD, TABLE, t, 0, 0).steps.map((q) => q.tile),
+        ...walkStrand(FIELD, TABLE, t, 0, 1).steps.map((q) => q.tile),
+      ]);
+      const wb = walkStrand(FIELD, TABLE, t, 1, 0);
+      if (wb.steps.length < 3 || aTiles.has(wb.steps[1].tile) || aTiles.has(wb.steps[2].tile)) continue;
+      setup = { t, bTile: wb.steps[2].tile, bChord: wb.steps[2].chord, toward: wb.steps[2].a };
+    }
+    if (!setup) throw new Error('no crossing tile');
+    exit.end = 0;
+    const a = tapChord(e, 'a', setup.t, 0).result;
+    if (!a.ok) throw new Error('tap A refused');
+    run(e, () => e.getPath(a.path)!.status !== 'growing');
+    exit.end = exitThrough(setup.bTile, setup.bChord, setup.toward);
+    const b = tapChord(e, 'a', setup.bTile, setup.bChord).result;
+    if (!b.ok) throw new Error('tap B refused');
+    run(e, () => e.getPath(b.path)!.status !== 'growing');
+    const lineB = e.getPath(b.path)!;
+    expect(lineB.status).toBe('stuck');
+    expect(lineB.steps.length).toBe(2);
+    expect(lineB.steps.some((q) => q.tile === setup!.t)).toBe(false);
+    expect(e.getPath(a.path)).toBeDefined();
   });
 });

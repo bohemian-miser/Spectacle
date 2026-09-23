@@ -22,6 +22,10 @@
  *    start of a line that ran off the edge of the field turns it round to
  *    grow the other way. A line that runs edge to edge closes like a circuit
  *    and claims the smaller side of the board it cuts off;
+ *  - a growing line that runs into another of its owner's lines stops, unless
+ *    it meets that line's loose end on the same chord: then they join into one
+ *    (the other's steps and points fold in), so two lines that ran off the
+ *    edge make one edge-to-edge claim;
  *  - a player has at most `maxHeads` growing lines, and losing one in a
  *    collision blocks the next tap for `respawnDelayMs`;
  *  - closing a circuit round a rival's line takes that line's pattern: it
@@ -114,6 +118,10 @@ function sameRule(a: PlayerRule, b: PlayerRule): boolean {
     a.matching.length === b.matching.length &&
     a.matching.every((x, i) => x === b.matching[i])
   );
+}
+
+function samePt(a: Pt, b: Pt): boolean {
+  return Math.abs(a.x - b.x) < 1e-6 && Math.abs(a.y - b.y) < 1e-6;
 }
 
 export class Engine {
@@ -352,10 +360,87 @@ export class Engine {
       this.setStatus(path, 'stuck', ev);
       return;
     }
-    if (!this.addStep(p, path, s, ev)) return; // died in a collision
+    const own = this.meetOwn(p, path, s);
+    if (own === 'stop') {
+      this.setStatus(path, 'stuck', ev);
+      return;
+    }
+    if (own) this.join(p, path, own, ev);
+    else if (!this.addStep(p, path, s, ev)) return; // died in a collision
     if (this.knobs.maxPathLength > 0 && path.steps.length >= this.knobs.maxPathLength) {
       this.setStatus(path, 'stuck', ev);
     }
+  }
+
+  /**
+   * Does step `s` of `path` run into another of its owner's lines? Null when
+   * the way is clear. When `s` is the loose end of a line of the same pattern
+   * (the same chord, entered from outside), the two join: returns that line,
+   * with its steps oriented to carry on from `s`. Any other meeting — a
+   * crossing, a touch, the middle of a line — stops the path ('stop').
+   */
+  private meetOwn(p: Player, path: Path, s: WalkStep): { other: Path; tail: WalkStep[] } | 'stop' | null {
+    const occ = this.occupancy.get(s.tile);
+    if (!occ) return null;
+    const mine: [Pt, Pt] = [s.a, s.b];
+    let met = false;
+    for (const other of occ) {
+      if (other.owner !== p.id || other === path) continue;
+      if (other.status !== 'closed' && sameRule(other.rule, path.rule)) {
+        const first = other.steps[0];
+        const last = other.steps[other.steps.length - 1];
+        let tail: WalkStep[] | null = null;
+        if (first.tile === s.tile && first.chord === s.chord && samePt(first.a, s.a)) tail = other.steps.slice();
+        else if (last.tile === s.tile && last.chord === s.chord && samePt(last.b, s.a)) {
+          tail = other.steps.map((q) => ({ tile: q.tile, chord: q.chord, a: q.b, b: q.a })).reverse();
+        }
+        // Joining must not run back over the path itself.
+        if (tail && !tail.some((t) => path.steps.some((q) => q.tile === t.tile && q.chord === t.chord))) {
+          return { other, tail };
+        }
+      }
+      if (this.knobs.crossingMode === 'tile') met = true;
+      for (const q of other.steps) {
+        if (met) break;
+        if (q.tile !== s.tile) continue;
+        met = chordsConflict(mine, worldChord(this.field, other.table, q.tile, q.chord), this.knobs.touchCounts);
+      }
+      if (met) return 'stop';
+    }
+    return null;
+  }
+
+  /**
+   * Two of a player's lines meet end to end: `other` is folded into `path`
+   * (its steps appended, its points carried over — nothing is scored twice) and
+   * leaves the board. The joined line grows on from `other`'s far end, so two
+   * lines that each ran off the edge become one edge-to-edge claim.
+   */
+  private join(p: Player, path: Path, meet: { other: Path; tail: WalkStep[] }, ev: GameEvent[]): void {
+    const { other, tail } = meet;
+    const i = p.paths.indexOf(other);
+    if (i >= 0) p.paths.splice(i, 1);
+    this.pathsById.delete(other.id);
+    for (const q of other.steps) {
+      const occ = this.occupancy.get(q.tile);
+      if (!occ) continue;
+      occ.delete(other);
+      if (occ.size === 0) this.occupancy.delete(q.tile);
+    }
+    other.status = 'stuck';
+    other.progress = 0;
+    ev.push({ t: 'wipe', path: other.id, owner: other.owner });
+    for (const q of tail) {
+      ev.push(this.stepEvent(p, path, q));
+      path.steps.push(q);
+      let occ = this.occupancy.get(q.tile);
+      if (!occ) {
+        occ = new Set();
+        this.occupancy.set(q.tile, occ);
+      }
+      occ.add(path);
+    }
+    path.points += other.points;
   }
 
   /** Extend `path` by one step. Returns false when the step was a fatal collision. */
