@@ -67,6 +67,15 @@ export interface Knobs {
   tapOntoOthers: boolean;
   /** May a tap land inside a rival's closed circuit? */
   tapInsideRivalCircuits: boolean;
+  /**
+   * What your own lines do to each other. Off: a growing line that runs into
+   * another of yours stops there, and a tap may start on any chord of a tile
+   * none of your lines is on or crosses. On: it grows on over the top, but a
+   * tap may not start on a tile any of your lines passes through at all — so
+   * layered lines have to be started off to the side, and a rival must cut
+   * each of them.
+   */
+  overlapOwnLines: boolean;
 
   // --- housekeeping --------------------------------------------------------
   /** Closed circuits a player keeps on the board, oldest dropped first (0 = unlimited). */
@@ -107,6 +116,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   mutualCut: true,
   tapOntoOthers: false,
   tapInsideRivalCircuits: false,
+  overlapOwnLines: false,
 
   maxCompletedCircuits: 0,
   maxLivePaths: 0,

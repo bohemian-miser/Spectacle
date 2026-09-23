@@ -27,7 +27,9 @@
  *  - a growing line that runs into another of its owner's lines stops, unless
  *    it meets that line's loose end on the same chord: then they join into one
  *    (the other's steps and points fold in), so two lines that ran off the
- *    edge make one edge-to-edge claim;
+ *    edge make one edge-to-edge claim. With `overlapOwnLines` it grows on
+ *    over the top instead (joins still happen), and a tap may not start on
+ *    any tile one of the player's lines passes through;
  *  - a player has at most `maxHeads` growing lines, and losing one in a
  *    collision blocks the next tap for `respawnDelayMs`;
  *  - closing a circuit round a rival's line takes that line's pattern: it
@@ -314,7 +316,8 @@ export class Engine {
 
   /**
    * The chord of `tile` nearest `at` that player `id` may start on: none of
-   * their own lines on it or crossing it, nor a rival's unless `tapOntoOthers`.
+   * their own lines on it or crossing it (with `overlapOwnLines`, none of
+   * their lines on the tile at all), nor a rival's unless `tapOntoOthers`.
    * When every chord is blocked, the reason (for the chord nearest `at`).
    */
   private freeChord(id: string, table: ChordTable, tile: number, at: Pt): number | string {
@@ -342,6 +345,7 @@ export class Engine {
     let rival = false;
     for (const other of occ) {
       const mine = other.owner === id;
+      if (mine && this.knobs.overlapOwnLines) return 'you already have a line on this tile';
       if (!mine && this.knobs.tapOntoOthers) continue;
       if (!this.pathMeets(other, tile, seg)) continue;
       if (mine) return "that's your own line";
@@ -433,7 +437,8 @@ export class Engine {
    * the way is clear. When `s` is the loose end of a line of the same pattern
    * (the same chord, entered from outside), the two join: returns that line,
    * with its steps oriented to carry on from `s`. Any other meeting — a
-   * crossing, a touch, the middle of a line — stops the path ('stop').
+   * crossing, a touch, the middle of a line — stops the path ('stop'), unless
+   * `overlapOwnLines` lets it grow on over the top (null).
    */
   private meetOwn(p: Player, path: Path, s: WalkStep): { other: Path; tail: WalkStep[] } | 'stop' | null {
     const occ = this.occupancy.get(s.tile);
@@ -454,7 +459,7 @@ export class Engine {
           return { other, tail };
         }
       }
-      if (this.pathMeets(other, s.tile, mine)) return 'stop';
+      if (!this.knobs.overlapOwnLines && this.pathMeets(other, s.tile, mine)) return 'stop';
     }
     return null;
   }
