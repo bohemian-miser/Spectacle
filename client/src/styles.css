@@ -27,6 +27,11 @@
   --tile-lift: -30;
   --tile-lift-closed: -55;
   --strand-darken: 0.28;
+  /* Team colours (settings: "You blue, everyone else red", key T): the one
+     hue for all of yours and the one for every rival. Deepened on the light
+     board by --strand-darken like any player colour, so keep them hsl(). */
+  --team-me: hsl(214, 92%, 60%);
+  --team-rival: hsl(2, 88%, 60%);
   /* The edge-class colours are pastel, so an unselected chip needs more of
      itself on white than it does on the dark panel. */
   --chip-off: 0.8;
