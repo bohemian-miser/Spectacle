@@ -39,7 +39,7 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
                   events (step/wipe/circuit/score/status/join/leave/rule/
-                  capture/take/swap/active/refused). Client → server adds
+                  capture/take/swap/active/split/refused). Client → server adds
                   `pattern` and `swap`.
 server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
                   dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
@@ -144,18 +144,34 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   Tests that pin the older mode set `overlapOwnLines: false`.
 - **Flip, don't layer, across your own patterns** (`flipOwnLines: true`, the
   default, on top of `overlapOwnLines`). Your lines of different patterns
-  never share a tile: a line you started (growing, or its tap) reaching a tile
-  one of your lines of another pattern is on removes that whole line (`wipe`,
-  no `by`; its points fold into the flipper — zero-sum, nothing re-scored),
-  redraws every tile it was on with the flipper's chords (`sprout`: every
-  chord there no line meets, strung into runs) and each run becomes a
-  `spawned` line (`step.spawned`, `PathWire.spawned`) that grows outward from
-  both ends (`twoWay`: turns round once when its head stops). Spawned lines
-  don't count against heads (`headsInUse`) or trigger respawn delay, and they
-  never flip anything — they stop at another of your patterns. That is what
-  keeps it from cascading: a soak with flipping pieces ran to ~80k pieces in
-  five minutes on hex. Same-pattern meetings (joins, running over) are
-  unchanged. Tests that pin layering set `flipOwnLines: false`.
+  never share a tile. Every path has a `wave` (tap order; pieces inherit the
+  flipper's): where two of a player's patterns meet on a tile (`flipTile`,
+  after the step lands — the mover can be either side), the higher wave wins.
+  Each loser loses its steps on that tile (`splitOff` → `split` event: the
+  path is replaced by runs of its old step indices, a loop opens by wrapping,
+  first run keeps the id; `trimEnds` is the in-place fast path when only an
+  end went), its points fold into the winner (zero-sum, nothing re-scored),
+  and the winner's chords sprout there (`sprout`) as `spawned` pieces
+  (`step.spawned`, `PathWire.spawned`) that grow both ways (`twoWay`). The
+  loser's runs then `burn`: from each end next to a gap, a tile per owner
+  step (same `stepIntervalMs` as growth), each tile flipping and sprouting,
+  until the whole old line is the new pattern. Pieces flip whatever older
+  pattern they reach, so a flip spreads through everything of yours it
+  touches: recursive, at your speed, no stubs left at your other patterns.
+  Newer always beats older, so it settles. Spawned lines don't count against
+  heads (`headsInUse`) or trigger the respawn delay, but all of a player's
+  pieces *share* `flipPieceHeads` (1) heads' worth of growth, round robin
+  (`growPieces`) — without that a flip seeds dozens of free full-speed heads
+  and a bot stress covered ~72k chords of a hex-5 board in 100 s. A piece
+  that reaches a chord its own pattern already holds stops (running on would
+  only double the line); two pieces meeting end to end join, the shorter
+  folded into the longer (`foldInto`: `reverse`, steps, `reverse` — far
+  fewer events than re-sending the long one). A burn whose pattern was
+  swapped out stops; a taken line stops burning. An edge-to-edge claim is
+  `closed` but not a loop — never wrap it (`loop = closed && !region`).
+  `tests/flip.test.ts` replays a flip-heavy bot game into the client `Store`
+  and checks it matches the engine line for line; keep it green when
+  touching any of this. Tests that pin layering set `flipOwnLines: false`.
 - **Captured patterns.** Closing a circuit (loop or edge-to-edge region)
   round a rival's line — every step's midpoint inside — takes that line's
   rule into your `patterns` (index 0 is always your own rule; captures are

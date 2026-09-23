@@ -113,6 +113,17 @@ export type GameEvent =
   /** `id` switched the pattern their taps draw with. */
   | { readonly t: 'active'; readonly id: string; readonly active: number }
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }
+  /**
+   * A flip took some of `path`'s steps: it is replaced by `runs`, each the
+   * old steps `start` ≤ i < `end` (indices mod its length — a loop opens by
+   * wrapping round), same owner, pattern and `spawned`. The first run reuses
+   * the id. A closed path's circuit is gone.
+   */
+  | {
+      readonly t: 'split';
+      readonly path: number;
+      readonly runs: readonly { readonly id: number; readonly start: number; readonly end: number; readonly status: PathStatus }[];
+    }
   /** A line that ran off the board turned round: its steps now run the other way, and it grows again. */
   | { readonly t: 'reverse'; readonly path: number }
   /** A path was cut (`by`, in a collision at `at`) or abandoned (`by` absent) and is gone. */
