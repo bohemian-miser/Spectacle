@@ -13,7 +13,7 @@ import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand'
 import { getSettings, type CircuitStyle, type Settings } from './settings';
 import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
 import type { Camera } from './camera';
-import type { ClientPath, Store } from './store';
+import type { Burst, ClientPath, Store } from './store';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
@@ -45,6 +45,11 @@ const MAGMA: readonly (readonly [number, number, number])[] = [
 export const PATTERN_MIN_SCALE = ARROW_MIN_SCALE * 1.3;
 const PATTERN_FADE = 16;
 const PATTERN_ALPHA = 0.35;
+
+/** How long a cut line takes to fade off the board, and a collision's sparks to die out (ms). */
+const FADE_MS = 650;
+const SPARK_MS = 480;
+const SPARKS = 7;
 
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
@@ -437,9 +442,10 @@ export class Renderer {
     ctx.lineJoin = 'round';
     if (this.plain) this.drawOutline(toScreen);
     this.drawPattern(toScreen, box);
-    const drawPath = (path: ClientPath, mine: boolean): void => {
-      const color = store.pathColor(path);
+    /** `fade` < 1: a line cut in a collision on its way out (no head, no cross). */
+    const drawPath = (path: ClientPath, mine: boolean, fade = 1, color = store.pathColor(path)): void => {
       if (!color || path.steps.length === 0) return;
+      ctx.globalAlpha = fade;
       const w = Math.max(1.5, 0.14 * s) * (mine ? 1.35 : 1);
       ctx.beginPath();
       let pen = false;
@@ -472,9 +478,10 @@ export class Renderer {
           : darkenCss(this.closedLook(path, color)[0], 0.3);
       ctx.strokeStyle = ink;
       ctx.lineWidth = w;
-      ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;
+      ctx.globalAlpha = (path.status === 'stuck' ? 0.6 : 1) * fade;
       ctx.stroke();
       ctx.globalAlpha = 1;
+      if (fade < 1) return;
       const last = path.steps[path.steps.length - 1];
       if (path.status === 'growing' && inView(last.b.x, last.b.y)) {
         const [hx, hy] = toScreen(last.b.x, last.b.y);
@@ -502,5 +509,75 @@ export class Renderer {
     };
     for (const path of store.paths.values()) if (path.owner !== store.you) drawPath(path, false);
     for (const path of store.paths.values()) if (path.owner === store.you) drawPath(path, true);
+    const now = performance.now();
+    if (store.dying.length > 0) {
+      store.dying = store.dying.filter((d) => now - d.born < FADE_MS);
+      for (const d of store.dying) {
+        const k = 1 - (now - d.born) / FADE_MS;
+        drawPath(d.path, d.mine, k * k, d.color);
+      }
+    }
+    if (store.bursts.length > 0) {
+      store.bursts = store.bursts.filter((b) => now - b.born < SPARK_MS);
+      for (const b of store.bursts) if (inView(b.at.x, b.at.y)) this.drawBurst(b, now, toScreen);
+    }
   }
+
+  /**
+   * A collision's kaput: a quick flash and a few sparks flung out from where
+   * the lines met, slowing as they go and burning out. Each cut line throws
+   * its own, in its own colour, so a two-way crash sprays both.
+   */
+  private drawBurst(b: Burst, now: number, toScreen: (x: number, y: number) => [number, number]): void {
+    const ctx = this.ctx;
+    const u = (now - b.born) / SPARK_MS;
+    const [cx, cy] = toScreen(b.at.x, b.at.y);
+    // Tiny on the board, but never smaller than a few pixels when zoomed out.
+    const reach = Math.max(18 * this.dpr, 1.2 * this.camera.scale * this.dpr);
+    const w = Math.max(2 * this.dpr, 0.08 * this.camera.scale * this.dpr);
+    const ink = strandColor(this.board, b.color);
+    // The pop: a ring that swells and thins out in the first third.
+    if (u < 0.35) {
+      const f = u / 0.35;
+      ctx.beginPath();
+      ctx.arc(cx, cy, reach * (0.12 + 0.38 * f), 0, Math.PI * 2);
+      ctx.globalAlpha = 1 - f;
+      ctx.strokeStyle = this.board.haloCss;
+      ctx.lineWidth = w * (1 - f) * 2 + w;
+      ctx.stroke();
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = w * (1 - f) * 2;
+      ctx.stroke();
+    }
+    const out = 1 - (1 - u) * (1 - u) * (1 - u); // ease out: fast, then drifting
+    const tail = 0.3 * (1 - u);
+    let r = Math.imul(b.seed + 1, 2654435761) >>> 0;
+    const rand = (): number => {
+      r = (Math.imul(r ^ (r >>> 15), 2246822519) + 0x9e3779b9) >>> 0;
+      return r / 4294967296;
+    };
+    const turn = rand() * Math.PI * 2;
+    ctx.beginPath();
+    for (let i = 0; i < SPARKS; i++) {
+      const ang = turn + ((i + rand() * 0.7) / SPARKS) * Math.PI * 2;
+      const len = reach * (0.55 + 0.45 * rand());
+      const dx = Math.cos(ang);
+      const dy = Math.sin(ang);
+      const d1 = len * out;
+      const d0 = Math.max(0, d1 - len * tail);
+      ctx.moveTo(cx + dx * d0, cy + dy * d0);
+      ctx.lineTo(cx + dx * d1, cy + dy * d1);
+    }
+    // Cased like a strand, so the sparks show over the saturated tiles.
+    const k = 1 - u * 0.6;
+    ctx.globalAlpha = 1 - u * u;
+    ctx.strokeStyle = this.board.haloCss;
+    ctx.lineWidth = w * k + Math.max(2, w * 0.8);
+    ctx.stroke();
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = w * k;
+    ctx.stroke();
+    ctx.globalAlpha = 1;
+  }
+
 }
