@@ -192,8 +192,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   taps, `tilesInsidePolygon`). Tiles the loop passes through get the strong
   tint; the enclosed free tiles get a fainter wash, cached per closed path.
 - **The rule pattern** (your chords, faint, on tiles no rival's line touches —
-  your own lines' tiles included — and not inside a rival's circuit) draws on the overlay past `PATTERN_MIN_SCALE`
-  (1.3 × `ARROW_MIN_SCALE`) and fades in over the next 16 of scale.
+  your own lines' tiles included — and not inside a rival's circuit) draws on
+  the overlay past `PATTERN_MIN_SCALE` (1.3 × `ARROW_MIN_SCALE`, divided by
+  1.5 for 50% more render distance — it now shows before the direction
+  arrows, not after) and fades in over the next 16 of scale.
 - **A theme change has to reach the canvas.** CSS restyles the DOM by itself;
   the board does not. `Arena` hands the renderer the new `BoardTheme`, which
   re-fills the tile layer and invalidates the tints (their lift is per-scheme).
