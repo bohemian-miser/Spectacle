@@ -42,7 +42,7 @@ const MAGMA: readonly (readonly [number, number, number])[] = [
   [28, 12, 60],
 ];
 
-export const PATTERN_MIN_SCALE = ARROW_MIN_SCALE * 1.3;
+export const PATTERN_MIN_SCALE = (ARROW_MIN_SCALE * 1.3) / 1.5;
 const PATTERN_FADE = 16;
 const PATTERN_ALPHA = 0.35;
 
