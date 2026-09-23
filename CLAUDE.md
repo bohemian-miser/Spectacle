@@ -51,7 +51,10 @@ client/src/       Vite + React.
   Arena.tsx       Two stacked canvases + pointer handling + HUD.
   theme.ts        Light/dark: data-theme on <html>, localStorage, ?theme=,
                   and readBoardTheme() — the canvas half of the scheme, read
-                  back out of the CSS tokens. ThemeToggle.tsx is the button.
+                  back out of the CSS tokens.
+  settings.ts     Board display settings (localStorage): circuit style a–e
+                  (?circuits= overrides), plain board. SettingsButton.tsx is
+                  the ⚙ button + modal (theme, circuit colours, plain board).
   styles.css      Spectre's explorer tokens, both schemes, incl. the board
                   knobs (--tile-*, --board-*, --strand-darken).
   render.ts       Camera, tint sync, Canvas2D strand overlay.
@@ -129,7 +132,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Theme = Spectre's palette**, light by default. styles.css is the one place
   colours live; the canvas reads the `--tile-*` / `--board-*` / `--strand-darken`
   tokens through `readBoardTheme()` rather than keeping its own copy. Nothing
-  auto-switches on `prefers-color-scheme` — the toggle decides.
+  auto-switches on `prefers-color-scheme` — the settings modal decides.
 
 ## Traps
 
@@ -181,6 +184,13 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   no darkening (`--tile-lift-closed` is unused on the board now). Interior
   washes stack with Porter–Duff "over", outermost first, and each extra level
   of nesting sinks the wash 14% deeper, so nesting reads even in one hue.
+- **Settings apply live.** The modal never has a Save: every control writes
+  through `updateSettings` / `setTheme`, and `Arena` hands the renderer the new
+  `Settings` (`setSettings`), which drops the per-path look cache and re-tints.
+  The plain board swaps every tile fill for the ground colour, turns off the
+  arrows (`TileLayer.setArrows`) and strokes `fieldOutline` on the overlay; the
+  zoomed-in tile outlines and your rule's pattern stay. On a level-6 arena the
+  first plain frame pays the ~1.5 s outline build in the browser.
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
   the old one dies (only its SHA-256 is kept server-side). A resume can take
   over a player whose old socket is still open — a refresh usually beats the

@@ -70,8 +70,14 @@ Xi yellow, the Gammas white, Pi sky blue, Phi green — on the board, in the rul
 lab and in the patch preview alike, and the panels around them use the
 explorer's tokens, so the two sites look like one.
 
-**Light or dark.** The button in the lobby header (and in the arena HUD) flips
-the whole game, board included: outlines, the halo on your line and how far the
+**Settings.** The ⚙ button in the lobby header (and in the arena HUD) opens a
+small panel; every change applies at once, behind it. **Circuit colours**
+picks how loops and the areas inside them are shaded (A owner ramp, B length
+palette, C depth bands, D contour stripes, E depth heatmap; `?circuits=a…e`
+forces one). **Plain board** hides the tile colours and arrows, leaving the
+arena's edge, the faint tile outlines when zoomed in and your rule's pattern.
+
+**Light or dark** (also in Settings) flips the whole game, board included: outlines, the halo on your line and how far the
 tiles are sat back are part of the scheme, not just the panels. Light shows the
 tile colours as they are; dark dims them together — the hues never move — so the
 strands on top still carry. Light is the default; your choice is remembered in

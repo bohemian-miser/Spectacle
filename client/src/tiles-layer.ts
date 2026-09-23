@@ -21,6 +21,8 @@ export interface TileLayer {
   clearTints(): void;
   /** 0..255 channels; `a` is the tint strength. */
   setTint(tile: number, r: number, g: number, b: number, a: number): void;
+  /** Show or hide the direction arrows (the plain board hides them). */
+  setArrows(on: boolean): void;
   draw(cam: Camera, width: number, height: number, dpr: number): void;
   dispose(): void;
 }

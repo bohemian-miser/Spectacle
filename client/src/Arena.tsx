@@ -13,7 +13,8 @@ import type { Store } from './store';
 import { helpSeen, markHelpSeen } from './session';
 import { boardTheme, useTheme } from './theme';
 import { strandColor } from './tiles-layer';
-import { ThemeToggle } from './ThemeToggle';
+import { SettingsButton } from './SettingsButton';
+import { useSettings } from './settings';
 import { useStore } from './useStore';
 
 export interface ArenaProps {
@@ -46,6 +47,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   // `theme` is the dep, not the source: the palette follows what is on <html>.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const scheme = useMemo(() => boardTheme(), [theme]);
+  const [settings] = useSettings();
   useStore(store);
 
   useEffect(() => {
@@ -84,6 +86,11 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   useEffect(() => {
     rendererRef.current?.setTheme(scheme);
   }, [scheme]);
+
+  // Settings apply live, behind the open modal.
+  useEffect(() => {
+    rendererRef.current?.setSettings(settings);
+  }, [settings]);
 
   const tap = (sx: number, sy: number): void => {
     const r = rendererRef.current;
@@ -186,7 +193,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
             New rule
           </button>
-          <ThemeToggle />
+          <SettingsButton />
         </div>
       </div>
 

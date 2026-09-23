@@ -270,6 +270,7 @@ export function createGlTiles(
   let typeFills = fills;
   let scheme = board;
   let tintsDirty = false;
+  let arrows = true;
   const tinted: number[] = [];
 
   return {
@@ -279,6 +280,9 @@ export function createGlTiles(
         canvas.width = pw;
         canvas.height = ph;
       }
+    },
+    setArrows(on) {
+      arrows = on;
     },
     setTheme(next, nextFills) {
       scheme = next;
@@ -330,7 +334,7 @@ export function createGlTiles(
         }
       }
       // Arrows last, so a claimed tile keeps its direction.
-      if (arrowVao && cam.scale > ARROW_MIN_SCALE) {
+      if (arrowVao && arrows && cam.scale > ARROW_MIN_SCALE) {
         gl.bindVertexArray(arrowVao);
         gl.uniform4f(loc.fill, scheme.ink[0], scheme.ink[1], scheme.ink[2], scheme.arrowAlpha);
         gl.uniform1f(loc.useTint, 0);
