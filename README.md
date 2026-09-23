@@ -53,8 +53,9 @@ you.
    (`tapOntoOthers`, `tapInsideRivalCircuits`); you have to grow into them.
    Closed circuits darken with their length on the board, and wash the tiles
    they enclose in their owner's colour; the washes stack, so a circuit inside
-   a circuit shows deeper. Your own circuits each lean their hue a little and
-   darken over a wider range, so you can tell them apart.
+   a circuit shows deeper. Your own circuits take their colour from their
+   length — short loops pale, long ones deep, the hue walking as they grow —
+   so loops of different sizes, and loops inside loops, stand apart.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
 **Which way a tile is turned.** Every hexagon in the arena is the same regular

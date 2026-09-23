@@ -110,26 +110,33 @@ export function circuitDarkening(length: number): number {
 }
 
 /**
- * Your own circuits, told apart: each one leans its hue a little off your
- * colour (up to ±`OWN_HUE_SPREAD`°, fixed per circuit) and darkens over a
- * wider range than a rival's — with length, plus a per-circuit nudge — so a
- * board full of your loops reads as a family rather than one flat colour.
+ * Your own circuits, told apart by length. A loop's length (log scale, 8 to
+ * ~4000 steps) walks both its hue — `OWN_HUE_SPAN`° across the range, centred
+ * on your colour — and its lightness, pale for short loops, deep for long
+ * ones. Equal lengths still differ by a few degrees (per circuit id), so two
+ * neighbouring loops never merge into one blob. The result is the colour
+ * itself: no lift, no further darkening.
  */
-const OWN_HUE_SPREAD = 22;
+const OWN_HUE_SPAN = 150;
+const OWN_LIGHT = [80, 30] as const;
 
 /** A stable 0..1 per circuit (golden-ratio walk over the path id). */
 function circuitJitter(id: number): number {
   return (id * 0.6180339887498949) % 1;
 }
 
-export function ownCircuitColor(css: string, id: number): string {
-  return shiftHue(css, (circuitJitter(id) * 2 - 1) * OWN_HUE_SPREAD);
+/** Where a loop of `length` steps sits on the ramp, 0 (short) to 1 (long). */
+export function circuitLengthT(length: number): number {
+  return Math.max(0, Math.min(1, (Math.log2(Math.max(1, length)) - 3) / 9));
 }
 
-export function ownCircuitDarkening(length: number, id: number): number {
-  const byLength = 0.62 * Math.min(1, Math.log2(Math.max(1, length)) / 10);
-  const nudge = (circuitJitter(id * 7 + 3) - 0.5) * 0.2;
-  return Math.max(0.05, Math.min(0.7, byLength + nudge));
+export function ownCircuitColor(css: string, length: number, id: number): string {
+  const m = /hsl\(\s*([\d.]+)\s*,\s*([\d.]+)%/.exec(css);
+  if (!m) return css;
+  const t = circuitLengthT(length);
+  const h = (((Number(m[1]) + (t - 0.5) * OWN_HUE_SPAN + (circuitJitter(id) - 0.5) * 16) % 360) + 360) % 360;
+  const l = OWN_LIGHT[0] + (OWN_LIGHT[1] - OWN_LIGHT[0]) * t;
+  return `hsl(${h.toFixed(1)}, ${m[2]}%, ${l.toFixed(1)}%)`;
 }
 
 /** Turn an `hsl(…)` colour round the wheel by `deg`; any other form comes back as is. */

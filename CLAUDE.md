@@ -175,8 +175,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   (the shape is identical for every leaf type).
 - **`fieldOutline` is ~1.5 s at hex level 6.** The server and solo build it at
   startup so the first edge-to-edge claim doesn't stall a tick.
-- **Your own circuits vary** (`ownCircuitColor` / `ownCircuitDarkening`, keyed
-  on the path id): a hue lean of up to ±22° and a wider darkening range.
+- **Your own circuits are coloured by length** (`ownCircuitColor`): log length
+  walks the hue across 150° and the lightness from 80% to 30%, plus a few
+  degrees per circuit id. The colour is final — no lift, no darkening — so
+  the light board's `liftClosed` can't sink them all into one dark blob.
   Rivals' circuits keep `circuitDarkening`. Interior washes stack with
   Porter–Duff "over", outermost first, so nesting reads deeper.
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and

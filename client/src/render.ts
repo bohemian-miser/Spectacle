@@ -18,8 +18,8 @@ import { createGlTiles } from './tiles-gl';
 import {
   ARROW_MIN_SCALE,
   circuitDarkening,
+  darkenCss,
   ownCircuitColor,
-  ownCircuitDarkening,
   parseColor,
   strandColor,
   typeFill,
@@ -204,7 +204,7 @@ export class Renderer {
       }
       if (pick === null) continue;
       const [r, g, b] = this.tintOf(pick);
-      tiles.setTint(tile, r, g, b, pick.owner === store.you ? 115 : 85);
+      tiles.setTint(tile, r, g, b, pick.owner === store.you ? (pick.status === 'closed' ? 170 : 115) : 85);
     }
     // Interior wash: the free tiles a closed circuit encloses take its owner's
     // colour, fainter than the loop itself. Washes stack: outer circuits go
@@ -228,7 +228,7 @@ export class Renderer {
     const wash = new Map<number, [number, number, number, number]>();
     for (const { path, inside } of closed) {
       const [r, g, b] = this.tintOf(path);
-      const a = path.owner === store.you ? 0.3 : 0.22;
+      const a = path.owner === store.you ? 0.38 : 0.22;
       for (const t of inside) {
         if (store.occupancy.has(t)) continue;
         const under = wash.get(t);
@@ -245,7 +245,7 @@ export class Renderer {
         under[3] = oa;
       }
     }
-    for (const [t, [r, g, b, a]] of wash) tiles.setTint(t, r, g, b, Math.min(210, a * 255));
+    for (const [t, [r, g, b, a]] of wash) tiles.setTint(t, r, g, b, Math.min(225, a * 255));
   }
 
   /**
@@ -265,7 +265,9 @@ export class Renderer {
       this.rgbCache.set(css, rgb);
     }
     const k = 1 - dark;
-    const lift = closed ? this.board.liftClosed : this.board.lift;
+    // Your own circuits carry their lightness in the colour itself (the length ramp).
+    const own = closed && path.owner === this.store.you;
+    const lift = own ? 0 : closed ? this.board.liftClosed : this.board.lift;
     const ch = (c: number): number => Math.max(0, Math.min(255, (c + lift) * k));
     return [ch(rgb[0]), ch(rgb[1]), ch(rgb[2])];
   }
@@ -276,7 +278,7 @@ export class Renderer {
     if (hit && hit[0] === color) return hit[1];
     const look: [string, number] =
       path.owner === this.store.you
-        ? [ownCircuitColor(color, path.id), ownCircuitDarkening(path.steps.length, path.id)]
+        ? [ownCircuitColor(color, path.steps.length, path.id), 0]
         : [color, circuitDarkening(path.steps.length)];
     this.looks.set(path, [color, look]);
     return look;
@@ -371,7 +373,12 @@ export class Renderer {
         ctx.lineWidth = w + Math.max(2, 0.08 * s);
         ctx.stroke();
       }
-      const ink = path.status === 'closed' ? strandColor(this.board, ...this.closedLook(path, owner.color)) : strandColor(this.board, owner.color);
+      const ink =
+        path.status !== 'closed'
+          ? strandColor(this.board, owner.color)
+          : mine
+            ? darkenCss(this.closedLook(path, owner.color)[0], 0.3)
+            : strandColor(this.board, ...this.closedLook(path, owner.color));
       ctx.strokeStyle = ink;
       ctx.lineWidth = w;
       ctx.globalAlpha = path.status === 'stuck' ? 0.6 : 1;
