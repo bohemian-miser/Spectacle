@@ -169,12 +169,16 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     g.target = null;
     if (showHelp) hideHelp();
   };
+  /** The cursor follows the gesture: arrow, grabbing hand, arrow-with-plus. */
+  const showMode = (mode: Gesture['mode']): void => {
+    if (canvasRef.current) canvasRef.current.dataset.mode = mode;
+  };
   /** The hold came due: the tile under the pointer is the first target. */
   const paintStart = (sx: number, sy: number, touch: boolean): void => {
     const g = gesture.current;
     g.mode = 'paint';
     g.hold = 0;
-    canvasRef.current?.classList.add('is-painting');
+    showMode('paint');
     if (touch) navigator.vibrate?.(15);
     paintTarget(sx, sy);
     paintFlush();
@@ -189,7 +193,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     const g = gesture.current;
     if (g.timer) window.clearInterval(g.timer);
     if (g.hold) window.clearTimeout(g.hold);
-    canvasRef.current?.classList.remove('is-painting');
+    showMode('idle');
     gesture.current = { mode: 'idle', lastTile: -1, target: null, lastSent: g.lastSent, timer: 0, hold: 0 };
   };
   useEffect(() => endGesture, []);
@@ -208,6 +212,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
       // shift-drag always pans with a mouse.
       const pan = e.pointerType === 'mouse' && (e.button !== 0 || e.shiftKey);
       g.mode = pan ? 'pan' : 'press';
+      showMode(g.mode);
       if (!pan) {
         g.hold = window.setTimeout(() => {
           if (gesture.current.mode === 'press' && !p.moved) paintStart(p.x, p.y, touch);
@@ -220,7 +225,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
       g.hold = 0;
       g.target = null;
       g.mode = 'pan';
-      canvasRef.current?.classList.remove('is-painting');
+      showMode('pan');
     }
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
@@ -248,6 +253,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         window.clearTimeout(g.hold);
         g.hold = 0;
         g.mode = 'pan';
+        showMode('pan');
         r.panBy(x - p.startX, y - p.startY);
       }
     } else if (pointers.current.size === 2) {
