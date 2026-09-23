@@ -109,7 +109,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit —
-  nor on your own line. "On a line" is per chord, not per tile (`freeChord`):
+  nor on a tile your own line is on (see below). For rivals "on a line" is per chord, not per tile (`freeChord`):
   a tap takes the nearest chord of the tile that no line runs along or
   conflicts with (`pathMeets`, the same test a growing line uses), and is
   refused only when every chord there is blocked. The one exception: tapping the first chord of your stuck
@@ -118,16 +118,18 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   whose polygon is the line plus the smaller arc of `fieldOutline` (`region`
   on the path, the `circuit` event and `PathWire`); use `pathPolygon()` for
   any "inside" test so both kinds of circuit count.
-- **Your own lines stop you.** A growing line entering a tile where another of
-  your lines conflicts (same test as a rival hit) goes `stuck` — no cut. If
-  instead it meets that line's loose end on the same chord (same rule, not
-  closed), `join` folds the other line in: `wipe` (no `by`) for it, then its
-  steps re-sent as `step`s of the joiner, its points carried over, never
-  re-scored. Two dead ends at the edge thus become one edge-to-edge claim.
-  `overlapOwnLines` (default false) is the other mode: a line grows on over
-  your own instead of stopping (joins still happen), and a tap is refused on
-  any tile one of your lines is on at all (per tile, not per chord), so
-  layered lines are started beside and grown in; a rival must cut each.
+- **Your own lines don't stop you** (`overlapOwnLines: true`, the default).
+  A growing line runs on over the top of your own lines, and a tap is refused
+  on any tile one of your lines is on at all (per tile, not per chord — the
+  rival rule stays per chord), so layered lines are started beside and grown
+  in; a rival must cut each. If a line meets one of yours at its loose end on
+  the same chord (same rule, not closed), `join` folds the other line in:
+  `wipe` (no `by`) for it, then its steps re-sent as `step`s of the joiner,
+  its points carried over, never re-scored. Two dead ends at the edge thus
+  become one edge-to-edge claim. With the knob off (the older mode), a growing
+  line entering a tile where another of your lines conflicts (same test as a
+  rival hit) goes `stuck` — no cut — and your own lines block taps per chord.
+  Tests that pin the older mode set `overlapOwnLines: false`.
 - **Captured patterns.** Closing a circuit (loop or edge-to-edge region)
   round a rival's line — every step's midpoint inside — takes that line's
   rule into your `patterns` (index 0 is always your own rule; captures are

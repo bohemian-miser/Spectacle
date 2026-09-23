@@ -116,7 +116,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   mutualCut: true,
   tapOntoOthers: false,
   tapInsideRivalCircuits: false,
-  overlapOwnLines: false,
+  overlapOwnLines: true,
 
   maxCompletedCircuits: 0,
   maxLivePaths: 0,
