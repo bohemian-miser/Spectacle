@@ -52,10 +52,11 @@ client/src/       Vite + React.
   Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
                   numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze()).
   Arena.tsx       Two stacked canvases + pointer handling + HUD. A lone
-                  pointer taps, or drags to paint (each tile entered is the
-                  next tap, sent once `store.hasFreeHead()`, ≥120 ms apart
-                  for the server's 100 ms throttle, refusals muted); two
-                  fingers or right/middle/shift-drag pan.
+                  pointer taps, drags to pan, or held still for `HOLD_MS`
+                  (300 ms) paints (each tile entered is the next tap, sent
+                  once `store.hasFreeHead()`, ≥120 ms apart for the server's
+                  100 ms throttle, refusals muted). Two fingers or
+                  right/middle/shift-drag always pan.
   theme.ts        Light/dark: data-theme on <html>, localStorage, ?theme=,
                   and readBoardTheme() — the canvas half of the scheme, read
                   back out of the CSS tokens.

@@ -1,7 +1,7 @@
 /**
  * The arena screen: the canvas, pointer handling (tap to start a line, drag to
- * paint lines across the tiles you pass over, two fingers or right/middle/
- * shift-drag to pan, wheel/pinch to zoom) and the HUD.
+ * pan, press-and-hold then drag to paint lines across the tiles you pass over,
+ * wheel/pinch to zoom) and the HUD.
  */
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -31,12 +31,15 @@ interface PointerState {
   startX: number;
   startY: number;
   moved: boolean;
+  /** How far (px) it may wander and still be a tap or a hold — fingers jitter more. */
+  slop: number;
 }
 
 /**
  * What the pointers are doing: `press` until a lone pointer moves (then it
- * paints) or lifts (a tap); `pan` for two fingers or a right/middle/shift
- * mouse drag, for the rest of the gesture.
+ * pans), lifts (a tap) or holds still for `HOLD_MS` (then it paints); `pan`
+ * also for two fingers or a right/middle/shift mouse drag, for the rest of
+ * the gesture.
  */
 interface Gesture {
   mode: 'idle' | 'press' | 'paint' | 'pan';
@@ -47,10 +50,14 @@ interface Gesture {
   /** performance.now() of the last paint tap. */
   lastSent: number;
   timer: number;
+  /** The pending press-and-hold that turns a press into painting. */
+  hold: number;
 }
 
 /** Paint taps at most this often — the server drops taps under 100 ms apart. */
 const PAINT_TAP_MS = 120;
+/** Hold a press this long without moving to paint instead of pan. */
+const HOLD_MS = 300;
 
 export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -58,7 +65,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const rendererRef = useRef<Renderer | null>(null);
   const pointers = useRef(new Map<number, PointerState>());
   const pinchDist = useRef(0);
-  const gesture = useRef<Gesture>({ mode: 'idle', lastTile: -1, target: null, lastSent: 0, timer: 0 });
+  const gesture = useRef<Gesture>({ mode: 'idle', lastTile: -1, target: null, lastSent: 0, timer: 0, hold: 0 });
   const [showHelp, setShowHelp] = useState(() => !helpSeen());
   const hideHelp = (): void => {
     setShowHelp(false);
@@ -139,9 +146,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     if (showHelp) hideHelp();
   };
 
-  // Drag to paint: each tile the pointer enters becomes the target, and it is
-  // tapped as soon as you have a head free (and the server's tap throttle
-  // allows) — so a drag across a claimed area keeps starting lines in it.
+  // Hold, then drag to paint: each tile the pointer enters becomes the target,
+  // and it is tapped as soon as you have a head free (and the server's tap
+  // throttle allows) — so a drag across a claimed area keeps starting lines.
   const paintTarget = (sx: number, sy: number): void => {
     const g = gesture.current;
     const r = rendererRef.current;
@@ -162,11 +169,14 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     g.target = null;
     if (showHelp) hideHelp();
   };
-  const paintStart = (sx: number, sy: number, x: number, y: number): void => {
+  /** The hold came due: the tile under the pointer is the first target. */
+  const paintStart = (sx: number, sy: number, touch: boolean): void => {
     const g = gesture.current;
     g.mode = 'paint';
+    g.hold = 0;
+    canvasRef.current?.classList.add('is-painting');
+    if (touch) navigator.vibrate?.(15);
     paintTarget(sx, sy);
-    paintSegment(sx, sy, x, y);
     paintFlush();
     g.timer = window.setInterval(paintFlush, PAINT_TAP_MS / 2);
   };
@@ -178,7 +188,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const endGesture = (): void => {
     const g = gesture.current;
     if (g.timer) window.clearInterval(g.timer);
-    gesture.current = { mode: 'idle', lastTile: -1, target: null, lastSent: g.lastSent, timer: 0 };
+    if (g.hold) window.clearTimeout(g.hold);
+    canvasRef.current?.classList.remove('is-painting');
+    gesture.current = { mode: 'idle', lastTile: -1, target: null, lastSent: g.lastSent, timer: 0, hold: 0 };
   };
   useEffect(() => endGesture, []);
 
@@ -187,17 +199,28 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
-    pointers.current.set(e.pointerId, { id: e.pointerId, x, y, startX: x, startY: y, moved: false });
+    const touch = e.pointerType === 'touch';
+    const p: PointerState = { id: e.pointerId, x, y, startX: x, startY: y, moved: false, slop: touch ? 10 : 5 };
+    pointers.current.set(e.pointerId, p);
     const g = gesture.current;
     if (pointers.current.size === 1) {
-      // Right, middle or shift-drag pans with a mouse; touch pans with two fingers.
+      // A drag pans; press and hold still to paint instead. Right, middle or
+      // shift-drag always pans with a mouse.
       const pan = e.pointerType === 'mouse' && (e.button !== 0 || e.shiftKey);
       g.mode = pan ? 'pan' : 'press';
+      if (!pan) {
+        g.hold = window.setTimeout(() => {
+          if (gesture.current.mode === 'press' && !p.moved) paintStart(p.x, p.y, touch);
+        }, HOLD_MS);
+      }
     } else {
       if (g.timer) window.clearInterval(g.timer);
+      if (g.hold) window.clearTimeout(g.hold);
       g.timer = 0;
+      g.hold = 0;
       g.target = null;
       g.mode = 'pan';
+      canvasRef.current?.classList.remove('is-painting');
     }
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
@@ -213,14 +236,20 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     const y = e.clientY - rect.top;
     const dx = x - p.x;
     const dy = y - p.y;
-    if (Math.hypot(x - p.startX, y - p.startY) > 5) p.moved = true;
+    if (Math.hypot(x - p.startX, y - p.startY) > p.slop) p.moved = true;
     const g = gesture.current;
     if (pointers.current.size === 1) {
       if (g.mode === 'pan') r.panBy(dx, dy);
       else if (g.mode === 'paint') {
         paintSegment(p.x, p.y, x, y);
         paintFlush();
-      } else if (g.mode === 'press' && p.moved) paintStart(p.startX, p.startY, x, y);
+      } else if (g.mode === 'press' && p.moved) {
+        // Moved before the hold came due: it's a pan, from where it started.
+        window.clearTimeout(g.hold);
+        g.hold = 0;
+        g.mode = 'pan';
+        r.panBy(x - p.startX, y - p.startY);
+      }
     } else if (pointers.current.size === 2) {
       p.x = x;
       p.y = y;
@@ -343,7 +372,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
           Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
           Loop round someone's line to take its pattern.
           <div className="muted">
-            Drag across tiles to keep starting lines · two fingers or right-drag to pan · wheel or pinch to zoom
+            Drag to pan · hold, then drag across tiles to keep starting lines · wheel or pinch to zoom
           </div>
           <button type="button" className="btn" onClick={hideHelp}>
             Got it
