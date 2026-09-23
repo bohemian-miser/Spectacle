@@ -70,10 +70,10 @@ export interface Knobs {
   /**
    * What your own lines do to each other. Off: a growing line that runs into
    * another of yours stops there, and a tap may start on any chord of a tile
-   * none of your lines is on or crosses. On: it grows on over the top, but a
-   * tap may not start on a tile any of your lines passes through at all — so
-   * layered lines have to be started off to the side, and a rival must cut
-   * each of them.
+   * none of your lines is on or crosses. On: it grows on over the top; a tap
+   * may start on any chord of a tile your lines of the same pattern are not
+   * on, but not on a tile a line of another of your patterns passes through.
+   * A rival must cut each layered line.
    */
   overlapOwnLines: boolean;
 

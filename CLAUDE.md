@@ -123,10 +123,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   on the path, the `circuit` event and `PathWire`); use `pathPolygon()` for
   any "inside" test so both kinds of circuit count.
 - **Your own lines don't stop you** (`overlapOwnLines: true`, the default).
-  A growing line runs on over the top of your own lines, and a tap is refused
-  on any tile one of your lines is on at all (per tile, not per chord — the
-  rival rule stays per chord), so layered lines are started beside and grown
-  in; a rival must cut each. If a line meets one of yours at its loose end on
+  A growing line runs on over the top of your own lines, and a tap is per
+  chord: your lines of the tapped pattern block only the chords they are on
+  (`chordBlocked`), while one of another pattern still blocks its whole tile
+  ("a different kind of path" — the owner's call). Layered lines are grown in
+  over each other; a rival must cut each. If a line meets one of yours at its loose end on
   the same chord (same rule, not closed), `join` folds the other line in:
   `wipe` (no `by`) for it, then its steps re-sent as `step`s of the joiner,
   its points carried over, never re-scored. Two dead ends at the edge thus

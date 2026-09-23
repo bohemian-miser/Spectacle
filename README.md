@@ -42,11 +42,11 @@ you.
    refused, and once it closes, sticks or dies you tap again to start the next.
    Nothing you drew is dropped until someone cuts it (`maxLivePaths` and
    `maxCompletedCircuits` cap this if you want; both default to unlimited).
-   You cannot start on a tile any of your own lines already passes through —
-   except the first chord of a line that ran off the edge of the field: that
-   turns it round to grow out of its other end. A rival's line blocks chords,
-   not tiles: a tap on a tile it runs through starts on the nearest chord of
-   it that no line is on or crosses. A line that runs edge to edge cuts the
+   Lines block chords, not tiles: a tap on a tile a line already runs through
+   starts on the nearest chord of it that no line is on or crosses. The one
+   exception is a line of another of your patterns, which keeps its whole
+   tile. Tapping the first chord of a line that ran off the edge of the field
+   turns it round to grow out of its other end. A line that runs edge to edge cuts the
    field in two and closes like a circuit, claiming the smaller side (scored
    on that side's area).
    A growing line runs on over the top of your own lines rather than stopping,
