@@ -39,7 +39,8 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
                   events (step/wipe/circuit/score/status/join/leave/rule/
-                  capture/take/active/refused). Client → server adds `pattern`.
+                  capture/take/swap/active/refused). Client → server adds
+                  `pattern` and `swap`.
 server/index.ts   Node + ws. One arena, 50 ms tick, batched broadcast, static
                   dist/, resume tokens (RESUME_GRACE_MS), bots, env config.
 client/src/       Vite + React.
@@ -73,6 +74,7 @@ tests/            vitest. strand.test.ts pins the local walker against the
                   core's global analyze() — the most important test here.
                   resume.test.ts spawns the real server.
 scripts/smoke.ts  Headless Chromium round (needs PW_EXE or playwright browsers).
+scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
@@ -167,7 +169,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the active pattern is sketched on the board. A path carries its own
   `rule`/`table` — use `path.table`, never the owner's, for anything about
   a path's chords (collisions, turning round). UI: sticky tabs on the left
-  wall, bottom left; the active one is longer; keys 1–9.
+  wall, bottom left; the active one is longer; keys 1–9. A captured slot
+  can be swapped for a rule of the player's own (`swapPattern`, client
+  `swap`): its lines are wiped (no `by`, points leave with them), then a
+  `swap` event replaces the pattern in place — same index, same colour, same
+  head — so path indices stay valid. Slot 0 never swaps; that is `setRule`.
+  A rule held in another slot is refused.
 - **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,

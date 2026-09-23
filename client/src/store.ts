@@ -244,6 +244,15 @@ export class Store {
         this.geometryVersion++;
         return;
       }
+      case 'swap': {
+        const p = this.players.get(ev.id);
+        if (p && ev.index > 0 && ev.index < p.patterns.length) {
+          p.patterns = p.patterns.map((q, i) => (i === ev.index ? ev.pattern : q));
+        }
+        if (ev.id === this.you) this.toast('Pattern swapped — its lines are gone', 'info');
+        this.geometryVersion++;
+        return;
+      }
       case 'take': {
         const path = this.paths.get(ev.path);
         if (path) {
