@@ -144,6 +144,38 @@ describe('the field edge', () => {
     expect(lineB.steps.length).toBe(fwd.steps.length + walkStrand(FIELD, TABLE, tile, chord, 0).steps.length - 1);
   });
 
+  it('a line that runs off the edge with your loose end just behind its start joins it without a tap', () => {
+    const { rng, exit } = steered();
+    const e = new Engine(FIELD, { ...DEFAULT_KNOBS, junctionPolicy: 'stop' }, rng);
+    e.addPlayer('a', 'Ann', FASS);
+    const { tile, chord } = edgeToEdge();
+    const fwd = walkStrand(FIELD, TABLE, tile, chord, 1);
+    const back = walkStrand(FIELD, TABLE, tile, chord, 0);
+
+    // A: from the middle chord to one edge.
+    exit.end = 0;
+    const a = tapChord(e, 'a', tile, chord).result;
+    if (!a.ok) throw new Error('tap A refused');
+    run(e, (all) => all.some((x) => x.t === 'status' && x.path === a.path));
+    expect(e.getPath(a.path)!.status).toBe('stuck');
+
+    // B: the very next chord, heading away from A to the other edge.
+    const bs = fwd.steps[1];
+    exit.end = exitThrough(bs.tile, bs.chord, bs.b);
+    const b = tapChord(e, 'a', bs.tile, bs.chord).result;
+    if (!b.ok) throw new Error('tap B refused');
+    const lineB = e.getPath(b.path)!;
+    const ev = run(e, (all) => all.some((x) => x.t === 'circuit' || (x.t === 'status' && x.path === b.path)));
+    expect(ev).toContainEqual({ t: 'reverse', path: b.path });
+    expect(ev).toContainEqual({ t: 'wipe', path: a.path, owner: 'a' });
+    const circuit = ev.find((x) => x.t === 'circuit');
+    if (circuit?.t !== 'circuit') throw new Error('no claim');
+    expect(circuit.region).toBeDefined();
+    expect(lineB.status).toBe('closed');
+    expect(e.players.get('a')!.paths).toEqual([lineB]);
+    expect(lineB.steps.length).toBe(fwd.steps.length + back.steps.length - 1);
+  });
+
   it('a line stops as soon as it runs into another of your lines', () => {
     const { rng, exit } = steered();
     const e = new Engine(FIELD, { ...DEFAULT_KNOBS, junctionPolicy: 'stop', crossingMode: 'tile', overlapOwnLines: false }, rng);

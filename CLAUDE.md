@@ -130,8 +130,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the same chord (same rule, not closed), `join` folds the other line in:
   `wipe` (no `by`) for it, then its steps re-sent as `step`s of the joiner,
   its points carried over, never re-scored. Two dead ends at the edge thus
-  become one edge-to-edge claim. With the knob off (the older mode), a growing
-  line entering a tile where another of your lines conflicts (same test as a
+  become one edge-to-edge claim. A line that runs off the edge with your
+  loose end just behind its start turns round and joins it by itself
+  (`joinBehind`) — no tap on the joint needed. With the knob off (the older
+  mode), a growing line entering a tile where another of your lines conflicts (same test as a
   rival hit) goes `stuck` — no cut — and your own lines block taps per chord.
   Tests that pin the older mode set `overlapOwnLines: false`.
 - **Captured patterns.** Closing a circuit (loop or edge-to-edge region)
