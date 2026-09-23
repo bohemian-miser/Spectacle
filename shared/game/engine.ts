@@ -371,6 +371,10 @@ export class Engine {
     const p = this.players.get(path.owner);
     // A head lost in a collision (either side of it) costs a moment before the next.
     if (p && by !== undefined && path.status === 'growing') p.respawnAt = this.now + this.knobs.respawnDelayMs;
+    // A dropped path must not grow again: `tick` may be mid-way through its
+    // steps for this tick, and one more would resurrect it as a ghost.
+    path.status = 'stuck';
+    path.progress = 0;
     if (p) {
       const i = p.paths.indexOf(path);
       if (i >= 0) p.paths.splice(i, 1);
