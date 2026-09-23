@@ -62,7 +62,7 @@ jobs:
             --cpu=1 --memory=512Mi
             --session-affinity
           env_vars: |
-            BOTS=${{ vars.SPECTACLE_BOTS || '3' }}
+            BOTS=${{ vars.SPECTACLE_BOTS || '1' }}
             FIELD_FAMILY=${{ vars.SPECTACLE_FIELD_FAMILY || 'hex' }}
             FIELD_LEVEL=${{ vars.SPECTACLE_FIELD_LEVEL || '6' }}
       - run: echo "Deployed to ${{ steps.deploy.outputs.url }}"

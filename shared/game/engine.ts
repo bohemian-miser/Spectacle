@@ -17,7 +17,9 @@
  *  - a tap may not land on a rival's line nor inside a rival's closed
  *    circuit (both knobs);
  *  - a tail (no continuation) leaves the path stuck; tap elsewhere to start
- *    another — every line a player draws stays until it is cut.
+ *    another — every line a player draws stays until it is cut;
+ *  - a player has at most `maxHeads` growing lines, and losing one in a
+ *    collision blocks the next tap for `respawnDelayMs`.
  */
 
 import type { Pt } from '../tiles';
@@ -61,6 +63,8 @@ export interface Player {
   combo: number;
   readonly paths: Path[];
   readonly bot: boolean;
+  /** Engine time before which a tap may not start a new head (collision cooldown). */
+  respawnAt: number;
 }
 
 export type TapResult = { ok: true; path: number } | { ok: false; reason: string };
@@ -77,6 +81,8 @@ export class Engine {
   /** tile → paths that have a step on it. */
   private readonly occupancy = new Map<number, Set<Path>>();
   private nextPathId = 1;
+  /** Engine clock: the sum of every `tick` dt, ms. */
+  private now = 0;
   private colorIndex = 0;
   private readonly pickJunction: (options: readonly import('./strand').ChordEnd[]) => import('./strand').ChordEnd;
 
@@ -102,6 +108,7 @@ export class Engine {
       combo: this.knobs.comboStart,
       paths: [],
       bot,
+      respawnAt: 0,
     };
     this.players.set(id, player);
     return [{ t: 'join', player: this.publicOf(player) }];
@@ -151,6 +158,12 @@ export class Engine {
   tap(id: string, tile: number, at: Pt, ev: GameEvent[] = []): { result: TapResult; events: GameEvent[] } {
     const p = this.players.get(id);
     if (!p) return { result: { ok: false, reason: 'not in the arena' }, events: ev };
+    if (this.now < p.respawnAt) {
+      return { result: { ok: false, reason: 'still recovering from that collision' }, events: ev };
+    }
+    if (this.knobs.maxHeads > 0 && p.paths.filter((q) => q.status === 'growing').length >= this.knobs.maxHeads) {
+      return { result: { ok: false, reason: 'your line is still growing' }, events: ev };
+    }
     if (!Number.isInteger(tile) || tile < 0 || tile >= this.field.count) {
       return { result: { ok: false, reason: 'no such tile' }, events: ev };
     }
@@ -169,8 +182,9 @@ export class Engine {
     const chord = nearestChord(this.field, p.table, tile, at);
     const exitEnd: 0 | 1 = this.rng.next() < 0.5 ? 0 : 1;
 
-    // Every tap starts another line; the old ones keep growing (or sit
-    // stuck) until they are cut. A cap on live lines, if set, drops the oldest.
+    // Every tap starts another line; the old ones sit stuck or closed (or keep
+    // growing, under a looser `maxHeads`) until they are cut. A cap on live
+    // lines, if set, drops the oldest.
     if (this.knobs.maxLivePaths > 0) {
       const live = p.paths.filter((q) => q.status !== 'closed');
       while (live.length >= this.knobs.maxLivePaths) this.dropPath(live.shift()!, undefined, ev);
@@ -194,6 +208,7 @@ export class Engine {
 
   tick(dtMs: number): GameEvent[] {
     const ev: GameEvent[] = [];
+    this.now += dtMs;
     for (const p of this.players.values()) {
       for (const path of [...p.paths]) {
         if (path.status !== 'growing') continue;
@@ -354,6 +369,8 @@ export class Engine {
    */
   private dropPath(path: Path, by: string | undefined, ev: GameEvent[]): void {
     const p = this.players.get(path.owner);
+    // A head lost in a collision (either side of it) costs a moment before the next.
+    if (p && by !== undefined && path.status === 'growing') p.respawnAt = this.now + this.knobs.respawnDelayMs;
     if (p) {
       const i = p.paths.indexOf(path);
       if (i >= 0) p.paths.splice(i, 1);

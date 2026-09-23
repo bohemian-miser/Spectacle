@@ -285,3 +285,22 @@ export function tilesInBox(field: Field, box: Box, out: number[] = []): number[]
   }
   return out;
 }
+
+/** Tiles whose centres lie strictly inside `poly` — a closed circuit's interior. */
+export function tilesInsidePolygon(field: Field, poly: readonly Pt[]): number[] {
+  if (poly.length < 3) return [];
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const p of poly) {
+    if (p.x < minX) minX = p.x;
+    if (p.x > maxX) maxX = p.x;
+    if (p.y < minY) minY = p.y;
+    if (p.y > maxY) maxY = p.y;
+  }
+  const out: number[] = [];
+  for (const i of tilesInBox(field, { minX, minY, maxX, maxY })) {
+    const c = { x: field.centers[i * 2], y: field.centers[i * 2 + 1] };
+    if (c.x < minX || c.x > maxX || c.y < minY || c.y > maxY) continue;
+    if (pointInPolygon(c, poly)) out.push(i);
+  }
+  return out;
+}

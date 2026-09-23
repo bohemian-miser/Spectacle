@@ -34,17 +34,21 @@ you.
    and your combo multiplier steps up for the next one. Closed circuits stay on
    the board.
 5. **Tails.** No continuation (an odd tile, a junction under `junctionPolicy:
-   'stop'`, or the edge of the field) leaves the line stuck. Tap elsewhere to
-   start another: every tap adds a line, all of them grow at once, and nothing
-   you drew is dropped until someone cuts it (`maxLivePaths` and
+   'stop'`, or the edge of the field) leaves the line stuck. You have one head
+   at a time (`maxHeads`, default 1): a tap while your line is still growing is
+   refused, and once it closes, sticks or dies you tap again to start the next.
+   Nothing you drew is dropped until someone cuts it (`maxLivePaths` and
    `maxCompletedCircuits` cap this if you want; both default to unlimited).
+   Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
+   next tap lands.
 6. **Crossing.** When a line enters a tile where another player's chord crosses
    it (proper intersection, or a shared connection point — both are knobs),
    both lines die — the one that was hit and the one that hit it — each with
    its points, and both combos reset (`mutualCut`; off makes it one-sided).
    You cannot *start* on a rival's line or inside a rival's closed circuit
    (`tapOntoOthers`, `tapInsideRivalCircuits`); you have to grow into them.
-   Closed circuits darken with their length on the board.
+   Closed circuits darken with their length on the board, and wash the tiles
+   they enclose in their owner's colour.
 7. **New rule** = restart: your lines go, and (by default) your score too.
 
 **Which way a tile is turned.** Every hexagon in the arena is the same regular
@@ -84,9 +88,9 @@ Production: build the client and let the server serve it.
 
 ```bash
 npm run build
-PORT=8787 BOTS=2 npm start
+PORT=8787 BOTS=1 npm start
 # or
-docker build -t spectacle . && docker run -p 8787:8787 -e BOTS=2 spectacle
+docker build -t spectacle . && docker run -p 8787:8787 -e BOTS=1 spectacle
 ```
 
 Server environment:
@@ -97,7 +101,7 @@ Server environment:
 | `FIELD_FAMILY` | `hex` | `hex` or `spectre` |
 | `FIELD_LEVEL` | `6` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 6 ≈ 273k |
 | `FIELD_ROOT` | `Delta` | root tile of the patch |
-| `BOTS` | `0` | bot players (random clean rules, occasionally aggressive) |
+| `BOTS` | `1` | bot players (random clean rules, occasionally aggressive) |
 | `SEED` | random | RNG seed |
 | `KNOB_*` | see knobs.ts | any gameplay knob |
 

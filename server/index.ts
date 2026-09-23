@@ -7,7 +7,7 @@
  *   FIELD_FAMILY  (hex)      hex | spectre
  *   FIELD_LEVEL   (6)        substitution level (hex: 5 ≈ 31k tiles, 6 ≈ 242k)
  *   FIELD_ROOT    (Delta)    root tile type
- *   BOTS          (0)        number of bot players
+ *   BOTS          (1)        number of bot players
  *   SEED          (random)   RNG seed
  *   RESUME_GRACE_MS (90000)  how long a dropped player is kept for `join.resume`
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
@@ -246,7 +246,7 @@ wss.on('connection', (ws) => {
 
 // --- simulation loop -----------------------------------------------------------
 
-pending.push(...bots.add(Number(process.env.BOTS ?? 0), Date.now()));
+pending.push(...bots.add(Number(process.env.BOTS ?? 1), Date.now()));
 
 let last = Date.now();
 setInterval(() => {
@@ -267,5 +267,5 @@ setInterval(() => {
 }, knobs.tickMs);
 
 http.listen(PORT, () => {
-  console.log(`[spectacle] listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots ${process.env.BOTS ?? 0})`);
+  console.log(`[spectacle] listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots ${process.env.BOTS ?? 1})`);
 });
