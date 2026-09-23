@@ -303,7 +303,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   // A player's swatch colour: theirs, or their team's (you blue, the rest red).
   const swatch = (color: string, mine: boolean): string =>
     strandColor(scheme, settings.teams ? (mine ? scheme.teamMe : scheme.teamRival) : color);
-  const speed = me && store.knobs ? (1000 / stepIntervalMs(store.knobs, me.score)).toFixed(1) : '–';
+  const speed = me && store.knobs && store.field ? (1000 / stepIntervalMs(store.knobs, me.score, store.field.count)).toFixed(1) : '–';
 
   return (
     <div className="arena">

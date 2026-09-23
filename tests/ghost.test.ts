@@ -10,7 +10,7 @@ describe('dropped paths', () => {
   it('a line that dies mid-tick takes no further steps (no ghost head left behind)', () => {
     // Fast lines take several steps per tick, so a collision lands mid-tick.
     const field = buildField({ family: 'hex', level: 3, rootTile: 'Delta' });
-    const e = new Engine(field, { ...DEFAULT_KNOBS, baseStepMs: 5, minStepMs: 5 }, mulberry32(7));
+    const e = new Engine(field, { ...DEFAULT_KNOBS, baseStepMs: 5, maxSpeed: 1e6 }, mulberry32(7));
     const bots = new Bots(e, mulberry32(8), 0.8);
     let now = 0;
     const ev: GameEvent[] = [...bots.add(6, now)];

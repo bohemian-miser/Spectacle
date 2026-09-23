@@ -35,8 +35,14 @@ export interface Knobs {
   baseStepMs: number;
   /** Speed-up: interval = baseStepMs / (1 + score * speedPerPoint). */
   speedPerPoint: number;
-  /** Fastest allowed step interval. */
-  minStepMs: number;
+  /**
+   * Speed cap in tiles per second on a field of `maxSpeedRefTiles` tiles. The
+   * cap scales with the log of the field's tile count: a field of N tiles caps
+   * at `maxSpeed × ln N / ln maxSpeedRefTiles` (`maxSpeedFor`).
+   */
+  maxSpeed: number;
+  /** Field size at which the cap is exactly `maxSpeed` (hex level 6 ≈ 242k). */
+  maxSpeedRefTiles: number;
   /** Growing lines ("heads") a player may have at once; a tap beyond it is refused (0 = unlimited). */
   maxHeads: number;
   /** Head limit once a player holds a captured pattern (never below `maxHeads`; 0 = unlimited). */
@@ -114,7 +120,8 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
 
   baseStepMs: 200,
   speedPerPoint: 0.015,
-  minStepMs: 10,
+  maxSpeed: 1000,
+  maxSpeedRefTiles: 242_000,
   maxHeads: 1,
   headsWithCapture: 2,
   headPerCapture: true,
@@ -140,10 +147,19 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   maxNameLength: 16,
 });
 
-/** Step interval for a player at `score` — the "speed proportional to score" knob. */
-export function stepIntervalMs(knobs: Knobs, score: number): number {
+/** Top speed (tiles per second) on a field of `fieldTiles` tiles: `maxSpeed`, scaled by log field size. */
+export function maxSpeedFor(knobs: Knobs, fieldTiles: number): number {
+  const scale = Math.log(Math.max(2, fieldTiles)) / Math.log(Math.max(2, knobs.maxSpeedRefTiles));
+  return knobs.maxSpeed * scale;
+}
+
+/**
+ * Step interval for a player at `score` on a field of `fieldTiles` tiles —
+ * the "speed proportional to score" knob, floored by `maxSpeedFor`.
+ */
+export function stepIntervalMs(knobs: Knobs, score: number, fieldTiles: number): number {
   const ms = knobs.baseStepMs / (1 + Math.max(0, score) * knobs.speedPerPoint);
-  return Math.max(knobs.minStepMs, ms);
+  return Math.max(1000 / maxSpeedFor(knobs, fieldTiles), ms);
 }
 
 /** How many lines a player holding `patterns` patterns may grow at once (0 = unlimited). */
