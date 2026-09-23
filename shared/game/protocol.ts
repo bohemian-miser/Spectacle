@@ -30,6 +30,8 @@ export interface PathWire {
   readonly region?: readonly Pt[];
   /** Which of the owner's patterns drew it (index into `PlayerPublic.patterns`); absent = 0, their own. */
   readonly pattern?: number;
+  /** Grown out of a flip rather than a tap: it doesn't take up one of the owner's heads. */
+  readonly spawned?: true;
 }
 
 /**
@@ -84,8 +86,18 @@ export type GameEvent =
   | { readonly t: 'leave'; readonly id: string }
   /** A new rule is a restart: paths gone, captured patterns gone, own pattern active. */
   | { readonly t: 'rule'; readonly id: string; readonly rule: PlayerRule; readonly score: number; readonly combo: number }
-  /** A path grew by one step (the first step creates it; it carries `pattern` when that is not 0). */
-  | { readonly t: 'step'; readonly path: number; readonly owner: string; readonly step: PathStepWire; readonly pattern?: number }
+  /**
+   * A path grew by one step (the first step creates it; it carries `pattern`
+   * when that is not 0, and `spawned` when a flip made it).
+   */
+  | {
+      readonly t: 'step';
+      readonly path: number;
+      readonly owner: string;
+      readonly step: PathStepWire;
+      readonly pattern?: number;
+      readonly spawned?: true;
+    }
   /** `id` closed a circuit round a rival's line and took its pattern (appended to their patterns). */
   | { readonly t: 'capture'; readonly id: string; readonly pattern: PatternPublic }
   /**

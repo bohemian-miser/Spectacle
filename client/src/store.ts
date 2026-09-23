@@ -19,6 +19,8 @@ export interface ClientPath {
   region?: readonly Pt[];
   /** Which of the owner's patterns drew it (0 = their own rule). */
   pattern: number;
+  /** Grown out of a flip: it doesn't take up a head. */
+  spawned?: boolean;
 }
 
 export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active'> {
@@ -116,7 +118,7 @@ export class Store {
     const total = headLimit(k, me.patterns.length);
     if (total === 0) return { free: Infinity, total };
     let growing = 0;
-    for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing') growing++;
+    for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing' && !p.spawned) growing++;
     return { free: Math.max(0, total - growing), total };
   }
 
@@ -186,6 +188,7 @@ export class Store {
         for (const pw of msg.paths) {
           const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps], pattern: pw.pattern ?? 0 };
           if (pw.region) path.region = pw.region;
+          if (pw.spawned) path.spawned = true;
           this.paths.set(path.id, path);
           for (const s of path.steps) this.occupy(s.tile, path);
         }
@@ -271,6 +274,7 @@ export class Store {
         let path = this.paths.get(ev.path);
         if (!path) {
           path = { id: ev.path, owner: ev.owner, status: 'growing', steps: [], pattern: ev.pattern ?? 0 };
+          if (ev.spawned) path.spawned = true;
           this.paths.set(path.id, path);
         }
         path.steps.push(ev.step);
