@@ -22,7 +22,10 @@ you.
    random clean rule (one from the family's kernel, so every tile pairs up).
    The rules that draw one endless line exist; finding them is the game.
 2. **Tap a tile.** It fades and takes your colour, and the chord nearest your tap
-   starts growing out of one end, picked at random.
+   starts growing out of one end, picked at random. Or **drag** (finger or
+   mouse): every tile you pass over becomes the next start, tapped as soon as
+   you have a head free — sweep across an area you hold to keep filling it in.
+   Pan with two fingers, or a right-, middle- or shift-drag; wheel or pinch zooms.
 3. **It grows.** One tile per step; the step interval shrinks with your score
    (`baseStepMs / (1 + score × speedPerPoint)`, floored at `minStepMs`). Each tile
    entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
@@ -215,7 +218,7 @@ server/         Node + ws: one arena, ticks the engine, broadcasts batched event
 client/         Vite + React: lobby with the rule editor (interactive SVG
                 tiles, level-3 preview), the arena — a WebGL2 instanced tile
                 layer (Canvas2D fallback) under a Canvas2D strand overlay —
-                pan/zoom/tap and the HUD.
+                tap/paint/pan/zoom and the HUD.
 ```
 
 The server is authoritative and the field is deterministic from its spec, so a

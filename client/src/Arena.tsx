@@ -1,6 +1,7 @@
 /**
- * The arena screen: the canvas, pointer handling (drag to pan, wheel/pinch to
- * zoom, tap to start a line) and the HUD.
+ * The arena screen: the canvas, pointer handling (tap to start a line, drag to
+ * paint lines across the tiles you pass over, two fingers or right/middle/
+ * shift-drag to pan, wheel/pinch to zoom) and the HUD.
  */
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
@@ -32,12 +33,32 @@ interface PointerState {
   moved: boolean;
 }
 
+/**
+ * What the pointers are doing: `press` until a lone pointer moves (then it
+ * paints) or lifts (a tap); `pan` for two fingers or a right/middle/shift
+ * mouse drag, for the rest of the gesture.
+ */
+interface Gesture {
+  mode: 'idle' | 'press' | 'paint' | 'pan';
+  /** The tile the pointer last entered while painting. */
+  lastTile: number;
+  /** The tile to tap next, once a head is free. */
+  target: { tile: number; x: number; y: number } | null;
+  /** performance.now() of the last paint tap. */
+  lastSent: number;
+  timer: number;
+}
+
+/** Paint taps at most this often — the server drops taps under 100 ms apart. */
+const PAINT_TAP_MS = 120;
+
 export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tileCanvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
   const pointers = useRef(new Map<number, PointerState>());
   const pinchDist = useRef(0);
+  const gesture = useRef<Gesture>({ mode: 'idle', lastTile: -1, target: null, lastSent: 0, timer: 0 });
   const [showHelp, setShowHelp] = useState(() => !helpSeen());
   const hideHelp = (): void => {
     setShowHelp(false);
@@ -118,12 +139,66 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     if (showHelp) hideHelp();
   };
 
+  // Drag to paint: each tile the pointer enters becomes the target, and it is
+  // tapped as soon as you have a head free (and the server's tap throttle
+  // allows) — so a drag across a claimed area keeps starting lines in it.
+  const paintTarget = (sx: number, sy: number): void => {
+    const g = gesture.current;
+    const r = rendererRef.current;
+    if (!r || !store.field) return;
+    const w = r.screenToWorld(sx, sy);
+    const tile = tileAt(store.field, w);
+    if (tile < 0 || tile === g.lastTile) return;
+    g.lastTile = tile;
+    g.target = { tile, x: w.x, y: w.y };
+  };
+  const paintFlush = (): void => {
+    const g = gesture.current;
+    const now = performance.now();
+    if (!g.target || now - g.lastSent < PAINT_TAP_MS || !store.hasFreeHead()) return;
+    g.lastSent = now;
+    store.quietRefusalsUntil = Date.now() + 1500;
+    conn.send({ t: 'tap', ...g.target });
+    g.target = null;
+    if (showHelp) hideHelp();
+  };
+  const paintStart = (sx: number, sy: number, x: number, y: number): void => {
+    const g = gesture.current;
+    g.mode = 'paint';
+    paintTarget(sx, sy);
+    paintSegment(sx, sy, x, y);
+    paintFlush();
+    g.timer = window.setInterval(paintFlush, PAINT_TAP_MS / 2);
+  };
+  /** Every tile under the segment, in order, so a quick flick skips none. */
+  const paintSegment = (x0: number, y0: number, x1: number, y1: number): void => {
+    const n = Math.min(64, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 4));
+    for (let i = 1; i <= n; i++) paintTarget(x0 + ((x1 - x0) * i) / n, y0 + ((y1 - y0) * i) / n);
+  };
+  const endGesture = (): void => {
+    const g = gesture.current;
+    if (g.timer) window.clearInterval(g.timer);
+    gesture.current = { mode: 'idle', lastTile: -1, target: null, lastSent: g.lastSent, timer: 0 };
+  };
+  useEffect(() => endGesture, []);
+
   const onPointerDown = (e: ReactPointerEvent<HTMLCanvasElement>): void => {
     e.currentTarget.setPointerCapture(e.pointerId);
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const y = e.clientY - rect.top;
     pointers.current.set(e.pointerId, { id: e.pointerId, x, y, startX: x, startY: y, moved: false });
+    const g = gesture.current;
+    if (pointers.current.size === 1) {
+      // Right, middle or shift-drag pans with a mouse; touch pans with two fingers.
+      const pan = e.pointerType === 'mouse' && (e.button !== 0 || e.shiftKey);
+      g.mode = pan ? 'pan' : 'press';
+    } else {
+      if (g.timer) window.clearInterval(g.timer);
+      g.timer = 0;
+      g.target = null;
+      g.mode = 'pan';
+    }
     if (pointers.current.size === 2) {
       const [a, b] = [...pointers.current.values()];
       pinchDist.current = Math.hypot(a.x - b.x, a.y - b.y);
@@ -139,8 +214,13 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
     const dx = x - p.x;
     const dy = y - p.y;
     if (Math.hypot(x - p.startX, y - p.startY) > 5) p.moved = true;
+    const g = gesture.current;
     if (pointers.current.size === 1) {
-      r.panBy(dx, dy);
+      if (g.mode === 'pan') r.panBy(dx, dy);
+      else if (g.mode === 'paint') {
+        paintSegment(p.x, p.y, x, y);
+        paintFlush();
+      } else if (g.mode === 'press' && p.moved) paintStart(p.startX, p.startY, x, y);
     } else if (pointers.current.size === 2) {
       p.x = x;
       p.y = y;
@@ -157,7 +237,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
   const onPointerUp = (e: ReactPointerEvent<HTMLCanvasElement>): void => {
     const p = pointers.current.get(e.pointerId);
     pointers.current.delete(e.pointerId);
-    if (p && !p.moved && pointers.current.size === 0) tap(p.x, p.y);
+    const press = gesture.current.mode === 'press';
+    if (p && press && !p.moved && pointers.current.size === 0 && e.type === 'pointerup') tap(p.x, p.y);
+    if (pointers.current.size === 0) endGesture();
     pinchDist.current = 0;
   };
 
@@ -189,6 +271,7 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onContextMenu={(e) => e.preventDefault()}
       />
 
       <div className="hud hud-me" style={{ ['--me' as string]: me ? strandColor(scheme, me.color) : 'var(--text)' }}>
@@ -253,7 +336,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
           <b>Tap a tile</b> to start a line along your rule. It grows on its own, faster as you score.
           Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
           Loop round someone's line to take its pattern.
-          <div className="muted">Drag to pan · wheel or pinch to zoom</div>
+          <div className="muted">
+            Drag across tiles to keep starting lines · two fingers or right-drag to pan · wheel or pinch to zoom
+          </div>
           <button type="button" className="btn" onClick={hideHelp}>
             Got it
           </button>

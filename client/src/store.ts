@@ -5,7 +5,7 @@
  */
 
 import { buildField, type Field } from '../../shared/game/field';
-import type { Knobs } from '../../shared/game/knobs';
+import { headLimit, type Knobs } from '../../shared/game/knobs';
 import type { Pt } from '../../shared/tiles';
 import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, ServerMessage } from '../../shared/game/protocol';
 
@@ -97,6 +97,25 @@ export class Store {
 
   myPaths(): ClientPath[] {
     return [...this.paths.values()].filter((p) => p.owner === this.you);
+  }
+
+  /** Refusals before this time (ms) go unshown: a drag taps every tile it crosses. */
+  quietRefusalsUntil = 0;
+
+  /**
+   * Whether a tap now could start a line as far as heads go: the engine's
+   * `headLimit` against your growing lines. The server still
+   * decides; this only keeps a drag from sending taps it would refuse.
+   */
+  hasFreeHead(): boolean {
+    const k = this.knobs;
+    const me = this.me;
+    if (!k || !me) return false;
+    const limit = headLimit(k, me.patterns.length);
+    if (limit === 0) return true;
+    let growing = 0;
+    for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing') growing++;
+    return growing < limit;
   }
 
   /** At most two at once; a repeat of one still showing just refreshes it. */
@@ -294,7 +313,7 @@ export class Store {
         return;
       }
       case 'refused':
-        this.toast(ev.reason, 'bad');
+        if (Date.now() >= this.quietRefusalsUntil) this.toast(ev.reason, 'bad');
         return;
     }
   }

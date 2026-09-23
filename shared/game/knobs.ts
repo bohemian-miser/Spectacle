@@ -131,6 +131,13 @@ export function stepIntervalMs(knobs: Knobs, score: number): number {
   return Math.max(knobs.minStepMs, ms);
 }
 
+/** How many lines a player holding `patterns` patterns may grow at once (0 = unlimited). */
+export function headLimit(knobs: Knobs, patterns: number): number {
+  if (patterns < 2) return knobs.maxHeads;
+  if (knobs.maxHeads === 0 || knobs.headsWithCapture === 0) return 0;
+  return Math.max(knobs.maxHeads, knobs.headsWithCapture);
+}
+
 /**
  * Apply `KNOB_<NAME>` environment overrides (e.g. `KNOB_BASE_STEP_MS=200`).
  * Numbers and booleans are parsed; enum knobs are validated against their
