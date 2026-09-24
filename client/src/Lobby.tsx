@@ -17,6 +17,8 @@ export interface LobbyProps {
   readonly name: string;
   /** Already in the arena: this is a "new rule" restart, not a first entry. */
   readonly inArena: boolean;
+  /** Why the player is back here, if not by choice. */
+  readonly notice?: string;
   onMode(mode: Mode): void;
   onSolo(opts: SoloOptions): void;
   onGameMode(mode: GameMode): void;
@@ -42,7 +44,7 @@ function tileCount(family: TileFamilyId, level: number): number {
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, gameMode, rule, name, inArena, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } = props;
+  const { store, mode, solo, gameMode, rule, name, inArena, notice, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } = props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
@@ -68,6 +70,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
       {!inArena && (
         <section className="panel">
           <h2>Where</h2>
+          {notice && <p className="lobby-notice">{notice}</p>}
           {!SOLO_ONLY && (
             <div className="mode-row">
               <button type="button" className={`btn${mode === 'online' ? ' is-on' : ''}`} onClick={() => onMode('online')}>

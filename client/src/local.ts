@@ -49,7 +49,7 @@ export class LocalConnection implements GameConnection {
     this.knobs = knobsForMode(base, mode);
   }
 
-  open(onOpen: () => void, _onClose: () => void): void {
+  open(onOpen: () => void, _onClose: (code: number) => void): void {
     const spec: FieldSpec = { family: this.opts.family, level: this.opts.level, rootTile: 'Delta' };
     const field = buildField(spec);
     // Edge-to-edge claims need the outline; build it with the field, not mid-game.

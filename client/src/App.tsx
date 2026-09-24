@@ -5,7 +5,7 @@ import { Arena } from './Arena';
 import { Lobby } from './Lobby';
 import { DEFAULT_SOLO, LocalConnection, type SoloOptions } from './local';
 import { Connection, type GameConnection } from './net';
-import { clearSession, loadSession, saveSession } from './session';
+import { answerTabs, clearSession, heldElsewhere, loadSession, saveSession } from './session';
 import { Store } from './store';
 import { useStore } from './useStore';
 
@@ -55,6 +55,8 @@ export function App(): JSX.Element {
   const [screen, setScreen] = useState<Screen>('lobby');
   const [name, setName] = useState(loadName);
   const [rule, setRule] = useState<PlayerRule | null>(null);
+  /** Why the lobby is back when the player didn't ask for it. */
+  const [notice, setNotice] = useState('');
   const connRef = useRef<GameConnection | null>(null);
   const joined = useRef(false);
   const retry = useRef(0);
@@ -88,10 +90,16 @@ export function App(): JSX.Element {
             setScreen('arena');
           }
         },
-        () => {
+        (code) => {
           if (disposed) return;
           joined.current = false;
-          if (rejoin.current && store.resume) rejoin.current.resume = store.resume;
+          if (code === 4000) {
+            // Resumed in another tab: the player is theirs now, and our
+            // ticket is dead — rejoining on it would only make a second one.
+            rejoin.current = null;
+            clearSession();
+            setNotice('Your game carried on in another tab.');
+          } else if (rejoin.current && store.resume) rejoin.current.resume = store.resume;
           store.reset();
           if (!rejoin.current) setScreen('lobby');
           const delay = Math.min(10_000, 500 * 2 ** retry.current++);
@@ -99,7 +107,19 @@ export function App(): JSX.Element {
         },
       );
     };
-    connect();
+    // A duplicated tab brings the original's ticket along: if that tab is
+    // still playing the player, start afresh here instead of taking it over.
+    if (saved) {
+      void heldElsewhere(saved.resume.id).then((held) => {
+        if (disposed) return;
+        if (held) {
+          clearSession();
+          rejoin.current = null;
+          setScreen('lobby');
+        }
+        connect();
+      });
+    } else connect();
     return () => {
       disposed = true;
       window.clearTimeout(timer);
@@ -108,6 +128,9 @@ export function App(): JSX.Element {
     };
     // A solo board is rebuilt for a new game mode; online, the mode only picks the room on join.
   }, [mode, solo, store, mode === 'solo' ? gameMode : null, epoch]);
+
+  // Tell a duplicated tab when this one is playing the player its ticket names.
+  useEffect(() => answerTabs(() => (mode === 'online' && joined.current ? store.you : '')), [mode, store]);
 
   // Every welcome carries a fresh token (the server rotates it on resume):
   // keep the latest, for the next drop and the next refresh.
@@ -140,6 +163,7 @@ export function App(): JSX.Element {
   const enter = (): void => {
     const conn = connRef.current;
     if (!rule || !conn) return;
+    setNotice('');
     try {
       localStorage.setItem('spectacle.name', name);
     } catch {
@@ -193,6 +217,7 @@ export function App(): JSX.Element {
       rule={rule ?? defaultRule(solo.family)}
       name={name}
       inArena={joined.current && !!store.you}
+      notice={notice}
       onMode={setMode}
       onSolo={setSolo}
       onRule={setRule}
