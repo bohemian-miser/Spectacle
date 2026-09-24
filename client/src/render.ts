@@ -13,7 +13,7 @@ import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand'
 import { getSettings, type CircuitStyle, type Settings } from './settings';
 import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
 import type { Camera } from './camera';
-import type { Burst, ClientPath, Store } from './store';
+import type { Burst, ClientPath, ClientPlayer, Store } from './store';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
@@ -55,6 +55,16 @@ const FADE_MS = 650;
 const SPARK_MS = 480;
 const SPARKS = 7;
 
+/** Player name labels: font size (CSS px) and the gap kept from the screen's edge. */
+const LABEL_PX = 12;
+const LABEL_MARGIN = 6;
+
+/** Where a player's name floats: one step of one of their lines. */
+interface LabelAnchor {
+  readonly path: number;
+  readonly step: number;
+}
+
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
   private ctx: CanvasRenderingContext2D;
@@ -82,6 +92,9 @@ export class Renderer {
   /** Tiles inside anyone else's closed circuit (rebuilt with the tints). */
   private rivalInterior = new Set<number>();
   private readonly visible: number[] = [];
+  /** Each player's name sits on one of their tiles; it stays put while that tile is on screen. */
+  private readonly labelAnchors = new Map<string, LabelAnchor>();
+  private readonly labelWidths = new Map<string, number>();
 
   constructor(
     private readonly tileCanvas: HTMLCanvasElement,
@@ -546,6 +559,125 @@ export class Renderer {
     if (store.bursts.length > 0) {
       store.bursts = store.bursts.filter((b) => now - b.born < SPARK_MS);
       for (const b of store.bursts) if (inView(b.at.x, b.at.y)) this.drawBurst(b, now, toScreen);
+    }
+    this.drawNames(toScreen);
+  }
+
+  /**
+   * Each player's name, floating over one of their tiles — one label per
+   * player on screen at most. A label stays on its tile while that tile is in
+   * view (and the line still theirs); otherwise it moves to their tile
+   * nearest the middle of the screen whose label doesn't cover another's.
+   */
+  private drawNames(toScreen: (x: number, y: number) => [number, number]): void {
+    const store = this.store;
+    const ctx = this.ctx;
+    const dpr = this.dpr;
+    const W = this.overlay.width;
+    const H = this.overlay.height;
+    const px = LABEL_PX * dpr;
+    const margin = LABEL_MARGIN * dpr;
+    const lift = Math.max(16, 0.6 * this.camera.scale) * dpr;
+    ctx.font = `600 ${px}px system-ui, -apple-system, Segoe UI, Roboto, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    const widthOf = (name: string): number => {
+      const key = `${px}|${name}`;
+      let w = this.labelWidths.get(key);
+      if (w === undefined) {
+        w = ctx.measureText(name).width;
+        if (this.labelWidths.size > 256) this.labelWidths.clear();
+        this.labelWidths.set(key, w);
+      }
+      return w;
+    };
+    type Rect = readonly [number, number, number, number];
+    const placed: Rect[] = [];
+    /** The label's box for an anchor at screen (x, y), or null if it would leave the screen. */
+    const rectAt = (x: number, y: number, w: number): Rect | null => {
+      const cy = y - lift;
+      const r: Rect = [x - w / 2 - 6 * dpr, cy - px / 2 - 3 * dpr, x + w / 2 + 6 * dpr, cy + px / 2 + 3 * dpr];
+      if (r[0] < margin || r[1] < margin || r[2] > W - margin || r[3] > H - margin) return null;
+      return r;
+    };
+    const free = (r: Rect): boolean => placed.every((q) => r[2] < q[0] || r[0] > q[2] || r[3] < q[1] || r[1] > q[3]);
+    const pointOf = (path: ClientPath, i: number): [number, number] => {
+      const st = path.steps[i];
+      return toScreen((st.a.x + st.b.x) / 2, (st.a.y + st.b.y) / 2);
+    };
+    const labels: { player: ClientPlayer; rect: Rect; x: number; y: number }[] = [];
+    const pending: ClientPlayer[] = [];
+    // Labels that can stay where they were go down first, so they don't jump.
+    for (const player of store.players.values()) {
+      const anchor = this.labelAnchors.get(player.id);
+      const path = anchor && store.paths.get(anchor.path);
+      if (!anchor || !path || path.owner !== player.id || anchor.step >= path.steps.length) {
+        pending.push(player);
+        continue;
+      }
+      const [x, y] = pointOf(path, anchor.step);
+      const r = rectAt(x, y, widthOf(player.name));
+      if (!r || !free(r)) {
+        pending.push(player);
+        continue;
+      }
+      placed.push(r);
+      labels.push({ player, rect: r, x, y });
+    }
+    if (pending.length > 0) {
+      const byOwner = new Map<string, ClientPath[]>();
+      for (const path of store.paths.values()) {
+        const list = byOwner.get(path.owner);
+        if (list) list.push(path);
+        else byOwner.set(path.owner, [path]);
+      }
+      for (const player of pending) {
+        this.labelAnchors.delete(player.id);
+        const paths = byOwner.get(player.id);
+        if (!paths) continue;
+        const w = widthOf(player.name);
+        let best: { anchor: LabelAnchor; rect: Rect; x: number; y: number } | null = null;
+        let bestD = Infinity;
+        for (const path of paths) {
+          for (let i = 0; i < path.steps.length; i++) {
+            const [x, y] = pointOf(path, i);
+            const d = (x - W / 2) ** 2 + (y - H / 2) ** 2;
+            if (d >= bestD) continue;
+            const r = rectAt(x, y, w);
+            if (!r || !free(r)) continue;
+            best = { anchor: { path: path.id, step: i }, rect: r, x, y };
+            bestD = d;
+          }
+        }
+        if (!best) continue;
+        this.labelAnchors.set(player.id, best.anchor);
+        placed.push(best.rect);
+        labels.push({ player, rect: best.rect, x: best.x, y: best.y });
+      }
+    }
+    for (const id of this.labelAnchors.keys()) if (!store.players.has(id)) this.labelAnchors.delete(id);
+    for (const { player, rect, x, y } of labels) {
+      const mine = player.id === store.you;
+      const ink = strandColor(this.board, this.teams ? this.teamColor(mine) : player.color);
+      const cy = (rect[1] + rect[3]) / 2;
+      // A short tick from the label down to the tile it belongs to.
+      ctx.beginPath();
+      ctx.moveTo(x, rect[3]);
+      ctx.lineTo(x, y);
+      ctx.strokeStyle = ink;
+      ctx.lineWidth = 1.5 * dpr;
+      ctx.stroke();
+      // A pill in the ground colour, so the name reads over the saturated tiles.
+      ctx.beginPath();
+      ctx.roundRect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1], (rect[3] - rect[1]) / 2);
+      ctx.globalAlpha = 0.88;
+      ctx.fillStyle = this.board.bgCss;
+      ctx.fill();
+      ctx.globalAlpha = 1;
+      ctx.lineWidth = 1 * dpr;
+      ctx.stroke();
+      ctx.fillStyle = ink;
+      ctx.fillText(player.name, x, cy);
     }
   }
 
