@@ -77,7 +77,7 @@ tests/            vitest. strand.test.ts pins the local walker against the
                   resume.test.ts spawns the real server.
 scripts/smoke.ts  Headless Chromium round (needs PW_EXE or playwright browsers).
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
-deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh), e2-micro VM
+deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
                   solo), publish.yml (GHCR image), pages.yml (solo build),
@@ -221,6 +221,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   and most players are in North America). Cloud Run (scale to zero) via CI is
   the intended path; the free e2-micro VM is the alternative. Session resume
   covers Cloud Run's hourly WebSocket cap.
+- **Custom domain** = a Cloud Run domain mapping (`deploy/gcp/domain.sh`),
+  bought from an outside registrar (Cloudflare suggested), records DNS-only.
+  Not a load balancer (standing cost kills scale-to-zero), not Firebase
+  Hosting (no WebSockets). The VM path takes `DOMAIN=` and Caddy does TLS.
 - **CI auth is Workload Identity Federation, never a key.** The org enforces
   `constraints/iam.disableServiceAccountKeyCreation`, so a service-account key
   cannot be created at all — and shouldn't be. `setup-ci.sh` builds a pool

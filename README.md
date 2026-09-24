@@ -320,6 +320,16 @@ same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 5 min), so
 nobody notices. A page refresh does the same: the tab keeps its resume ticket
 in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
 
+*A domain for Cloud Run.* Buy one anywhere — Cloudflare Registrar sells at
+cost with free DNS — then run `DOMAIN=play.example.com ./deploy/gcp/domain.sh`
+(`WWW=1` adds `www.`). The first run has you verify the root domain in Search
+Console with a TXT record; the second creates a Cloud Run domain mapping and
+prints the DNS records to add. Set them *DNS only* on Cloudflare (not
+proxied). Google issues the certificate once they resolve. A mapping has no
+standing cost, unlike a load balancer (~$18/month idle), and passes WebSockets
+through; Firebase Hosting in front would not. Finally set
+`SPECTACLE_ONLINE_URL` to the new address so the Pages build links to it.
+
 **A free `e2-micro` VM — always on.** One `e2-micro` in `us-west1`,
 `us-central1` or `us-east1` is in the always-free tier, so idle is free
 anyway and there is nothing to scale down; it just keeps the arena warm.
