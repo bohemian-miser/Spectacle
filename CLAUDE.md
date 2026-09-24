@@ -65,7 +65,8 @@ client/src/       Vite + React.
                   and readBoardTheme() — the canvas half of the scheme, read
                   back out of the CSS tokens.
   settings.ts     Board display settings (localStorage): circuit style a–e
-                  (?circuits= overrides), plain board. SettingsButton.tsx is
+                  (?circuits= overrides), plain board and team colours (both
+                  on by default). SettingsButton.tsx is
                   the ⚙ button + modal (theme, circuit colours, plain board).
   styles.css      Spectre's explorer tokens, both schemes, incl. the board
                   knobs (--tile-*, --board-*, --strand-darken).

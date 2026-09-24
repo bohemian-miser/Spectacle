@@ -67,8 +67,8 @@ line and you both die.
 <td><img src="docs/images/settings.png" alt="The settings panel over a live board"></td>
 </tr>
 <tr>
-<td><b>Team colours</b> (press <kbd>T</kbd>): you in blue, everyone else in red.</td>
-<td><b>Settings apply live</b> — theme, five circuit-colour styles, a plain board, team colours.</td>
+<td><b>Team colours</b> (on by default; press <kbd>T</kbd>): you in blue, everyone else in red.</td>
+<td><b>Settings apply live</b> — theme, five circuit-colour styles, a plain board and team colours (both on by default).</td>
 </tr>
 </table>
 

@@ -15,6 +15,9 @@ const browser = await chromium.launch(process.env.PW_EXE ? { executablePath: pro
 
 async function open(url: string, theme: string, name: string): Promise<Page> {
   const page = await browser.newPage({ viewport: { width: 1400, height: 860 }, deviceScaleFactor: 1 });
+  // The shots show the tile palette and player colours; plain board and team
+  // colours are the defaults, so switch them off (T turns teams on for shot 4).
+  await page.addInitScript(() => localStorage.setItem('spectacle.settings', JSON.stringify({ plainTiles: false, teams: false })));
   await page.goto(`${url}?gl=0&theme=${theme}`);
   await page.getByPlaceholder('player name').fill(name);
   return page;

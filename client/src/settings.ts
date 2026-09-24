@@ -56,8 +56,9 @@ function load(): Settings {
   const param = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('circuits');
   return {
     circuitStyle: parseCircuitStyle(param) ?? parseCircuitStyle(saved.circuitStyle) ?? 'a',
-    plainTiles: saved.plainTiles === true,
-    teams: saved.teams === true,
+    // Both on unless the player has switched them off.
+    plainTiles: saved.plainTiles !== false,
+    teams: saved.teams !== false,
   };
 }
 
