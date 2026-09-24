@@ -24,6 +24,10 @@ export interface ArenaProps {
   onNewRule(): void;
   /** Leave the arena for the lobby (mode, online or solo, …). */
   onLeave(): void;
+  /** Online, disconnected, and reconnecting hasn't worked for a while. */
+  readonly struggling: boolean;
+  /** Give up on the online arena and switch to solo. */
+  onGiveUp(): void;
 }
 
 interface PointerState {
@@ -61,7 +65,7 @@ const PAINT_TAP_MS = 120;
 /** Hold a press this long without moving to paint instead of pan. */
 const HOLD_MS = 300;
 
-export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Element {
+export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tileCanvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
@@ -334,18 +338,32 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
       />
 
       <div className="hud hud-me" style={{ ['--me' as string]: me ? swatch(me.color, true) : 'var(--text)' }}>
-        <button type="button" className="hud-leave" onClick={onLeave} title="Leave the arena: game mode, online or solo" aria-label="Leave the arena">
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6M10.5 11l3-3-3-3M13.2 8H6"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+        <div className="hud-corner">
+          {store.room && (
+            <button type="button" className="hud-icon" onClick={() => void invite()} title="Invite: copy a link that brings people into this room" aria-label="Copy an invite link to this room">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <g fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="3.5" r="1.8" />
+                  <circle cx="4" cy="8" r="1.8" />
+                  <circle cx="12" cy="12.5" r="1.8" />
+                  <path d="M5.6 7.1l4.8-2.7M5.6 8.9l4.8 2.7" />
+                </g>
+              </svg>
+            </button>
+          )}
+          <button type="button" className="hud-icon hud-leave" onClick={onLeave} title="Leave the arena: game mode, online or solo" aria-label="Leave the arena">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6M10.5 11l3-3-3-3M13.2 8H6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
         <div className="hud-name">
           <span className="swatch" /> {me?.name ?? '…'}
         </div>
@@ -367,11 +385,6 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
             New rule
           </button>
-          {store.room && (
-            <button type="button" className="btn" onClick={() => void invite()} title="Copy a link that brings people into this room">
-              Invite
-            </button>
-          )}
           <SettingsButton />
         </div>
       </div>
@@ -441,7 +454,21 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
         ))}
       </div>
 
-      {!store.connected && <div className="overlay">Reconnecting…</div>}
+      {!store.connected && (
+        <div className="overlay">
+          <div>
+            Reconnecting…
+            {struggling && (
+              <div className="overlay-fallback">
+                Still trying —{' '}
+                <button type="button" className="btn-link" onClick={onGiveUp}>
+                  play bots instead
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

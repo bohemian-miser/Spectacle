@@ -11,13 +11,35 @@
  *   FIELD_ROOT    (Delta)    root tile type
  *   BOTS          (1)        bot players per room
  *   ROOM_SIZE     (10)       humans per room before another opens
- *   MAX_ROOMS     (24)       rooms at most (then joiners share the emptiest)
+ *   MAX_ROOMS     (80)       rooms at most (then joiners share the emptiest)
  *   ROOM_IDLE_MS  (60000)    an extra empty room closes after this long
+ *   MAX_INSTANCE_PLAYERS (400) humans this process will hold at once; past it,
+ *                            a join is refused with `error.code: 'full'` so the
+ *                            client can offer bots instead of piling on more
+ *                            state. Sized for one vCPU (80 players measured at
+ *                            ~10% of a core) and --memory=1Gi at FIELD_LEVEL=6
+ *                            — raise it only alongside more CPU and memory.
  *   SEED          (random)   RNG seed
  *   RESUME_GRACE_MS (300000) how long a dropped player is kept for `join.resume`
  *   STATS_KEY     (unset)    serves /patterns?key=… (which rules people play, and their scores); unset = off
  *   STATS_FILE    (unset)    keep those pattern stats in this JSON file across restarts
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
+ *
+ * Scaling past one instance: this process holds all its rooms in memory, so it
+ * cannot share state with another instance — but it doesn't need to. Every
+ * room is self-contained (its own engine, its own players), so Cloud Run can
+ * run many instances of this same image side by side, each an independent
+ * pool of rooms. Cloud Run sends a new connection to another instance (or
+ * starts one) once this one holds `--concurrency` open sockets, which the
+ * deploy sets a little above MAX_INSTANCE_PLAYERS. MAX_INSTANCE_PLAYERS is the
+ * backstop that keeps any *one* instance from growing without bound: once it
+ * is home to that many humans it refuses new joins cleanly on the socket they
+ * came in on (the client then offers bots) rather than holding more than its
+ * CPU and memory allow. Named (`?room=`) rooms and resume tickets live in one
+ * process, so with more than one instance an invite or a reconnect can land
+ * on the wrong one (README's "Scaling for a surge"). See
+ * deploy/gcp/cloudrun.sh and .github/workflows/deploy-cloudrun.yml for the
+ * instance-count and memory knobs, and README.md's "Scaling for a surge".
  */
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
@@ -41,6 +63,12 @@ import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 const PORT = Number(process.env.PORT ?? 8787);
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DIST = join(ROOT, 'dist');
+
+/** A positive integer from the environment; anything unset, empty or unparseable is `fallback`. */
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return raw !== undefined && raw.trim() !== '' && Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
 
 function fieldSpecFromEnv(): FieldSpec {
   const family = (process.env.FIELD_FAMILY ?? DEFAULT_FIELD_SPEC.family) as TileFamilyId;
@@ -82,9 +110,16 @@ const BOTS = Number(process.env.BOTS ?? 1);
 /** Humans per room before the next joiner is put in a new one. */
 const ROOM_SIZE = Math.max(1, Number(process.env.ROOM_SIZE ?? 10));
 /** Rooms at most, all modes together; past it, joiners squeeze into the emptiest room of their mode. */
-const MAX_ROOMS = Math.max(GAME_MODES.length, Number(process.env.MAX_ROOMS ?? 24));
+const MAX_ROOMS = Math.max(GAME_MODES.length, Number(process.env.MAX_ROOMS ?? 80));
 /** An extra room nobody is in (or holding for) is closed after this long. */
 const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS ?? 60_000);
+/**
+ * Humans this one process will hold before it refuses new joins (existing
+ * players reconnecting via `join.resume` are exempt — they add no new load).
+ * The hard backstop against an unbounded single instance: see the file
+ * header's "Scaling past one instance".
+ */
+const MAX_INSTANCE_PLAYERS = positiveInt(process.env.MAX_INSTANCE_PLAYERS, 400);
 /**
  * A socket this far behind on sends is dropped (it can resume) rather than
  * buffered forever. Its welcome doesn't count: that snapshot is one message,
@@ -169,7 +204,17 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   }
   if (url.pathname === '/healthz') {
     res.writeHead(200, { 'content-type': 'application/json' });
-    res.end(JSON.stringify({ ok: true, players: humansOnline(), tiles: field.count, spec, rooms: [...rooms.values()].map((r) => r.summary()) }));
+    res.end(
+      JSON.stringify({
+        ok: true,
+        players: humansOnline(),
+        maxPlayers: MAX_INSTANCE_PLAYERS,
+        atCapacity: atCapacity(),
+        tiles: field.count,
+        spec,
+        rooms: [...rooms.values()].map((r) => r.summary()),
+      }),
+    );
     return;
   }
   if (!existsSync(DIST)) {
@@ -364,6 +409,11 @@ function humansOnline(): number {
   return n;
 }
 
+/** This instance is at its hard cap: refuse new joins (existing players may still resume). */
+function atCapacity(): boolean {
+  return humansOnline() >= MAX_INSTANCE_PLAYERS;
+}
+
 for (const mode of GAME_MODES) openRoom(mode);
 
 // --- connections -------------------------------------------------------------
@@ -503,6 +553,13 @@ wss.on('connection', (ws) => {
           welcome(client, resumed);
           return;
         }
+        // A brand new player, not a returning one (those went through
+        // tryResume above): this is the load a capacity refusal protects
+        // against, so check it before doing any more work.
+        if (atCapacity()) {
+          send(ws, { t: 'error', message: "This server is full right now — try again shortly, or play bots (no server needed).", code: 'full' });
+          return;
+        }
         const rule = validateRule(msg.rule, field.family);
         if (!rule) {
           send(ws, { t: 'error', message: 'invalid rule for this arena' });
@@ -510,7 +567,7 @@ wss.on('connection', (ws) => {
         }
         const target = roomForJoin(isGameMode(msg.mode) ? msg.mode : 'normal', msg.room);
         if (target.engine.players.size >= target.knobs.maxPlayers) {
-          send(ws, { t: 'error', message: 'arena full' });
+          send(ws, { t: 'error', message: 'This room is full — try again shortly, or play bots.', code: 'full' });
           return;
         }
         const ev = target.engine.addPlayer(client.id, cleanName(msg.name), rule);

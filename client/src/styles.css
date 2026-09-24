@@ -178,10 +178,8 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   max-width: min(92vw, 360px);
 }
 .hud-me { left: 12px; top: 12px; border-left: 4px solid var(--me); position: relative; }
-.hud-leave {
-  position: absolute;
-  top: 6px;
-  right: 6px;
+.hud-corner { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; }
+.hud-icon {
   width: 22px;
   height: 22px;
   display: flex;
@@ -194,8 +192,8 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   color: var(--muted);
   cursor: pointer;
 }
-.hud-leave:hover { background: var(--panel-2); color: var(--text); }
-.hud-name { font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.hud-icon:hover { background: var(--panel-2); color: var(--text); }
+.hud-name { padding-right: 48px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
 .hud-name .swatch { background: var(--me); }
 .hud-score-row { display: flex; align-items: baseline; gap: 8px; }
 .hud-score { font-size: 34px; font-weight: 700; line-height: 1.1; }
@@ -234,7 +232,20 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .toast.is-good { border-color: var(--good); }
 .toast.is-bad { border-color: var(--bad); }
 @keyframes toast-in { from { opacity: 0; transform: translateY(-6px); } to { opacity: 1; transform: none; } }
-.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); font-size: 20px; }
+.overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); font-size: 20px; text-align: center; }
+.overlay-fallback { margin-top: 8px; font-size: 14px; color: var(--muted); }
+.btn-link {
+  background: none;
+  border: none;
+  padding: 0;
+  margin: 0;
+  font: inherit;
+  font-size: inherit;
+  color: var(--accent);
+  text-decoration: underline;
+  cursor: pointer;
+}
+.btn-link:hover { opacity: 0.85; }
 
 @media (max-width: 640px) {
   .thumbs { grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); }

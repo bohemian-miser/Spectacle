@@ -246,9 +246,13 @@ flowchart LR
   runs the engine on a 50 ms tick and broadcasts batched events. The field is
   deterministic from `(family, level, rootTile)`, so only that spec travels;
   clients draw lines from the event stream without knowing anyone's rule.
-- **Cloud Run, scale to zero.** At most one instance, none when idle. The hourly
-  WebSocket cap is invisible: the client reconnects and resumes the same player
-  with a single-use token (kept for 5 minutes).
+- **Cloud Run, scale to zero — and scale out.** None when idle, up to
+  `SPECTACLE_MAX_INSTANCES` (default 30) under a surge; every instance is a
+  self-contained pool of rooms (see "Scaling for a surge" below). The hourly
+  WebSocket cap is invisible while one instance is running: the client
+  reconnects and resumes the same player with a single-use token (kept for 5
+  minutes). With several instances that resume, and `?room=` invite links,
+  depend on reaching the same one — see the caveat below.
 - **Keyless CI.** Every merge to `main` builds the image and deploys it through
   Workload Identity Federation pinned to this repository — there is no
   service-account key anywhere.
@@ -282,8 +286,9 @@ Server environment:
 | `FIELD_ROOT` | `Delta` | root tile of the patch |
 | `BOTS` | `1` | bot players per room (random clean rules, occasionally aggressive) |
 | `ROOM_SIZE` | `10` | humans per room; the next joiner of that mode gets a new room |
-| `MAX_ROOMS` | `24` | rooms at most, all modes; past it joiners share the emptiest room of their mode |
+| `MAX_ROOMS` | `80` | rooms at most, all modes; past it joiners share the emptiest room of their mode |
 | `ROOM_IDLE_MS` | `60000` | an extra room nobody is in (or holding for) closes after this long |
+| `MAX_INSTANCE_PLAYERS` | `400` | humans this **process** holds before it refuses new joins (`error.code: 'full'`) — see "Scaling for a surge" |
 | `SEED` | random | RNG seed |
 | `KNOB_*` | see knobs.ts | any gameplay knob |
 
@@ -313,10 +318,12 @@ builds the image and deploys it (`.github/workflows/deploy-cloudrun.yml`) —
 nobody needs GCP credentials day to day, and the workflow is skipped until
 `GCP_PROJECT` is set.
 `./deploy/gcp/cloudrun.sh` does the same by hand from a laptop. Either way:
-one instance at most, none when idle.
-While people are connected you pay for one small instance; when the last one
-leaves it is retired after about fifteen idle minutes, and idle costs nothing.
-The free tier covers roughly fifty instance-hours a month. Cloud Run caps a
+one small instance is enough for ordinary traffic, none when idle, and Cloud
+Run adds more on its own if a surge needs them (see "Scaling for a surge").
+While people are connected you pay for the instances actually running; when
+an instance's last player leaves it is retired after about fifteen idle
+minutes, and idle costs nothing. The free tier covers roughly fifty
+instance-hours a month. Cloud Run caps a
 request, and so a WebSocket, at an hour; the client reconnects and resumes the
 same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 5 min), so
 nobody notices. A page refresh does the same: the tab keeps its resume ticket
@@ -333,11 +340,12 @@ rule and mode, how many stints (one player on one rule) it had, the time spent
 on it, best and mean final score, and circuits — people and bots apart. It is
 off without the key, and never on `/status`. Every finished stint is also one
 JSON line in the logs (`jsonPayload.message="stint"` in Cloud Logging), which
-outlives restarts; on the VM, `STATS_FILE` keeps the table in a file.
+outlives restarts and covers every instance (the page shows only the instance
+that answered); on the VM, `STATS_FILE` keeps the table in a file.
 
 *Private rooms.* `/?room=anything` puts everyone who opens it in the same room
 (a new one by that name if none exists); matchmaking never sends strangers
-in. The Invite button in the arena copies the link to the room you are in.
+in. The share icon beside the exit in the arena copies the link to the room you are in.
 
 *A domain for Cloud Run.* Buy one anywhere — Cloudflare Registrar sells at
 cost with free DNS — then run `DOMAIN=play.example.com ./deploy/gcp/domain.sh`
@@ -372,6 +380,78 @@ anyway and there is nothing to scale down; it just keeps the arena warm.
 Stop the VM: `gcloud compute instances stop spectacle --zone us-central1-a`.
 Either way, egress beyond the free 1 GB/month is the only cost that scales
 with players.
+
+## Scaling for a surge
+
+The game shares one authoritative field per player, so a room can't be split
+across machines — but it doesn't need to be. Every room is entirely
+self-contained (its own engine, its own players), so one server process can
+run many independent rooms at once, and many server processes can each run
+their own independent pool of rooms with nothing shared between them. Each
+open WebSocket counts against an instance's `--concurrency` (default 500);
+once an instance holds that many, Cloud Run sends new connections to another
+instance or starts one (`SPECTACLE_MAX_INSTANCES`, default 30 — raising it
+costs nothing while idle, since Cloud Run only bills for instances actually
+running).
+
+What keeps any *one* instance safe is `MAX_INSTANCE_PLAYERS` (default 400,
+a little under `--concurrency` because lobby sockets count too): once an
+instance is home to that many humans, it refuses the next join outright —
+cheaply, before doing any of the work a real join takes — rather than
+holding more than one vCPU and `--memory=1Gi` allow. The refusal comes back
+on the socket the player is already connected on, so it is not rerouted; it
+names itself (`error.code: 'full'`) so the client can offer bots.
+
+**The catch with more than one instance.** A `?room=` invite link's room,
+and a dropped player's resume ticket, live in the memory of one instance.
+Cloud Run's session affinity is a best-effort cookie per browser, so a
+reconnect usually gets back to the same instance but isn't guaranteed to
+(a miss joins as a new player), and a *friend* following an invite has no
+way to reach the inviter's instance at all — they can land on another one
+and find an empty room of the same name. While traffic fits on one instance
+(the usual case) none of this shows. Setting `SPECTACLE_MAX_INSTANCES=1`
+keeps invites and resume exact, at the price of capping the online arena at
+one instance's players (everyone past it is offered bots).
+
+That refusal is also where the client's own fallback kicks in: the lobby
+shows the reason and a **Play bots instead** link straight away, and if the
+arena is simply unreachable (down, overloaded, a bad network) rather than
+explicitly full, the client offers the same link after a few seconds of
+failed reconnect attempts — both in the lobby and, mid-game, in the
+"Reconnecting…" overlay. One click switches to the same engine and bots
+running entirely in the tab: no server round trip, nothing to be too busy
+for. It is the same code path as the *Solo, in this tab* button, so it is
+exactly as reliable as `npm run build`. The GitHub Pages build
+(`bohemian-miser.github.io/Spectacle`) is this same fallback with nothing to
+overload in the first place — it is a static file, served from a CDN, with
+no server behind it at all, so there is no meaningful traffic level that
+takes it down. Sharing that link alongside the online one means a spike in
+interest is never a reason nobody can play.
+
+Ahead of an expected spike, without touching code:
+
+- Raise `SPECTACLE_MAX_INSTANCES` (repo variable) well above the default 30
+  if you expect enough concurrent players to need it — each instance holds
+  up to `MAX_INSTANCE_PLAYERS`, so instances × that is the real ceiling.
+- Set `SPECTACLE_MIN_INSTANCES` to 1 or more so the first arrivals never pay
+  a cold start (a few seconds to build the field) while Cloud Run scales up
+  from zero; unset (0) is the usual scale-to-zero default.
+- `SPECTACLE_MAX_INSTANCE_PLAYERS` (default `400`), `SPECTACLE_CONCURRENCY`
+  (default `500`) and the instance's size move together. A local load test
+  measured 80 simulated players at ~10% of a core and ~30 MB on top of the
+  ~540 MB a `FIELD_LEVEL=6` field costs at idle, so 400 players is about half
+  of one vCPU and well inside `1Gi`. For more per instance, raise CPU as well
+  as memory (e.g. `--cpu=2 --memory=2Gi` for a cap of 800).
+- All of these are repo variables read by `.github/workflows/deploy-cloudrun.yml`,
+  or `MAX_INSTANCES=… MIN_INSTANCES=… MEMORY=… CONCURRENCY=… MAX_INSTANCE_PLAYERS=… ./deploy/gcp/cloudrun.sh`
+  by hand. `gcloud run services update spectacle --region … --update-env-vars MAX_INSTANCE_PLAYERS=…`
+  changes a live service without a rebuild, but it starts a new revision
+  (rooms reset) and the next CI deploy puts the repo variables back.
+
+None of this needs guessing at "100,000 people" in advance: the defaults
+already fail closed rather than falling over, the client already knows what
+to do about it, and the knobs above are there for whenever real numbers say
+to turn them up.
 
 ## How it is built
 
