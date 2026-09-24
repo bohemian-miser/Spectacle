@@ -19,6 +19,10 @@ export interface LobbyProps {
   readonly inArena: boolean;
   /** Why the player is back here, if not by choice. */
   readonly notice?: string;
+  /** Online and can't reach the server after a few tries. */
+  readonly struggling: boolean;
+  /** Give up on the online arena and switch to solo. */
+  onGiveUp(): void;
   onMode(mode: Mode): void;
   onSolo(opts: SoloOptions): void;
   onGameMode(mode: GameMode): void;
@@ -44,7 +48,8 @@ function tileCount(family: TileFamilyId, level: number): number {
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, gameMode, rule, name, inArena, notice, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } = props;
+  const { store, mode, solo, gameMode, rule, name, inArena, notice, struggling, onGiveUp, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } =
+    props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
@@ -70,7 +75,19 @@ export function Lobby(props: LobbyProps): JSX.Element {
       {!inArena && (
         <section className="panel">
           <h2>Where</h2>
-          {notice && <p className="lobby-notice">{notice}</p>}
+          {notice && (
+            <p className="lobby-notice">
+              {notice}
+              {mode === 'online' && (
+                <>
+                  {' '}
+                  <button type="button" className="btn-link" onClick={onGiveUp}>
+                    Play solo instead
+                  </button>
+                </>
+              )}
+            </p>
+          )}
           {!SOLO_ONLY && (
             <div className="mode-row">
               <button type="button" className={`btn${mode === 'online' ? ' is-on' : ''}`} onClick={() => onMode('online')}>
@@ -167,8 +184,22 @@ export function Lobby(props: LobbyProps): JSX.Element {
         </p>
         {hello ? (
           <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} onDrafting={setDrafting} />
+        ) : mode === 'online' ? (
+          <p className="muted">
+            Connecting to the arena…
+            {struggling && (
+              <>
+                {' '}
+                Having trouble reaching it —{' '}
+                <button type="button" className="btn-link" onClick={onGiveUp}>
+                  play solo instead
+                </button>
+                , no server needed.
+              </>
+            )}
+          </p>
         ) : (
-          <p className="muted">{mode === 'online' ? 'Connecting to the arena…' : 'Building the field…'}</p>
+          <p className="muted">Building the field…</p>
         )}
       </section>
 

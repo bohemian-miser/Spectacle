@@ -55,14 +55,25 @@ jobs:
           service: spectacle
           region: ${{ vars.GCP_REGION }}
           image: ${{ env.IMAGE }}:${{ github.sha }}
+          # min-instances stays 0 by default (scale to zero, the point of Cloud
+          # Run here) — set SPECTACLE_MIN_INSTANCES to keep one or more warm
+          # ahead of expected traffic, trading idle cost for no cold start.
+          # max-instances is what lets a surge actually scale out: each
+          # instance is a self-contained pool of rooms (see server/index.ts's
+          # "Scaling past one instance"), so raising it costs nothing while
+          # idle and is safe to leave high. cpu-boost speeds up every cold
+          # start's field build (README.md's "Scaling for a surge").
           flags: >-
             --allow-unauthenticated
-            --min-instances=0 --max-instances=1
+            --min-instances=${{ vars.SPECTACLE_MIN_INSTANCES || '0' }}
+            --max-instances=${{ vars.SPECTACLE_MAX_INSTANCES || '30' }}
             --concurrency=1000 --timeout=3600
-            --cpu=1 --memory=1Gi
+            --cpu=1 --memory=${{ vars.SPECTACLE_MEMORY || '1Gi' }}
+            --cpu-boost
             --session-affinity
           env_vars: |
             BOTS=${{ vars.SPECTACLE_BOTS || '1' }}
             FIELD_FAMILY=${{ vars.SPECTACLE_FIELD_FAMILY || 'hex' }}
             FIELD_LEVEL=${{ vars.SPECTACLE_FIELD_LEVEL || '6' }}
+            MAX_INSTANCE_PLAYERS=${{ vars.SPECTACLE_MAX_INSTANCE_PLAYERS || '800' }}
       - run: echo "Deployed to ${{ steps.deploy.outputs.url }}"

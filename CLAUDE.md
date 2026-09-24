@@ -130,12 +130,45 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Rooms.** The server keeps rooms per mode (`normal-1`, `conquest-1`, …),
   all sharing one `Field`. A join goes to the fullest room of its mode under
   `ROOM_SIZE` (10) humans (held-for-resume players count), else a new room
-  (up to `MAX_ROOMS`, 24), else the emptiest. A room with no sockets doesn't
+  (up to `MAX_ROOMS`, 80), else the emptiest. A room with no sockets doesn't
   tick; an extra one empty for `ROOM_IDLE_MS` closes (one per mode stays).
-  Player ids are global, so a resume ticket finds its room. It is one Node
-  process by design (`--max-instances=1`): at level 6 the field is ~540 MB
-  RSS idle and 80 players in 9 rooms add ~30 MB and ~10% of a core, hence
-  `--memory=1Gi`.
+  Player ids are global, so a resume ticket finds its room.
+- **Scaling: many self-contained processes, each with a hard ceiling.** A
+  process's rooms share only its `Field` — no cross-process state — so
+  Cloud Run can run many instances side by side (`SPECTACLE_MAX_INSTANCES`,
+  default 30) with nothing to coordinate; its load balancer spreads new
+  connections across whichever have room. What keeps *one* instance from
+  growing unbounded under a surge is `MAX_INSTANCE_PLAYERS` (default 800,
+  checked in the `join` handler before `roomFor`/`validateRule` do any
+  work): at or past it, a join is refused with `error.code: 'full'` — never
+  a `roomFor` squeeze past it, which is what protects against the
+  `roomFor` edge case where every room of a mode is at `knobs.maxPlayers`
+  (200) and it would otherwise keep opening rooms past `MAX_ROOMS`. A
+  `join.resume` is exempt (checked separately, before the cap): it replaces
+  a player already counted, never adds one. `/healthz` reports
+  `maxPlayers`/`atCapacity` for monitoring. At level 6 the field is ~540 MB
+  RSS idle and 80 players across 9 rooms add ~30 MB and ~10% of a core
+  (a local load test), hence the 800/`--memory=1Gi` pairing — the two move
+  together (see README's "Scaling for a surge", the operator-facing version
+  of this note).
+- **Client fallback: never a silent dead end.** `error.code` (protocol.ts)
+  gives the client a machine-readable reason instead of parsing text.
+  `store.lastError` (a fresh object every time, even a repeat message, so a
+  `useEffect` keyed on it always re-fires) drives two things in `App.tsx`:
+  (1) a join refused while `!store.you` rolls the optimistic
+  `joined.current`/`screen` back to the lobby with the reason shown
+  (`notice`) instead of leaving `Arena` rendered with no player — this was a
+  latent bug before `MAX_INSTANCE_PLAYERS` existed (an `'invalid rule'`
+  refusal hit the same dead end) and is now much more reachable, hence
+  fixing it here; (2) `STRUGGLE_ATTEMPTS` (3) failed reconnects flips
+  `struggling`, which adds a **play solo instead** link — both to the
+  lobby's "Connecting…" message and, mid-game, inside the "Reconnecting…"
+  overlay — that calls `leaveToSolo` (`{t:'leave'}` best-effort, clears the
+  session, `setMode('solo')`). Switching mode always goes through
+  `changeMode`, which clears `notice` — a stale "arena full" banner must not
+  survive into solo. `retry.current` keeps backing off and retrying in the
+  background regardless, so it still recovers on its own if the server
+  comes back.
 - **Speed** in tiles/s: `(1000 / baseStepMs)(1 + score·speedPerPoint) /
   speedDivisor + speedOffset` (÷10, +5), capped at `maxSpeedFor` (500 at the
   242k-tile reference, log-scaled). `speedFor` / `stepIntervalMs`.

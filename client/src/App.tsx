@@ -44,6 +44,15 @@ function initialMode(): Mode {
   return new URLSearchParams(location.search).has('solo') ? 'solo' : 'online';
 }
 
+/**
+ * Consecutive failed connect attempts before we stop just retrying silently
+ * and offer solo instead — a busy or overloaded server should never leave a
+ * player staring at "Connecting…" with no way out. At the default backoff
+ * (500ms, 1s, 2s, …) this is a few seconds in; retries keep going in the
+ * background after, so it still recovers on its own if the server comes back.
+ */
+const STRUGGLE_ATTEMPTS = 3;
+
 export function App(): JSX.Element {
   const store = useMemo(() => new Store(), []);
   useStore(store);
@@ -57,6 +66,8 @@ export function App(): JSX.Element {
   const [rule, setRule] = useState<PlayerRule | null>(null);
   /** Why the lobby is back when the player didn't ask for it. */
   const [notice, setNotice] = useState('');
+  /** Online, can't reach the server after a few tries — offer solo instead of just spinning. */
+  const [struggling, setStruggling] = useState(false);
   const connRef = useRef<GameConnection | null>(null);
   const joined = useRef(false);
   const retry = useRef(0);
@@ -68,6 +79,7 @@ export function App(): JSX.Element {
     let timer = 0;
     let disposed = false;
     joined.current = false;
+    setStruggling(false);
     // A refresh lands here with the tab's saved session: go straight back in.
     const saved = mode === 'online' ? loadSession() : null;
     rejoin.current = saved ? { ...saved, mode: saved.mode ?? 'normal' } : null;
@@ -80,6 +92,7 @@ export function App(): JSX.Element {
       conn.open(
         () => {
           retry.current = 0;
+          setStruggling(false);
           // Back online after a drop or a refresh: rejoin straight away,
           // resuming if the server still has us, so the arena never shows the
           // lobby.
@@ -102,6 +115,9 @@ export function App(): JSX.Element {
           } else if (rejoin.current && store.resume) rejoin.current.resume = store.resume;
           store.reset();
           if (!rejoin.current) setScreen('lobby');
+          // Still retrying in the background either way (below) — this only
+          // stops presenting it as a silent, endless spinner.
+          if (mode === 'online' && retry.current >= STRUGGLE_ATTEMPTS) setStruggling(true);
           const delay = Math.min(10_000, 500 * 2 ** retry.current++);
           timer = window.setTimeout(connect, delay);
         },
@@ -160,6 +176,17 @@ export function App(): JSX.Element {
     if (store.hello && (!rule || rule.family !== store.hello.field.family)) setRule(defaultRule(store.hello.field.family));
   }, [store.hello, rule]);
 
+  // A join was refused (the arena's full, an invalid rule, …): back out of
+  // the optimistic "joined" state to the lobby with the reason, rather than
+  // leaving the player looking at an empty arena that never welcomes them.
+  useEffect(() => {
+    if (!store.lastError || store.you || !joined.current) return;
+    joined.current = false;
+    rejoin.current = null;
+    setScreen('lobby');
+    setNotice(store.lastError.message);
+  }, [store.lastError, store]);
+
   const enter = (): void => {
     const conn = connRef.current;
     if (!rule || !conn) return;
@@ -189,6 +216,22 @@ export function App(): JSX.Element {
     setEpoch((n) => n + 1);
   };
 
+  /** Switch between online and solo, clearing any notice left over from the mode being left. */
+  const changeMode = (m: Mode): void => {
+    setNotice('');
+    setMode(m);
+  };
+
+  /** Give up on the online arena (it's full, or unreachable) and switch to solo, in this tab. */
+  const leaveToSolo = (): void => {
+    connRef.current?.send({ t: 'leave' });
+    clearSession();
+    rejoin.current = null;
+    joined.current = false;
+    setStruggling(false);
+    changeMode('solo');
+  };
+
   /** Put the edited rule in captured slot `index` instead of restarting on it. */
   const swap = (index: number): void => {
     const conn = connRef.current;
@@ -198,7 +241,16 @@ export function App(): JSX.Element {
   };
 
   if (screen === 'arena' && (store.you || rejoin.current) && connRef.current) {
-    return <Arena store={store} conn={connRef.current} onNewRule={() => setScreen('lobby')} onLeave={leave} />;
+    return (
+      <Arena
+        store={store}
+        conn={connRef.current}
+        onNewRule={() => setScreen('lobby')}
+        onLeave={leave}
+        struggling={mode === 'online' && struggling}
+        onGiveUp={leaveToSolo}
+      />
+    );
   }
   return (
     <Lobby
@@ -206,6 +258,8 @@ export function App(): JSX.Element {
       mode={mode}
       solo={solo}
       gameMode={gameMode}
+      struggling={mode === 'online' && struggling}
+      onGiveUp={leaveToSolo}
       onGameMode={(m) => {
         setGameMode(m);
         try {
@@ -218,7 +272,7 @@ export function App(): JSX.Element {
       name={name}
       inArena={joined.current && !!store.you}
       notice={notice}
-      onMode={setMode}
+      onMode={changeMode}
       onSolo={setSolo}
       onRule={setRule}
       onName={setName}
