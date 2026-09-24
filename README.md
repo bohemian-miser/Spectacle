@@ -328,6 +328,13 @@ and the recent log (the same lines go to Cloud Run's logs). Every merge to
 `main` redeploys, and a redeploy drops everyone connected and starts an empty
 board, so merge when nobody is playing.
 
+*Which patterns people play.* Set `STATS_KEY` and `/patterns?key=…` shows, per
+rule and mode, how many stints (one player on one rule) it had, the time spent
+on it, best and mean final score, and circuits — people and bots apart. It is
+off without the key, and never on `/status`. Every finished stint is also one
+JSON line in the logs (`jsonPayload.message="stint"` in Cloud Logging), which
+outlives restarts; on the VM, `STATS_FILE` keeps the table in a file.
+
 *Private rooms.* `/?room=anything` puts everyone who opens it in the same room
 (a new one by that name if none exists); matchmaking never sends strangers
 in. The Invite button in the arena copies the link to the room you are in.
