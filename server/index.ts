@@ -65,8 +65,12 @@ const ROOM_SIZE = Math.max(1, Number(process.env.ROOM_SIZE ?? 10));
 const MAX_ROOMS = Math.max(GAME_MODES.length, Number(process.env.MAX_ROOMS ?? 24));
 /** An extra room nobody is in (or holding for) is closed after this long. */
 const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS ?? 60_000);
-/** A socket this far behind on sends is dropped (it can resume) rather than buffered forever. */
-const MAX_BUFFERED = 4 * 1024 * 1024;
+/**
+ * A socket this far behind on sends is dropped (it can resume) rather than
+ * buffered forever. Its welcome doesn't count: that snapshot is one message,
+ * and on a busy board it alone can be bigger than this.
+ */
+const MAX_BUFFERED = Number(process.env.MAX_BUFFERED_MB ?? 4) * 1024 * 1024;
 // --- static files ------------------------------------------------------------
 
 const MIME: Record<string, string> = {
@@ -127,6 +131,25 @@ interface Client {
   joined: boolean;
   lastTapAt: number;
   room: Room | null;
+  /** Bytes of the last welcome, which may still be draining: not "behind". */
+  allowance: number;
+}
+
+/**
+ * Run `fn`, logging instead of throwing: one bad message or one room's broken
+ * tick must not take the process — and every room with it — down.
+ */
+const lastLogged = new Map<string, number>();
+function guard(what: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (e) {
+    const now = Date.now();
+    // A tick that throws once tends to throw every 50 ms: log it every 10 s.
+    if (now - (lastLogged.get(what) ?? 0) < 10_000) return;
+    lastLogged.set(what, now);
+    console.error(`[spectacle] error in ${what}:`, e instanceof Error ? e.stack : e);
+  }
 }
 
 /**
@@ -183,7 +206,8 @@ class Room {
     const payload = JSON.stringify({ t: 'events', ev } satisfies ServerMessage);
     for (const c of this.clients.values()) {
       if (!c.joined || c.ws.readyState !== c.ws.OPEN) continue;
-      if (c.ws.bufferedAmount > MAX_BUFFERED) {
+      if (c.ws.bufferedAmount > MAX_BUFFERED + c.allowance) {
+        console.warn(`[spectacle] ${c.id} in ${this.id} too far behind (${c.ws.bufferedAmount} bytes buffered), dropping`);
         c.ws.close(4001, 'too far behind');
         continue;
       }
@@ -325,7 +349,7 @@ function cleanName(raw: unknown): string {
 
 function welcome(client: Client, room: Room): void {
   const snap = room.engine.snapshot();
-  send(client.ws, {
+  const payload = JSON.stringify({
     t: 'welcome',
     you: client.id,
     token: issueToken(client.id),
@@ -334,11 +358,13 @@ function welcome(client: Client, room: Room): void {
     players: snap.players,
     paths: snap.paths,
     room: room.id,
-  });
+  } satisfies ServerMessage);
+  client.allowance = payload.length;
+  if (client.ws.readyState === client.ws.OPEN) client.ws.send(payload);
 }
 
 wss.on('connection', (ws) => {
-  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, room: null };
+  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, room: null, allowance: 0 };
   send(ws, {
     t: 'hello',
     field: spec,
@@ -348,7 +374,7 @@ wss.on('connection', (ws) => {
     rooms: [...rooms.values()].map((r) => r.summary()),
   });
 
-  ws.on('message', (data) => {
+  ws.on('message', (data) => guard('message', () => {
     let msg: ClientMessage;
     try {
       msg = JSON.parse(String(data)) as ClientMessage;
@@ -445,14 +471,14 @@ wss.on('connection', (ws) => {
       default:
         return;
     }
-  });
+  }));
 
-  ws.on('close', () => {
+  ws.on('close', () => guard('close', () => {
     const room = client.room;
     if (!room) return;
     if (room.clients.get(client.id) === client) room.clients.delete(client.id);
     if (client.joined) detach(client.id);
-  });
+  }));
   ws.on('error', () => ws.close());
 });
 
@@ -463,8 +489,8 @@ setInterval(() => {
   const now = Date.now();
   const dt = Math.min(1000, now - last);
   last = now;
-  for (const room of rooms.values()) room.tick(now, dt);
-  reapRooms(now);
+  for (const room of rooms.values()) guard(`tick ${room.id}`, () => room.tick(now, dt));
+  guard('reap', () => reapRooms(now));
 }, baseKnobs.tickMs);
 
 http.listen(PORT, () => {
