@@ -200,4 +200,5 @@ export type ServerMessage =
     }
   | { readonly t: 'events'; readonly ev: readonly GameEvent[] }
   | { readonly t: 'pong'; readonly n: number }
-  | { readonly t: 'error'; readonly message: string };
+  /** `code: 'full'` — a client-recognisable reason, so the UI can offer solo instead of just showing text. */
+  | { readonly t: 'error'; readonly message: string; readonly code?: 'full' };

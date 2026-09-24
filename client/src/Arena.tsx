@@ -24,6 +24,10 @@ export interface ArenaProps {
   onNewRule(): void;
   /** Leave the arena for the lobby (mode, online or solo, …). */
   onLeave(): void;
+  /** Online, disconnected, and reconnecting hasn't worked for a while. */
+  readonly struggling: boolean;
+  /** Give up on the online arena and switch to solo. */
+  onGiveUp(): void;
 }
 
 interface PointerState {
@@ -61,7 +65,7 @@ const PAINT_TAP_MS = 120;
 /** Hold a press this long without moving to paint instead of pan. */
 const HOLD_MS = 300;
 
-export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Element {
+export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tileCanvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
@@ -450,7 +454,21 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
         ))}
       </div>
 
-      {!store.connected && <div className="overlay">Reconnecting…</div>}
+      {!store.connected && (
+        <div className="overlay">
+          <div>
+            Reconnecting…
+            {struggling && (
+              <div className="overlay-fallback">
+                Still trying —{' '}
+                <button type="button" className="btn-link" onClick={onGiveUp}>
+                  play bots instead
+                </button>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

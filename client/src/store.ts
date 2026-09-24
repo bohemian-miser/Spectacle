@@ -68,6 +68,12 @@ export class Store {
   room = '';
   /** Resume ticket from the last `welcome` (online only). */
   resume: { id: string; token: string } | null = null;
+  /**
+   * The most recent `error` from the server, a fresh object every time (even
+   * a repeat of the same text) so a `useEffect` keyed on it fires again.
+   * Cleared on a successful `welcome`.
+   */
+  lastError: { message: string; code?: 'full' } | null = null;
   readonly players = new Map<string, ClientPlayer>();
   readonly paths = new Map<number, ClientPath>();
   /** tile → paths on it (for the faded-tile render). */
@@ -159,6 +165,7 @@ export class Store {
     this.you = '';
     this.room = '';
     this.resume = null;
+    this.lastError = null;
     this.geometryVersion++;
     this.emit();
   }
@@ -186,6 +193,7 @@ export class Store {
         this.you = msg.you;
         this.resume = { id: msg.you, token: msg.token };
         this.room = msg.room ?? '';
+        this.lastError = null;
         this.knobs = msg.knobs;
         if (!this.field || this.field.spec.family !== msg.field.family || this.field.spec.level !== msg.field.level || this.field.spec.rootTile !== msg.field.rootTile) {
           this.field = buildField(msg.field);
@@ -207,7 +215,8 @@ export class Store {
         this.emit();
         return;
       case 'error':
-        this.toast(msg.message, 'bad');
+        this.lastError = { message: msg.message, code: msg.code };
+        this.toast(msg.message, 'bad'); // toast() emits, so this reaches subscribers too
         return;
       case 'pong':
         return;

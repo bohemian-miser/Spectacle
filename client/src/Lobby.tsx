@@ -19,6 +19,10 @@ export interface LobbyProps {
   readonly inArena: boolean;
   /** Why the player is back here, if not by choice. */
   readonly notice?: string;
+  /** Online and can't reach the server after a few tries. */
+  readonly struggling: boolean;
+  /** Give up on the online arena and switch to solo. */
+  onGiveUp(): void;
   /** The room a `?room=` link names, if any (online only). */
   readonly linkRoom: string | null;
   onMode(mode: Mode): void;
@@ -63,7 +67,8 @@ function tileCount(family: TileFamilyId, level: number): number {
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, gameMode, rule, name, inArena, notice, linkRoom, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } = props;
+  const { store, mode, solo, gameMode, rule, name, inArena, notice, struggling, onGiveUp, linkRoom, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } =
+    props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
@@ -89,7 +94,30 @@ export function Lobby(props: LobbyProps): JSX.Element {
       {!inArena && (
         <section className="panel">
           <h2>Where</h2>
-          {notice && <p className="lobby-notice">{notice}</p>}
+          {notice && (
+            <p className="lobby-notice">
+              {notice}
+              {mode === 'online' && (
+                <>
+                  {' '}
+                  <button type="button" className="btn-link" onClick={onGiveUp}>
+                    Play bots instead
+                  </button>
+                </>
+              )}
+            </p>
+          )}
+          {struggling && !notice && (
+            // Here, not beside "Connecting…": that line only shows before the first
+            // hello, and a server that drops later leaves hello (and the rule editor) up.
+            <p className="lobby-notice">
+              Can't reach the arena right now.{' '}
+              <button type="button" className="btn-link" onClick={onGiveUp}>
+                Play bots instead
+              </button>
+              , no server needed.
+            </p>
+          )}
           {linkRoom && <LinkRoomNote room={linkRoom} store={store} gameMode={gameMode} />}
           {!SOLO_ONLY && (
             <div className="mode-row">
@@ -196,8 +224,10 @@ export function Lobby(props: LobbyProps): JSX.Element {
         </div>
         {hello ? (
           <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} onDrafting={setDrafting} />
+        ) : mode === 'online' ? (
+          <p className="muted">Connecting to the arena…</p>
         ) : (
-          <p className="muted">{mode === 'online' ? 'Connecting to the arena…' : 'Building the field…'}</p>
+          <p className="muted">Building the field…</p>
         )}
       </section>
 
