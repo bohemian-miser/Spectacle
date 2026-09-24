@@ -141,7 +141,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   link (`join.room`, cleaned by `cleanRoomName`) leads into that room
   whatever its mode and size cap, or opens a *named* room by that name;
   matchmaking never puts anyone in a named room, and named rooms close when
-  idle. The arena's Invite button copies such a link.
+  idle. The arena's share icon (beside the exit) copies such a link.
 - **Scaling: many self-contained processes, each with a hard ceiling.** A
   process's rooms share only its `Field` — no cross-process state — so
   Cloud Run can run many instances side by side (`SPECTACLE_MAX_INSTANCES`,
@@ -180,10 +180,6 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   survive into solo. `retry.current` keeps backing off and retrying in the
   background regardless, so it still recovers on its own if the server
   comes back.
-  idle. The arena's share icon (beside the exit) copies such a link. It is one Node
-  process by design (`--max-instances=1`): at level 6 the field is ~540 MB
-  RSS idle and 80 players in 9 rooms add ~30 MB and ~10% of a core, hence
-  `--memory=1Gi`.
 - **Speed** in tiles/s: `(1000 / baseStepMs)(1 + score·speedPerPoint) /
   speedDivisor + speedOffset` (÷10, +5), capped at `maxSpeedFor` (500 at the
   242k-tile reference, log-scaled). `speedFor` / `stepIntervalMs`.
