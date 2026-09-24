@@ -22,7 +22,8 @@ BOTS="${BOTS:-1}"
 MIN_INSTANCES="${MIN_INSTANCES:-0}"
 MAX_INSTANCES="${MAX_INSTANCES:-30}"
 MEMORY="${MEMORY:-1Gi}"
-MAX_INSTANCE_PLAYERS="${MAX_INSTANCE_PLAYERS:-800}"
+MAX_INSTANCE_PLAYERS="${MAX_INSTANCE_PLAYERS:-400}"
+CONCURRENCY="${CONCURRENCY:-500}"
 cd "$(dirname "$0")/../.."
 
 gcloud run deploy "$NAME" \
@@ -30,7 +31,7 @@ gcloud run deploy "$NAME" \
   --region "$REGION" \
   --allow-unauthenticated \
   --min-instances "$MIN_INSTANCES" --max-instances "$MAX_INSTANCES" \
-  --concurrency 1000 \
+  --concurrency "$CONCURRENCY" \
   --timeout 3600 \
   --cpu 1 --memory "$MEMORY" \
   --cpu-boost \
@@ -40,5 +41,5 @@ gcloud run deploy "$NAME" \
 echo
 gcloud run services describe "$NAME" --region "$REGION" --format='value(status.url)'
 echo "Tune later:  gcloud run services update $NAME --region $REGION --update-env-vars KNOB_BASE_STEP_MS=300"
-echo "Ahead of a surge:  gcloud run services update $NAME --region $REGION --min-instances=2 --max-instances=50 --memory=2Gi --update-env-vars MAX_INSTANCE_PLAYERS=1200"
+echo "Ahead of a surge:  gcloud run services update $NAME --region $REGION --min-instances=2 --max-instances=50 --cpu=2 --memory=2Gi --concurrency=1000 --update-env-vars MAX_INSTANCE_PLAYERS=800"
 echo "Turn off:    gcloud run services delete $NAME --region $REGION   (or just leave it: idle costs nothing)"

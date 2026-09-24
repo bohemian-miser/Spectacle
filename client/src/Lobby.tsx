@@ -107,6 +107,17 @@ export function Lobby(props: LobbyProps): JSX.Element {
               )}
             </p>
           )}
+          {struggling && !notice && (
+            // Here, not beside "Connecting…": that line only shows before the first
+            // hello, and a server that drops later leaves hello (and the rule editor) up.
+            <p className="lobby-notice">
+              Can't reach the arena right now.{' '}
+              <button type="button" className="btn-link" onClick={onGiveUp}>
+                Play bots instead
+              </button>
+              , no server needed.
+            </p>
+          )}
           {linkRoom && <LinkRoomNote room={linkRoom} store={store} gameMode={gameMode} />}
           {!SOLO_ONLY && (
             <div className="mode-row">
@@ -214,19 +225,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
         {hello ? (
           <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} onDrafting={setDrafting} />
         ) : mode === 'online' ? (
-          <p className="muted">
-            Connecting to the arena…
-            {struggling && (
-              <>
-                {' '}
-                Having trouble reaching it —{' '}
-                <button type="button" className="btn-link" onClick={onGiveUp}>
-                  play bots instead
-                </button>
-                , no server needed.
-              </>
-            )}
-          </p>
+          <p className="muted">Connecting to the arena…</p>
         ) : (
           <p className="muted">Building the field…</p>
         )}

@@ -10,7 +10,8 @@ import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/game/protocol';
 import { defaultRule } from '../shared/game/rule';
 
-const PORT = 19500 + Math.floor(Math.random() * 500);
+// Clear of rooms.test.ts (19000-19999) and resume.test.ts (18000-18999): vitest runs files in parallel.
+const PORT = 20000 + Math.floor(Math.random() * 1000);
 let server: ChildProcess;
 
 async function waitForHealth(): Promise<void> {

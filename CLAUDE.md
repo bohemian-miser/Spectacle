@@ -145,21 +145,23 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Scaling: many self-contained processes, each with a hard ceiling.** A
   process's rooms share only its `Field` — no cross-process state — so
   Cloud Run can run many instances side by side (`SPECTACLE_MAX_INSTANCES`,
-  default 30) with nothing to coordinate; its load balancer spreads new
-  connections across whichever have room. What keeps *one* instance from
-  growing unbounded under a surge is `MAX_INSTANCE_PLAYERS` (default 800,
-  checked in the `join` handler before `roomFor`/`validateRule` do any
-  work): at or past it, a join is refused with `error.code: 'full'` — never
-  a `roomFor` squeeze past it, which is what protects against the
-  `roomFor` edge case where every room of a mode is at `knobs.maxPlayers`
-  (200) and it would otherwise keep opening rooms past `MAX_ROOMS`. A
-  `join.resume` is exempt (checked separately, before the cap): it replaces
-  a player already counted, never adds one. `/healthz` reports
-  `maxPlayers`/`atCapacity` for monitoring. At level 6 the field is ~540 MB
-  RSS idle and 80 players across 9 rooms add ~30 MB and ~10% of a core
-  (a local load test), hence the 800/`--memory=1Gi` pairing — the two move
-  together (see README's "Scaling for a surge", the operator-facing version
-  of this note).
+  default 30). Each open WebSocket counts against `--concurrency` (500), so
+  Cloud Run sends new connections elsewhere once an instance holds that
+  many. What keeps *one* instance from growing unbounded is
+  `MAX_INSTANCE_PLAYERS` (default 400, `positiveInt` — a typo falls back to
+  the default rather than disabling the cap; checked in the `join` handler
+  before `roomForJoin`/`validateRule` do any work): at or past it, a join is
+  refused with `error.code: 'full'` on the socket it came in on (not
+  rerouted). A `join.resume` is exempt (checked first): it replaces a player
+  already counted. `/healthz` reports `maxPlayers`/`atCapacity`. At level 6
+  the field is ~540 MB RSS idle and 80 players across 9 rooms add ~30 MB and
+  ~10% of a core (a local load test), so 400 is about half a vCPU inside
+  `1Gi`; raise CPU with memory before raising the cap. **Named rooms and
+  resume tickets are per process**: with more than one instance an invite
+  can land on a different instance (empty room, same name) and a reconnect
+  relies on best-effort session affinity (a miss is a new player). Making
+  invites exact across instances needs routing by room (e.g. several
+  one-instance services with the shard in the link) — open, owner's call.
 - **Client fallback: never a silent dead end.** `error.code` (protocol.ts)
   gives the client a machine-readable reason instead of parsing text.
   `store.lastError` (a fresh object every time, even a repeat message, so a

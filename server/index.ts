@@ -13,12 +13,12 @@
  *   ROOM_SIZE     (10)       humans per room before another opens
  *   MAX_ROOMS     (80)       rooms at most (then joiners share the emptiest)
  *   ROOM_IDLE_MS  (60000)    an extra empty room closes after this long
- *   MAX_INSTANCE_PLAYERS (800) humans this process will hold at once; past it,
+ *   MAX_INSTANCE_PLAYERS (400) humans this process will hold at once; past it,
  *                            a join is refused with `error.code: 'full'` so the
- *                            client can offer solo instead of piling on more
- *                            state. Sized for --memory=1Gi at FIELD_LEVEL=6
- *                            (see the scaling note below) — raise it only
- *                            alongside more memory.
+ *                            client can offer bots instead of piling on more
+ *                            state. Sized for one vCPU (80 players measured at
+ *                            ~10% of a core) and --memory=1Gi at FIELD_LEVEL=6
+ *                            — raise it only alongside more CPU and memory.
  *   SEED          (random)   RNG seed
  *   RESUME_GRACE_MS (300000) how long a dropped player is kept for `join.resume`
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
@@ -27,12 +27,15 @@
  * cannot share state with another instance — but it doesn't need to. Every
  * room is self-contained (its own engine, its own players), so Cloud Run can
  * run many instances of this same image side by side, each an independent
- * pool of rooms, and its load balancer spreads new connections across
- * whichever have room. MAX_INSTANCE_PLAYERS is what keeps any *one* instance
- * from growing without bound and OOMing under a surge: once it is home to
- * that many humans, it refuses new joins cleanly (a fast, cheap response)
- * rather than trying to hold more than its memory allows — Cloud Run then
- * routes the next joiner to another instance, or spins one up. See
+ * pool of rooms. Cloud Run sends a new connection to another instance (or
+ * starts one) once this one holds `--concurrency` open sockets, which the
+ * deploy sets a little above MAX_INSTANCE_PLAYERS. MAX_INSTANCE_PLAYERS is the
+ * backstop that keeps any *one* instance from growing without bound: once it
+ * is home to that many humans it refuses new joins cleanly on the socket they
+ * came in on (the client then offers bots) rather than holding more than its
+ * CPU and memory allow. Named (`?room=`) rooms and resume tickets live in one
+ * process, so with more than one instance an invite or a reconnect can land
+ * on the wrong one (README's "Scaling for a surge"). See
  * deploy/gcp/cloudrun.sh and .github/workflows/deploy-cloudrun.yml for the
  * instance-count and memory knobs, and README.md's "Scaling for a surge".
  */
@@ -57,6 +60,12 @@ import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 const PORT = Number(process.env.PORT ?? 8787);
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
 const DIST = join(ROOT, 'dist');
+
+/** A positive integer from the environment; anything unset, empty or unparseable is `fallback`. */
+function positiveInt(raw: string | undefined, fallback: number): number {
+  const n = Number(raw);
+  return raw !== undefined && raw.trim() !== '' && Number.isFinite(n) && n >= 1 ? Math.floor(n) : fallback;
+}
 
 function fieldSpecFromEnv(): FieldSpec {
   const family = (process.env.FIELD_FAMILY ?? DEFAULT_FIELD_SPEC.family) as TileFamilyId;
@@ -107,7 +116,7 @@ const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS ?? 60_000);
  * The hard backstop against an unbounded single instance: see the file
  * header's "Scaling past one instance".
  */
-const MAX_INSTANCE_PLAYERS = Math.max(1, Number(process.env.MAX_INSTANCE_PLAYERS ?? 800));
+const MAX_INSTANCE_PLAYERS = positiveInt(process.env.MAX_INSTANCE_PLAYERS, 400);
 /**
  * A socket this far behind on sends is dropped (it can resume) rather than
  * buffered forever. Its welcome doesn't count: that snapshot is one message,
