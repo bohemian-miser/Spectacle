@@ -309,6 +309,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   keep the team hue and shade only by length (`circuitShade`); the circuit
   style's own hues are ignored while it is on. Go through `Renderer.colorOf`,
   not `store.pathColor`, for anything drawn per path.
+- **Name labels** (`Renderer.drawNames`): each player's name floats in a
+  pill over one of their tiles — at most one label per player on screen. A
+  label sticks to its step while that step is on screen and still theirs;
+  otherwise it moves to their step nearest the screen's centre whose pill
+  doesn't cover another's (so a crowded player may go unlabelled).
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
   the old one dies (only its SHA-256 is kept server-side). A resume can take
   over a player whose old socket is still open — a refresh usually beats the
