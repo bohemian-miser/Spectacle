@@ -427,6 +427,18 @@ wss.on('connection', (ws) => {
         room.pending.push(...room.engine.setActive(client.id, Number(msg.index)));
         return;
       }
+      case 'leave': {
+        if (!client.joined || !room) return;
+        // Gone for good: no resume, and the seat is free straight away.
+        client.joined = false;
+        client.room = null;
+        room.clients.delete(client.id);
+        tokenHashes.delete(client.id);
+        playerRoom.delete(client.id);
+        room.pending.push(...room.engine.removePlayer(client.id));
+        client.id = `p${nextClient++}`;
+        return;
+      }
       case 'ping':
         send(ws, { t: 'pong', n: msg.n });
         return;

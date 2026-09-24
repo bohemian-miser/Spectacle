@@ -26,6 +26,8 @@ export interface LobbyProps {
   /** Swap captured pattern `index` for this rule (its lines and their points go). */
   onSwap(index: number): void;
   onCancel(): void;
+  /** Leave the arena altogether, back to the full main screen. */
+  onLeave(): void;
 }
 
 const MODE_BLURBS: Readonly<Record<GameMode, string>> = {
@@ -40,7 +42,7 @@ function tileCount(family: TileFamilyId, level: number): number {
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, gameMode, rule, name, inArena, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel } = props;
+  const { store, mode, solo, gameMode, rule, name, inArena, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } = props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
@@ -169,9 +171,14 @@ export function Lobby(props: LobbyProps): JSX.Element {
 
       <footer className="lobby-foot">
         {inArena && (
-          <button type="button" className="btn" onClick={onCancel}>
-            Back
-          </button>
+          <>
+            <button type="button" className="btn" onClick={onCancel}>
+              Back
+            </button>
+            <button type="button" className="btn" onClick={onLeave} title="Leave the arena: pick a game mode, online or solo">
+              Leave arena
+            </button>
+          </>
         )}
         <button type="button" className="btn btn-accent btn-big" disabled={!ready || !hello} onClick={onEnter}>
           {inArena ? 'Restart with this rule' : SOLO_ONLY ? 'Play' : mode === 'solo' ? 'Play solo' : 'Enter the arena'}

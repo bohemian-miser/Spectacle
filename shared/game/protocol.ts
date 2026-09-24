@@ -86,6 +86,8 @@ export type ClientMessage =
   | { readonly t: 'pattern'; readonly index: number }
   /** Swap captured pattern `index` (≥ 1) for `rule`: that pattern's lines, and their points, go. */
   | { readonly t: 'swap'; readonly index: number; readonly rule: PlayerRule }
+  /** Leave the arena for good: your lines and points go now, not after the resume window. */
+  | { readonly t: 'leave' }
   | { readonly t: 'ping'; readonly n: number };
 
 // --- server → client ---------------------------------------------------------
