@@ -249,6 +249,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 
 /* Mode / solo options */
 .mode-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
+.lobby-room { margin: 0 0 12px; font-size: 14px; }
 .lobby-intro { margin-bottom: 12px; font-size: 14px; line-height: 1.5; }
 .lobby-intro p { margin: 0 0 8px; }
 .lobby-sig { font-style: italic; color: var(--muted); }

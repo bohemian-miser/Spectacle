@@ -307,7 +307,18 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
     strandColor(scheme, settings.teams ? (mine ? scheme.teamMe : scheme.teamRival) : color);
   const speed = me && store.knobs && store.field ? speedFor(store.knobs, me.score, store.field.count).toFixed(1) : '–';
   const gameMode = store.knobs?.mode ?? 'normal';
-  const roomNo = /-(\d+)$/.exec(store.room)?.[1];
+  // Matchmade rooms are "<mode>-<n>" and show as #n; a link's room shows its name.
+  const roomNo = new RegExp(`^${gameMode}-(\\d+)$`).exec(store.room)?.[1];
+  const roomLabel = roomNo ? ` #${roomNo}` : store.room ? ` · ${store.room}` : '';
+  const invite = async (): Promise<void> => {
+    const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(store.room)}`;
+    try {
+      await navigator.clipboard.writeText(url);
+      store.toast('Invite link copied — anyone who opens it joins this room', 'info');
+    } catch {
+      window.prompt('Copy this link to invite people into this room:', url);
+    }
+  };
 
   return (
     <div className="arena">
@@ -356,6 +367,11 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
             New rule
           </button>
+          {store.room && (
+            <button type="button" className="btn" onClick={() => void invite()} title="Copy a link that brings people into this room">
+              Invite
+            </button>
+          )}
           <SettingsButton />
         </div>
       </div>
@@ -363,7 +379,7 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
       <div className="hud hud-board">
         <div className="hud-title">
           {MODE_LABELS[gameMode]}
-          {roomNo ? ` #${roomNo}` : ''} · {store.players.size} playing
+          {roomLabel} · {store.players.size} playing
         </div>
         <ol>
           {top.map((p, i) => (

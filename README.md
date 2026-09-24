@@ -322,6 +322,16 @@ same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 5 min), so
 nobody notices. A page refresh does the same: the tab keeps its resume ticket
 in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
 
+*Watching it.* `/status` on the arena's address is a read-only page: rooms and
+who is in them, memory, how long a loop pass takes, joins, drops and errors,
+and the recent log (the same lines go to Cloud Run's logs). Every merge to
+`main` redeploys, and a redeploy drops everyone connected and starts an empty
+board, so merge when nobody is playing.
+
+*Private rooms.* `/?room=anything` puts everyone who opens it in the same room
+(a new one by that name if none exists); matchmaking never sends strangers
+in. The Invite button in the arena copies the link to the room you are in.
+
 *A domain for Cloud Run.* Buy one anywhere — Cloudflare Registrar sells at
 cost with free DNS — then run `DOMAIN=play.example.com ./deploy/gcp/domain.sh`
 (`WWW=1` adds `www.`). The first run has you verify the root domain in Search
