@@ -22,6 +22,8 @@ export interface ArenaProps {
   readonly store: Store;
   readonly conn: GameConnection;
   onNewRule(): void;
+  /** Leave the arena for the lobby (mode, online or solo, …). */
+  onLeave(): void;
 }
 
 interface PointerState {
@@ -59,7 +61,7 @@ const PAINT_TAP_MS = 120;
 /** Hold a press this long without moving to paint instead of pan. */
 const HOLD_MS = 300;
 
-export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
+export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tileCanvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
@@ -343,6 +345,9 @@ export function Arena({ store, conn, onNewRule }: ArenaProps): JSX.Element {
             New rule
           </button>
           <SettingsButton />
+          <button type="button" className="btn" onClick={onLeave} title="Back to the main screen: game mode, online or solo">
+            Leave
+          </button>
         </div>
       </div>
 

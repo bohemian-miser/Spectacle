@@ -29,7 +29,7 @@ async function waitForHealth(): Promise<void> {
 const sockets: WebSocket[] = [];
 
 /** Connect, join `mode`, and return the welcome. */
-async function join(mode?: GameMode): Promise<Extract<ServerMessage, { t: 'welcome' }>> {
+async function join(mode?: GameMode): Promise<Extract<ServerMessage, { t: 'welcome' }> & { ws: WebSocket }> {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
   sockets.push(ws);
   const welcome = new Promise<Extract<ServerMessage, { t: 'welcome' }>>((resolve) => {
@@ -40,7 +40,7 @@ async function join(mode?: GameMode): Promise<Extract<ServerMessage, { t: 'welco
   });
   await new Promise((r) => ws.once('open', r));
   ws.send(JSON.stringify({ t: 'join', name: 'x', rule: defaultRule('hex'), mode }));
-  return welcome;
+  return { ...(await welcome), ws };
 }
 
 beforeAll(async () => {
@@ -74,5 +74,28 @@ describe('rooms', () => {
     const health = (await (await fetch(`http://127.0.0.1:${PORT}/healthz`)).json()) as { players: number; rooms: { id: string; players: number }[] };
     expect(health.players).toBe(4);
     expect(Object.fromEntries(health.rooms.map((r) => [r.id, r.players]))).toEqual({ 'normal-1': 2, 'conquest-1': 1, 'normal-2': 1 });
+  });
+
+  it('leave frees the seat at once, with no resume window', async () => {
+    const health = async () =>
+      ((await (await fetch(`http://127.0.0.1:${PORT}/healthz`)).json()) as { rooms: { id: string; players: number }[] }).rooms;
+    const e = await join('conquest');
+    expect(e.room).toBe('conquest-1');
+    expect((await health()).find((r) => r.id === 'conquest-1')?.players).toBe(2);
+    e.ws.send(JSON.stringify({ t: 'leave' }));
+    await new Promise((r) => setTimeout(r, 150));
+    expect((await health()).find((r) => r.id === 'conquest-1')?.players).toBe(1);
+    // The old ticket is dead: a resume with it is a new player.
+    const again = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    sockets.push(again);
+    const w = new Promise<Extract<ServerMessage, { t: 'welcome' }>>((resolve) =>
+      again.on('message', (d) => {
+        const m = JSON.parse(String(d)) as ServerMessage;
+        if (m.t === 'welcome') resolve(m);
+      }),
+    );
+    await new Promise((r) => again.once('open', r));
+    again.send(JSON.stringify({ t: 'join', name: 'x', rule: defaultRule('hex'), mode: 'conquest', resume: { id: e.you, token: e.token } }));
+    expect((await w).you).not.toBe(e.you);
   });
 });

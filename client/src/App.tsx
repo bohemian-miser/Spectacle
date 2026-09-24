@@ -50,6 +50,8 @@ export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [solo, setSolo] = useState<SoloOptions>(DEFAULT_SOLO);
   const [gameMode, setGameMode] = useState<GameMode>(initialGameMode);
+  /** Bumped to start over with a fresh connection (leaving the arena). */
+  const [epoch, setEpoch] = useState(0);
   const [screen, setScreen] = useState<Screen>('lobby');
   const [name, setName] = useState(loadName);
   const [rule, setRule] = useState<PlayerRule | null>(null);
@@ -105,7 +107,7 @@ export function App(): JSX.Element {
       connRef.current = null;
     };
     // A solo board is rebuilt for a new game mode; online, the mode only picks the room on join.
-  }, [mode, solo, store, mode === 'solo' ? gameMode : null]);
+  }, [mode, solo, store, mode === 'solo' ? gameMode : null, epoch]);
 
   // Every welcome carries a fresh token (the server rotates it on resume):
   // keep the latest, for the next drop and the next refresh.
@@ -154,6 +156,15 @@ export function App(): JSX.Element {
     setScreen('arena');
   };
 
+  /** Leave the arena for the main screen: the player goes, and a fresh connection brings the lobby back. */
+  const leave = (): void => {
+    connRef.current?.send({ t: 'leave' });
+    clearSession();
+    rejoin.current = null;
+    joined.current = false;
+    setEpoch((n) => n + 1);
+  };
+
   /** Put the edited rule in captured slot `index` instead of restarting on it. */
   const swap = (index: number): void => {
     const conn = connRef.current;
@@ -163,7 +174,7 @@ export function App(): JSX.Element {
   };
 
   if (screen === 'arena' && (store.you || rejoin.current) && connRef.current) {
-    return <Arena store={store} conn={connRef.current} onNewRule={() => setScreen('lobby')} />;
+    return <Arena store={store} conn={connRef.current} onNewRule={() => setScreen('lobby')} onLeave={leave} />;
   }
   return (
     <Lobby
@@ -189,6 +200,7 @@ export function App(): JSX.Element {
       onEnter={enter}
       onSwap={swap}
       onCancel={() => setScreen('arena')}
+      onLeave={leave}
     />
   );
 }
