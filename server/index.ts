@@ -414,7 +414,7 @@ wss.on('connection', (ws) => {
         // tryResume above): this is the load a capacity refusal protects
         // against, so check it before doing any more work.
         if (atCapacity()) {
-          send(ws, { t: 'error', message: "This server is full right now — try again shortly, or play solo (no server needed).", code: 'full' });
+          send(ws, { t: 'error', message: "This server is full right now — try again shortly, or play bots (no server needed).", code: 'full' });
           return;
         }
         const rule = validateRule(msg.rule, field.family);
@@ -424,7 +424,7 @@ wss.on('connection', (ws) => {
         }
         const target = roomFor(isGameMode(msg.mode) ? msg.mode : 'normal');
         if (target.engine.players.size >= target.knobs.maxPlayers) {
-          send(ws, { t: 'error', message: 'This room is full — try again shortly, or play solo.', code: 'full' });
+          send(ws, { t: 'error', message: 'This room is full — try again shortly, or play bots.', code: 'full' });
           return;
         }
         const ev = target.engine.addPlayer(client.id, cleanName(msg.name), rule);

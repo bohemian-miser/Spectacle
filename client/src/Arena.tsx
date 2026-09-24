@@ -437,7 +437,7 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
               <div className="overlay-fallback">
                 Still trying —{' '}
                 <button type="button" className="btn-link" onClick={onGiveUp}>
-                  play solo instead
+                  play bots instead
                 </button>
               </div>
             )}

@@ -161,7 +161,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   latent bug before `MAX_INSTANCE_PLAYERS` existed (an `'invalid rule'`
   refusal hit the same dead end) and is now much more reachable, hence
   fixing it here; (2) `STRUGGLE_ATTEMPTS` (3) failed reconnects flips
-  `struggling`, which adds a **play solo instead** link — both to the
+  `struggling`, which adds a **play bots instead** link — both to the
   lobby's "Connecting…" message and, mid-game, inside the "Reconnecting…"
   overlay — that calls `leaveToSolo` (`{t:'leave'}` best-effort, clears the
   session, `setMode('solo')`). Switching mode always goes through

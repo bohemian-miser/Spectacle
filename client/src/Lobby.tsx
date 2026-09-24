@@ -82,7 +82,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
                 <>
                   {' '}
                   <button type="button" className="btn-link" onClick={onGiveUp}>
-                    Play solo instead
+                    Play bots instead
                   </button>
                 </>
               )}
@@ -192,7 +192,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
                 {' '}
                 Having trouble reaching it —{' '}
                 <button type="button" className="btn-link" onClick={onGiveUp}>
-                  play solo instead
+                  play bots instead
                 </button>
                 , no server needed.
               </>

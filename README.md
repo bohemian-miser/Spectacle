@@ -383,7 +383,7 @@ instance, or spins one up. A refusal names itself (`error.code: 'full'`) so
 the client can react to it, rather than just showing an opaque message.
 
 That refusal is also where the client's own fallback kicks in: the lobby
-shows the reason and a **Play solo instead** link straight away, and if the
+shows the reason and a **Play bots instead** link straight away, and if the
 arena is simply unreachable (down, overloaded, a bad network) rather than
 explicitly full, the client offers the same link after a few seconds of
 failed reconnect attempts — both in the lobby and, mid-game, in the
