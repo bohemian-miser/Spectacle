@@ -191,7 +191,7 @@ export function RuleEditor({ family, rule, color = 'currentColor', onChange, onD
         </div>
         <div className="rule-buttons">
           <button type="button" className="btn" onClick={() => setRule(randomCleanRule(family, mathRandomRng))}>
-            Surprise me
+            Random solution
           </button>
           <button type="button" className="btn" onClick={() => setRule(withSubset(family, [], rule.matching))}>
             Clear
