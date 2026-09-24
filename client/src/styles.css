@@ -215,10 +215,13 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .board-gap { justify-content: center; color: var(--muted); line-height: 0.8; }
 .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
 .hud-help { left: 50%; bottom: 20px; transform: translateX(-50%); max-width: min(92vw, 520px); display: grid; gap: 8px; }
-/* Patterns: sticky tabs on the left wall, bottom up; the active one sticks out further. */
-.pattern-tabs { position: absolute; left: 0; bottom: 24px; display: flex; flex-direction: column-reverse; gap: 6px; pointer-events: auto; }
+/* Patterns: sticky tabs on the left wall, numbered 1 at the top (the keys); the active one sticks out further. */
+.pattern-tabs { position: absolute; left: 0; bottom: 24px; display: flex; flex-direction: column; gap: 6px; pointer-events: auto; }
 .pattern-tab {
-  width: 22px; height: 30px; padding: 0; cursor: pointer;
+  width: 22px; height: 30px; padding: 0 5px 0 0; cursor: pointer;
+  display: flex; align-items: center; justify-content: flex-end;
+  font: 700 12px/1 system-ui, sans-serif; font-variant-numeric: tabular-nums; color: #fff;
+  text-shadow: 0 0 2px #000, 0 0 3px #000;
   border: 1px solid var(--line); border-left: 0; border-radius: 0 5px 5px 0;
   box-shadow: 0 1px 2px color-mix(in srgb, var(--text) 18%, transparent);
   transition: width 0.15s ease-out;
@@ -247,6 +250,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 /* Mode / solo options */
 .mode-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
 .mode-blurb { margin: -4px 0 12px; font-size: 13px; }
+.lobby-notice { margin: 0 0 10px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius: 6px; font-size: 14px; }
 .btn.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .solo-row { display: flex; gap: 14px; align-items: end; flex-wrap: wrap; }
 .solo-row label { display: grid; gap: 4px; font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; }

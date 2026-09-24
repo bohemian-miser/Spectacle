@@ -11,7 +11,8 @@ export function wsUrl(): string {
 /** What the app talks to: the real server over a WebSocket, or the in-tab engine. */
 export interface GameConnection {
   readonly kind: 'online' | 'solo';
-  open(onOpen: () => void, onClose: () => void): void;
+  /** `onClose` gets the WebSocket close code (4000: the player was resumed in another tab). */
+  open(onOpen: () => void, onClose: (code: number) => void): void;
   send(msg: ClientMessage): void;
   close(): void;
 }
@@ -23,7 +24,7 @@ export class Connection implements GameConnection {
 
   constructor(private readonly store: Store) {}
 
-  open(onOpen: () => void, onClose: () => void): void {
+  open(onOpen: () => void, onClose: (code: number) => void): void {
     this.closedByUs = false;
     const ws = new WebSocket(wsUrl());
     this.ws = ws;
@@ -38,9 +39,9 @@ export class Connection implements GameConnection {
         console.error('bad message', err);
       }
     };
-    ws.onclose = () => {
+    ws.onclose = (e) => {
       this.store.connected = false;
-      if (!this.closedByUs) onClose();
+      if (!this.closedByUs) onClose(e.code);
     };
     ws.onerror = () => ws.close();
   }
@@ -51,7 +52,14 @@ export class Connection implements GameConnection {
 
   close(): void {
     this.closedByUs = true;
-    this.ws?.close();
+    // Unhook first: a closing socket still delivers what was in flight, and
+    // its close can land after the next connection opened. Neither may touch
+    // the store, which belongs to the new connection now.
+    const ws = this.ws;
+    if (ws) {
+      ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+      ws.close();
+    }
     this.ws = null;
   }
 }

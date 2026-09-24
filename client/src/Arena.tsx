@@ -393,7 +393,9 @@ export function Arena({ store, conn, onNewRule, onLeave }: ArenaProps): JSX.Elem
                 className={`pattern-tab${i === me.active ? ' is-active' : ''}`}
                 style={{ background: swatch(q.color, true) }}
                 onClick={() => i !== me.active && conn.send({ t: 'pattern', index: i })}
-              />
+              >
+                {i + 1}
+              </button>
             );
           })}
         </div>
