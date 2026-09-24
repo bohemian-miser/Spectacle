@@ -180,6 +180,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   survive into solo. `retry.current` keeps backing off and retrying in the
   background regardless, so it still recovers on its own if the server
   comes back.
+  idle. The arena's share icon (beside the exit) copies such a link. It is one Node
+  process by design (`--max-instances=1`): at level 6 the field is ~540 MB
+  RSS idle and 80 players in 9 rooms add ~30 MB and ~10% of a core, hence
+  `--memory=1Gi`.
 - **Speed** in tiles/s: `(1000 / baseStepMs)(1 + score·speedPerPoint) /
   speedDivisor + speedOffset` (÷10, +5), capped at `maxSpeedFor` (500 at the
   242k-tile reference, log-scaled). `speedFor` / `stepIntervalMs`.

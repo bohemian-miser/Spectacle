@@ -338,18 +338,32 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
       />
 
       <div className="hud hud-me" style={{ ['--me' as string]: me ? swatch(me.color, true) : 'var(--text)' }}>
-        <button type="button" className="hud-leave" onClick={onLeave} title="Leave the arena: game mode, online or solo" aria-label="Leave the arena">
-          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-            <path
-              d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6M10.5 11l3-3-3-3M13.2 8H6"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.4"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+        <div className="hud-corner">
+          {store.room && (
+            <button type="button" className="hud-icon" onClick={() => void invite()} title="Invite: copy a link that brings people into this room" aria-label="Copy an invite link to this room">
+              <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                <g fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="3.5" r="1.8" />
+                  <circle cx="4" cy="8" r="1.8" />
+                  <circle cx="12" cy="12.5" r="1.8" />
+                  <path d="M5.6 7.1l4.8-2.7M5.6 8.9l4.8 2.7" />
+                </g>
+              </svg>
+            </button>
+          )}
+          <button type="button" className="hud-icon hud-leave" onClick={onLeave} title="Leave the arena: game mode, online or solo" aria-label="Leave the arena">
+            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+              <path
+                d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6M10.5 11l3-3-3-3M13.2 8H6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.4"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+        </div>
         <div className="hud-name">
           <span className="swatch" /> {me?.name ?? '…'}
         </div>
@@ -371,11 +385,6 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
             New rule
           </button>
-          {store.room && (
-            <button type="button" className="btn" onClick={() => void invite()} title="Copy a link that brings people into this room">
-              Invite
-            </button>
-          )}
           <SettingsButton />
         </div>
       </div>

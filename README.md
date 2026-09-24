@@ -337,7 +337,7 @@ board, so merge when nobody is playing.
 
 *Private rooms.* `/?room=anything` puts everyone who opens it in the same room
 (a new one by that name if none exists); matchmaking never sends strangers
-in. The Invite button in the arena copies the link to the room you are in.
+in. The share icon beside the exit in the arena copies the link to the room you are in.
 
 *A domain for Cloud Run.* Buy one anywhere — Cloudflare Registrar sells at
 cost with free DNS — then run `DOMAIN=play.example.com ./deploy/gcp/domain.sh`
