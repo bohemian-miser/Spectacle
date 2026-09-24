@@ -1,6 +1,8 @@
 <div align="center">
 
-# Spectacle
+# ~Spectacle~ hexagon.rodeo
+
+(I wanted to call it Spectacle after the Spectre tile, but 'hexagon.rodeo' was available as a domain! I couldn't say no...)
 
 **A massively multiplayer strand-drawing game on hexagon and Spectre tilings.**
 
