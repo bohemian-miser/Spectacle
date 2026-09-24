@@ -29,7 +29,7 @@ async function waitForHealth(): Promise<void> {
 const sockets: WebSocket[] = [];
 
 /** Connect, join `mode`, and return the welcome. */
-async function join(mode?: GameMode): Promise<Extract<ServerMessage, { t: 'welcome' }> & { ws: WebSocket }> {
+async function join(mode?: GameMode, room?: string): Promise<Extract<ServerMessage, { t: 'welcome' }> & { ws: WebSocket }> {
   const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
   sockets.push(ws);
   const welcome = new Promise<Extract<ServerMessage, { t: 'welcome' }>>((resolve) => {
@@ -39,7 +39,7 @@ async function join(mode?: GameMode): Promise<Extract<ServerMessage, { t: 'welco
     });
   });
   await new Promise((r) => ws.once('open', r));
-  ws.send(JSON.stringify({ t: 'join', name: 'x', rule: defaultRule('hex'), mode }));
+  ws.send(JSON.stringify({ t: 'join', name: 'x', rule: defaultRule('hex'), mode, room }));
   return { ...(await welcome), ws };
 }
 
@@ -97,5 +97,39 @@ describe('rooms', () => {
     await new Promise((r) => again.once('open', r));
     again.send(JSON.stringify({ t: 'join', name: 'x', rule: defaultRule('hex'), mode: 'conquest', resume: { id: e.you, token: e.token } }));
     expect((await w).you).not.toBe(e.you);
+  });
+
+  it('a ?room= link opens a room by that name; matchmaking never sends anyone in', async () => {
+    const a = await join('conquest', 'Friends!');
+    expect(a.room).toBe('friends');
+    expect(a.knobs.mode).toBe('conquest');
+    // The link wins over the mode asked for, and over ROOM_SIZE.
+    const b = await join('normal', 'friends');
+    const c = await join('normal', 'friends');
+    expect([b.room, c.room]).toEqual(['friends', 'friends']);
+    expect(b.knobs.mode).toBe('conquest');
+    // A link to a matchmade room leads into it.
+    const d = await join('normal', 'normal-2');
+    expect(d.room).toBe('normal-2');
+    // Plain joins still matchmake round the named room.
+    const e = await join('conquest');
+    expect(e.room).not.toBe('friends');
+  });
+
+  it('/status.json reports rooms, players and the recent log', async () => {
+    const r = (await (await fetch(`http://127.0.0.1:${PORT}/status.json`)).json()) as {
+      rooms: { id: string; named: boolean; players: { bot: boolean; connected: boolean }[] }[];
+      counters: { joins: number; errors: number };
+      recent: { text: string }[];
+    };
+    const friends = r.rooms.find((q) => q.id === 'friends');
+    expect(friends?.named).toBe(true);
+    expect(friends?.players.filter((p) => !p.bot && p.connected)).toHaveLength(3);
+    expect(r.counters.joins).toBeGreaterThan(0);
+    expect(r.counters.errors).toBe(0);
+    expect(r.recent.some((l) => /joined friends/.test(l.text))).toBe(true);
+    const page = await fetch(`http://127.0.0.1:${PORT}/status`);
+    expect(page.headers.get('content-type')).toMatch(/text\/html/);
+    expect(await page.text()).toContain('Spectacle status');
   });
 });

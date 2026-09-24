@@ -18,6 +18,8 @@ export interface SavedSession {
   readonly resume: ResumeTicket;
   /** The kind of arena it was (older sessions: normal). */
   readonly mode?: GameMode;
+  /** The room it was in, so a rejoin after the server forgot us lands there again. */
+  readonly room?: string;
 }
 
 const KEY = 'spectacle.session';

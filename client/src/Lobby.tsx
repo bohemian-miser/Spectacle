@@ -19,6 +19,8 @@ export interface LobbyProps {
   readonly inArena: boolean;
   /** Why the player is back here, if not by choice. */
   readonly notice?: string;
+  /** The room a `?room=` link names, if any (online only). */
+  readonly linkRoom: string | null;
   onMode(mode: Mode): void;
   onSolo(opts: SoloOptions): void;
   onGameMode(mode: GameMode): void;
@@ -32,12 +34,36 @@ export interface LobbyProps {
   onLeave(): void;
 }
 
+/** Where a `?room=` link leads: into that room, or opening it. */
+function LinkRoomNote({ room, store, gameMode }: { room: string; store: Store; gameMode: GameMode }): JSX.Element {
+  const there = store.hello?.rooms.find((r) => r.id === room);
+  // The same page without the link: matchmaking again.
+  const params = new URLSearchParams(location.search);
+  params.delete('room');
+  const q = params.toString();
+  const publicHref = `${location.pathname}${q ? `?${q}` : ''}`;
+  return (
+    <p className="lobby-room">
+      {there ? (
+        <>
+          Joining room <b>{room}</b> · {MODE_LABELS[there.mode]} · {there.players} playing.
+        </>
+      ) : (
+        <>
+          Opening room <b>{room}</b> · {MODE_LABELS[gameMode]}. Anyone with this link joins you there.
+        </>
+      )}{' '}
+      <a href={publicHref}>Play in a public room instead</a>
+    </p>
+  );
+}
+
 function tileCount(family: TileFamilyId, level: number): number {
   return countTiles(buildSystem(family, level)['Delta']);
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, gameMode, rule, name, inArena, notice, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } = props;
+  const { store, mode, solo, gameMode, rule, name, inArena, notice, linkRoom, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } = props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
@@ -64,6 +90,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
         <section className="panel">
           <h2>Where</h2>
           {notice && <p className="lobby-notice">{notice}</p>}
+          {linkRoom && <LinkRoomNote room={linkRoom} store={store} gameMode={gameMode} />}
           {!SOLO_ONLY && (
             <div className="mode-row">
               <button type="button" className={`btn${mode === 'online' ? ' is-on' : ''}`} onClick={() => onMode('online')}>

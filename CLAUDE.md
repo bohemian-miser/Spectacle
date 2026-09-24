@@ -44,7 +44,10 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
 server/index.ts   Node + ws. Rooms per game mode (`Room`: engine + bots +
                   clients), one 50 ms loop ticking them all, batched broadcast
                   per room, static dist/, resume tokens (RESUME_GRACE_MS),
-                  env config. tests/rooms.test.ts spawns it.
+                  env config, guard() round every message/tick, note() log.
+                  tests/rooms.test.ts spawns it.
+server/status-page.ts  /status (HTML, polls /status.json): rooms, players,
+                  memory, loop time, joins/drops/errors, the recent log.
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
   session.ts      The tab's resume ticket (sessionStorage) and the
@@ -134,7 +137,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `ROOM_SIZE` (10) humans (held-for-resume players count), else a new room
   (up to `MAX_ROOMS`, 24), else the emptiest. A room with no sockets doesn't
   tick; an extra one empty for `ROOM_IDLE_MS` closes (one per mode stays).
-  Player ids are global, so a resume ticket finds its room. It is one Node
+  Player ids are global, so a resume ticket finds its room. A `?room=name`
+  link (`join.room`, cleaned by `cleanRoomName`) leads into that room
+  whatever its mode and size cap, or opens a *named* room by that name;
+  matchmaking never puts anyone in a named room, and named rooms close when
+  idle. The arena's Invite button copies such a link. It is one Node
   process by design (`--max-instances=1`): at level 6 the field is ~540 MB
   RSS idle and 80 players in 9 rooms add ~30 MB and ~10% of a core, hence
   `--memory=1Gi`.
@@ -217,6 +224,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `swap` event replaces the pattern in place — same index, same colour, same
   head — so path indices stay valid. Slot 0 never swaps; that is `setRule`.
   A rule held in another slot is refused.
+- **Nothing in a message or a tick may throw the process down.** One Node
+  process holds every room, so `guard()` logs an exception (every 10 s at
+  most per source) instead. The welcome snapshot doesn't count towards
+  `MAX_BUFFERED` (a client's `allowance`): on a busy board it alone can be
+  bigger. `/status` is read-only and public — no ids or tokens on it.
 - **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
