@@ -141,7 +141,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   link (`join.room`, cleaned by `cleanRoomName`) leads into that room
   whatever its mode and size cap, or opens a *named* room by that name;
   matchmaking never puts anyone in a named room, and named rooms close when
-  idle. The arena's Invite button copies such a link. It is one Node
+  idle. The arena's share icon (beside the exit) copies such a link. It is one Node
   process by design (`--max-instances=1`): at level 6 the field is ~540 MB
   RSS idle and 80 players in 9 rooms add ~30 MB and ~10% of a core, hence
   `--memory=1Gi`.
