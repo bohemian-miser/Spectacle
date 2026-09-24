@@ -7,7 +7,7 @@
 import { buildField, type Field } from '../../shared/game/field';
 import { headLimit, type Knobs } from '../../shared/game/knobs';
 import type { Pt } from '../../shared/tiles';
-import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, ServerMessage } from '../../shared/game/protocol';
+import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomSummary, ServerMessage } from '../../shared/game/protocol';
 
 export interface ClientPath {
   readonly id: number;
@@ -23,8 +23,10 @@ export interface ClientPath {
   spawned?: boolean;
 }
 
-export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active'> {
+export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active' | 'converted'> {
   rule: PlayerPublic['rule'];
+  /** Normal mode: kinds of rival line converted (a head each). */
+  converted: number;
   score: number;
   combo: number;
   patterns: PatternPublic[];
@@ -62,6 +64,8 @@ export class Store {
   field: Field | null = null;
   knobs: Knobs | null = null;
   you = '';
+  /** The server room we were put in (online), e.g. "normal-2". */
+  room = '';
   /** Resume ticket from the last `welcome` (online only). */
   resume: { id: string; token: string } | null = null;
   readonly players = new Map<string, ClientPlayer>();
@@ -115,7 +119,7 @@ export class Store {
     const k = this.knobs;
     const me = this.me;
     if (!k || !me) return { free: 0, total: 0 };
-    const total = headLimit(k, me.patterns.length);
+    const total = headLimit(k, me.patterns.length + me.converted);
     if (total === 0) return { free: Infinity, total };
     let growing = 0;
     for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing' && !p.spawned) growing++;
@@ -153,18 +157,19 @@ export class Store {
     this.dying = [];
     this.bursts = [];
     this.you = '';
+    this.room = '';
     this.resume = null;
     this.geometryVersion++;
     this.emit();
   }
 
   /** Arena description from `hello`, available before joining. */
-  hello: { field: import('../../shared/game/field').FieldSpec; tiles: number; players: number } | null = null;
+  hello: { field: import('../../shared/game/field').FieldSpec; tiles: number; players: number; rooms: readonly RoomSummary[] } | null = null;
 
   handle(msg: ServerMessage): void {
     switch (msg.t) {
       case 'hello': {
-        this.hello = { field: msg.field, tiles: msg.tiles, players: msg.players };
+        this.hello = { field: msg.field, tiles: msg.tiles, players: msg.players, rooms: msg.rooms ?? [] };
         this.knobs = msg.knobs;
         if (!this.field || this.field.spec.family !== msg.field.family || this.field.spec.level !== msg.field.level || this.field.spec.rootTile !== msg.field.rootTile) {
           this.field = buildField(msg.field);
@@ -180,11 +185,12 @@ export class Store {
         this.bursts = [];
         this.you = msg.you;
         this.resume = { id: msg.you, token: msg.token };
+        this.room = msg.room ?? '';
         this.knobs = msg.knobs;
         if (!this.field || this.field.spec.family !== msg.field.family || this.field.spec.level !== msg.field.level || this.field.spec.rootTile !== msg.field.rootTile) {
           this.field = buildField(msg.field);
         }
-        for (const p of msg.players) this.players.set(p.id, { ...p, patterns: [...p.patterns] });
+        for (const p of msg.players) this.players.set(p.id, clientPlayer(p));
         for (const pw of msg.paths) {
           const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps], pattern: pw.pattern ?? 0 };
           if (pw.region) path.region = pw.region;
@@ -230,7 +236,7 @@ export class Store {
   private apply(ev: GameEvent): void {
     switch (ev.t) {
       case 'join':
-        this.players.set(ev.player.id, { ...ev.player, patterns: [...ev.player.patterns] });
+        this.players.set(ev.player.id, clientPlayer(ev.player));
         return;
       case 'leave':
         this.players.delete(ev.id);
@@ -243,6 +249,7 @@ export class Store {
           p.combo = ev.combo;
           p.patterns = [{ rule: ev.rule, color: p.color }];
           p.active = 0;
+          p.converted = 0;
         }
         return;
       }
@@ -252,6 +259,13 @@ export class Store {
         if (ev.id === this.you) this.toast(`Took ${ev.pattern.fromName || 'someone'}'s pattern`, 'good');
         else if (ev.pattern.from === this.you) this.toast(`${p?.name ?? 'Someone'} took your pattern`, 'bad');
         this.geometryVersion++;
+        return;
+      }
+      case 'convert': {
+        const p = this.players.get(ev.id);
+        if (p) p.converted = ev.converted;
+        if (ev.id === this.you) this.toast(`Converted ${this.players.get(ev.from)?.name ?? 'someone'}'s lines`, 'good');
+        else if (ev.from === this.you) this.toast(`${p?.name ?? 'Someone'} converted your lines`, 'bad');
         return;
       }
       case 'swap': {
@@ -373,4 +387,9 @@ export class Store {
         return;
     }
   }
+}
+
+function clientPlayer(p: PlayerPublic): ClientPlayer {
+  const { converted, ...rest } = p;
+  return { ...rest, patterns: [...p.patterns], converted: converted ?? 0 };
 }

@@ -5,7 +5,23 @@
  * that will need balancing is already a knob rather than a literal.
  */
 
+/**
+ * How capturing works in an arena.
+ * - `normal`: close a circuit round a rival's line and it turns into your own
+ *   pattern (your tile type) on those tiles; you never draw with theirs, but
+ *   each new kind of rival line you convert still earns you a head.
+ * - `conquest` (beta): you take the rival's pattern itself — a new tab to draw
+ *   with — and their lines, drawn with it.
+ */
+export type GameMode = 'normal' | 'conquest';
+
+export const GAME_MODES: readonly GameMode[] = ['normal', 'conquest'];
+
+export const MODE_LABELS: Readonly<Record<GameMode, string>> = { normal: 'Normal', conquest: 'Conquest (beta)' };
+
 export interface Knobs {
+  /** Capture rules for this arena (see `GameMode`). */
+  mode: GameMode;
   /** Server simulation tick, ms. Growth is integrated per tick. */
   tickMs: number;
 
@@ -31,10 +47,18 @@ export interface Knobs {
   stealFraction: number;
 
   // --- growth --------------------------------------------------------------
-  /** Milliseconds per step at score 0. */
+  /** Milliseconds per step at score 0, before `speedDivisor` / `speedOffset`. */
   baseStepMs: number;
-  /** Speed-up: interval = baseStepMs / (1 + score * speedPerPoint). */
+  /**
+   * Speed-up. In tiles per second:
+   * speed = (1000 / baseStepMs) × (1 + score × speedPerPoint) / speedDivisor + speedOffset,
+   * capped at `maxSpeedFor`.
+   */
   speedPerPoint: number;
+  /** The raw score-driven speed is divided by this… */
+  speedDivisor: number;
+  /** …and this many tiles per second added on top. */
+  speedOffset: number;
   /**
    * Speed cap in tiles per second on a field of `maxSpeedRefTiles` tiles. The
    * cap scales with the log of the field's tile count: a field of N tiles caps
@@ -122,6 +146,8 @@ export interface Knobs {
 }
 
 export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
+  // The engine's own default; the server and the lobby start players in 'normal'.
+  mode: 'conquest',
   tickMs: 50,
 
   pointsPerTile: 1,
@@ -135,7 +161,9 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
 
   baseStepMs: 200,
   speedPerPoint: 0.015,
-  maxSpeed: 1000,
+  speedDivisor: 10,
+  speedOffset: 5,
+  maxSpeed: 500,
   maxSpeedRefTiles: 242_000,
   maxHeads: 1,
   headsWithCapture: 2,
@@ -170,16 +198,35 @@ export function maxSpeedFor(knobs: Knobs, fieldTiles: number): number {
   return knobs.maxSpeed * scale;
 }
 
+/** Growth speed in tiles per second for a player at `score` (see `speedPerPoint`), capped by `maxSpeedFor`. */
+export function speedFor(knobs: Knobs, score: number, fieldTiles: number): number {
+  const raw = (1000 / knobs.baseStepMs) * (1 + Math.max(0, score) * knobs.speedPerPoint);
+  const speed = raw / Math.max(1e-9, knobs.speedDivisor) + knobs.speedOffset;
+  return Math.max(1e-3, Math.min(maxSpeedFor(knobs, fieldTiles), speed));
+}
+
 /**
  * Step interval for a player at `score` on a field of `fieldTiles` tiles —
  * the "speed proportional to score" knob, floored by `maxSpeedFor`.
  */
 export function stepIntervalMs(knobs: Knobs, score: number, fieldTiles: number): number {
-  const ms = knobs.baseStepMs / (1 + Math.max(0, score) * knobs.speedPerPoint);
-  return Math.max(1000 / maxSpeedFor(knobs, fieldTiles), ms);
+  return 1000 / speedFor(knobs, score, fieldTiles);
 }
 
-/** How many lines a player holding `patterns` patterns may grow at once (0 = unlimited). */
+/** `base` playing under `mode`. */
+export function knobsForMode(base: Knobs, mode: GameMode): Knobs {
+  return { ...base, mode };
+}
+
+export function isGameMode(x: unknown): x is GameMode {
+  return typeof x === 'string' && (GAME_MODES as readonly string[]).includes(x);
+}
+
+/**
+ * How many lines a player holding `patterns` patterns may grow at once (0 =
+ * unlimited). In normal mode nothing is added to `patterns`; pass 1 + the
+ * kinds of rival line they have converted instead — the same heads.
+ */
 export function headLimit(knobs: Knobs, patterns: number): number {
   if (patterns < 2) return knobs.maxHeads;
   if (knobs.maxHeads === 0 || knobs.headsWithCapture === 0) return 0;
@@ -210,6 +257,8 @@ export function knobsFromEnv(env: Record<string, string | undefined>, base: Knob
       rec[key] = raw === '1' || raw.toLowerCase() === 'true';
     } else if (key === 'junctionPolicy') {
       if (raw === 'random' || raw === 'stop') out.junctionPolicy = raw;
+    } else if (key === 'mode') {
+      if (isGameMode(raw)) out.mode = raw;
     } else if (key === 'crossingMode') {
       if (raw === 'geometric' || raw === 'tile') out.crossingMode = raw;
     }

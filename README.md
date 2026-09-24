@@ -38,7 +38,7 @@ line and you both die.
 | 👆 **Tap a tile** | Your line starts there and grows by itself, one tile per step, following your rule. Press-and-hold then drag to paint starts across an area. |
 | ⭕ **Close circuits** | A line that comes back to where it began is a circuit: points for length and enclosed area, and your combo climbs. Run edge to edge and you claim the smaller side of the field. |
 | ⚔️ **Cut and be cut** | Lines that cross both die, taking their points with them — scoring is zero-sum. You can't start on a rival's line; you have to grow into it. |
-| 🏴 **Capture** | Close a circuit round a rival's line and you take their pattern (and every rival line inside). Each captured pattern is a new way to draw, and another head growing at once. |
+| 🏴 **Capture** | Close a circuit round a rival's line and it's yours. In **Normal** mode it turns into your own pattern on their tiles; in **Conquest (beta)** you take their pattern itself, a new way to draw. Either way, each new kind of line you capture is another head growing at once. |
 | 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. Nobody will tell you which. |
 
 ## Screenshots
@@ -98,7 +98,8 @@ line and you both die.
    area you hold to keep filling it in. A plain drag pans (so do two fingers,
    or a right-, middle- or shift-drag); wheel or pinch zooms.
 3. **It grows.** One tile per step; the step interval shrinks with your score
-   (`baseStepMs / (1 + score × speedPerPoint)`, capped at `maxSpeed` = 1000 tiles/s on a 242k-tile field, scaled by the
+   (in tiles per second, `(1000 / baseStepMs) × (1 + score × speedPerPoint) / speedDivisor + speedOffset`
+   — 5.5 tiles/s at score 0 — capped at `maxSpeed` = 500 tiles/s on a 242k-tile field, scaled by the
    log of the field's tile count). Each tile
    entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
    points it earned, and when the line goes (cut, abandoned, capped) so do its
@@ -152,7 +153,18 @@ line and you both die.
    long ones deep, the hue walking round from the owner's colour as they grow
    — and wash the tiles they enclose in it. The washes stack and each level of
    nesting sinks deeper, so a circuit inside a circuit stands apart.
-7. **Capture.** Close a circuit round a rival's line and you take its pattern
+7. **Capture.** What happens depends on the game mode, picked in the lobby
+   (`?mode=normal` or `?mode=conquest` preselects it). Online, each mode has
+   its own rooms of up to 10 players; a new room opens when they fill.
+
+   **Normal** (the default): close a circuit round a rival's line and it is
+   converted — it leaves the board, and your own pattern sprouts on the
+   tiles it held, carrying its points (zero-sum) and growing on from there
+   like a flip's pieces. You never draw with anyone else's pattern, but each
+   new kind of line you convert gives you another head, exactly as in
+   Conquest.
+
+   **Conquest (beta)**: close a circuit round a rival's line and you take its pattern
    (the rule that drew it) — and the area is yours: every rival line wholly
    inside, loops and claims included, changes hands with the points it
    carries (`takeEnclosed`; off, they keep their lines). The pattern becomes yours to draw with,
@@ -214,7 +226,7 @@ flowchart LR
     B2["Browser (solo)<br/>engine + bots in the tab"]
   end
   subgraph gcp["GCP · spectacle-game · us-central1"]
-    CR["Cloud Run<br/>Node + ws · one arena<br/>50 ms tick · bots<br/>scales to zero"]
+    CR["Cloud Run<br/>Node + ws · rooms per mode<br/>50 ms tick · bots<br/>scales to zero"]
   end
   subgraph gh["GitHub"]
     CI["Actions: ci.yml<br/>typecheck · tests · build<br/>Docker · headless smoke"]
@@ -266,7 +278,10 @@ Server environment:
 | `FIELD_FAMILY` | `hex` | `hex` or `spectre` |
 | `FIELD_LEVEL` | `6` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 6 ≈ 273k |
 | `FIELD_ROOT` | `Delta` | root tile of the patch |
-| `BOTS` | `1` | bot players (random clean rules, occasionally aggressive) |
+| `BOTS` | `1` | bot players per room (random clean rules, occasionally aggressive) |
+| `ROOM_SIZE` | `10` | humans per room; the next joiner of that mode gets a new room |
+| `MAX_ROOMS` | `24` | rooms at most, all modes; past it joiners share the emptiest room of their mode |
+| `ROOM_IDLE_MS` | `60000` | an extra room nobody is in (or holding for) closes after this long |
 | `SEED` | random | RNG seed |
 | `KNOB_*` | see knobs.ts | any gameplay knob |
 
@@ -341,7 +356,8 @@ shared/game/    field.ts     one finite patch: instances, vertex-neighbours, hit
                 engine.ts    the authoritative simulation (taps, ticks, circuits, cuts)
                 knobs.ts     every tunable
                 protocol.ts  wire types
-server/         Node + ws: one arena, ticks the engine, broadcasts batched events,
+server/         Node + ws: rooms per game mode (a new one every ROOM_SIZE humans),
+                ticks each engine, broadcasts batched events per room,
                 serves dist/. bots.ts is the opposition.
 client/         Vite + React: lobby with the rule editor (interactive SVG
                 tiles, level-3 preview), the arena — a WebGL2 instanced tile

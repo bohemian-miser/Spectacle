@@ -1,3 +1,4 @@
+import { isGameMode, type GameMode } from '../../shared/game/knobs';
 import type { ResumeTicket } from '../../shared/game/protocol';
 import type { PlayerRule } from '../../shared/game/rule';
 
@@ -15,6 +16,8 @@ export interface SavedSession {
   readonly name: string;
   readonly rule: PlayerRule;
   readonly resume: ResumeTicket;
+  /** The kind of arena it was (older sessions: normal). */
+  readonly mode?: GameMode;
 }
 
 const KEY = 'spectacle.session';
@@ -25,6 +28,7 @@ export function loadSession(): SavedSession | null {
     if (!raw) return null;
     const s = JSON.parse(raw) as Partial<SavedSession>;
     if (typeof s.name !== 'string' || !s.rule || typeof s.resume?.id !== 'string' || typeof s.resume.token !== 'string') return null;
+    if (s.mode !== undefined && !isGameMode(s.mode)) return null;
     return s as SavedSession;
   } catch {
     return null;

@@ -24,7 +24,7 @@ gcloud run deploy "$NAME" \
   --min-instances 0 --max-instances 1 \
   --concurrency 1000 \
   --timeout 3600 \
-  --cpu 1 --memory 512Mi \
+  --cpu 1 --memory 1Gi \
   --session-affinity \
   --set-env-vars "BOTS=$BOTS,FIELD_FAMILY=${FIELD_FAMILY:-hex},FIELD_LEVEL=${FIELD_LEVEL:-5}${KNOBS:+,$KNOBS}"
 

@@ -9,7 +9,7 @@
 
 import type { Pt } from '../tiles';
 import type { FieldSpec } from './field';
-import type { Knobs } from './knobs';
+import type { GameMode, Knobs } from './knobs';
 import type { PlayerRule } from './rule';
 
 export type PathStatus = 'growing' | 'stuck' | 'closed';
@@ -59,6 +59,8 @@ export interface PlayerPublic {
   readonly patterns: readonly PatternPublic[];
   /** The pattern a tap starts a line with. */
   readonly active: number;
+  /** Normal mode: kinds of rival line converted — a head each (absent = 0). */
+  readonly converted?: number;
 }
 
 // --- client → server ---------------------------------------------------------
@@ -70,7 +72,14 @@ export interface ResumeTicket {
 
 export type ClientMessage =
   /** `resume` reattaches to a player the server still holds after a dropped connection. */
-  | { readonly t: 'join'; readonly name: string; readonly rule: PlayerRule; readonly resume?: ResumeTicket }
+  | {
+      readonly t: 'join';
+      readonly name: string;
+      readonly rule: PlayerRule;
+      readonly resume?: ResumeTicket;
+      /** Which kind of arena to be put in (default normal); the server picks a room of it. */
+      readonly mode?: GameMode;
+    }
   | { readonly t: 'tap'; readonly tile: number; readonly x: number; readonly y: number }
   | { readonly t: 'rule'; readonly rule: PlayerRule }
   /** Choose which of your patterns the next tap draws with. */
@@ -110,6 +119,12 @@ export type GameEvent =
    * theirs now, drawn with their pattern `pattern`. Its points follow as `score`s.
    */
   | { readonly t: 'take'; readonly path: number; readonly from: string; readonly owner: string; readonly pattern: number }
+  /**
+   * Normal mode: `id` closed a circuit round `from`'s line and converted it to
+   * their own pattern (its wipe and the new pieces' steps come with it).
+   * `converted` is how many kinds of line they have converted: a head each.
+   */
+  | { readonly t: 'convert'; readonly id: string; readonly from: string; readonly converted: number }
   /** `id` switched the pattern their taps draw with. */
   | { readonly t: 'active'; readonly id: string; readonly active: number }
   | { readonly t: 'status'; readonly path: number; readonly status: PathStatus }
@@ -143,9 +158,27 @@ export type GameEvent =
   /** Your tap was refused, with a reason to show. */
   | { readonly t: 'refused'; readonly reason: string };
 
+/** One arena on the server. */
+export interface RoomSummary {
+  readonly id: string;
+  readonly mode: GameMode;
+  /** Humans in it (bots aside), including ones who dropped and may resume. */
+  readonly players: number;
+  readonly capacity: number;
+}
+
 export type ServerMessage =
   /** Sent on connect, before any join: what the arena is, so a rule can be built for it. */
-  | { readonly t: 'hello'; readonly field: FieldSpec; readonly knobs: Knobs; readonly tiles: number; readonly players: number }
+  | {
+      readonly t: 'hello';
+      readonly field: FieldSpec;
+      readonly knobs: Knobs;
+      readonly tiles: number;
+      /** Humans playing across every room. */
+      readonly players: number;
+      /** What is running, per mode (absent from older servers and solo). */
+      readonly rooms?: readonly RoomSummary[];
+    }
   | {
       readonly t: 'welcome';
       readonly you: string;
@@ -155,6 +188,8 @@ export type ServerMessage =
       readonly knobs: Knobs;
       readonly players: readonly PlayerPublic[];
       readonly paths: readonly PathWire[];
+      /** The room you were put in (online), e.g. "normal-2". */
+      readonly room?: string;
     }
   | { readonly t: 'events'; readonly ev: readonly GameEvent[] }
   | { readonly t: 'pong'; readonly n: number }
