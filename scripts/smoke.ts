@@ -21,7 +21,7 @@ process.on('uncaughtException', (e) => {
   process.exit(1);
 });
 await page.goto(url);
-await page.getByPlaceholder('name').fill('smoke');
+await page.getByPlaceholder('player name').fill('smoke');
 // Draw a pairing by hand: on the first tile with a choice, drag dot 0 → dot 1.
 const before = await page.locator('.rule-readout code').innerText();
 const drawable = page.locator('.thumb-card:not(.is-odd) .thumb.is-drawable').filter({ has: page.locator('.thumb-dot') });
@@ -73,9 +73,9 @@ await page.waitForTimeout(300);
 await page.screenshot({ path: out.replace('.png', '-settings.png') });
 await page.getByLabel('Plain board (hide tile colours and arrows)').uncheck();
 await page.keyboard.press('Escape');
-// Restart with a fresh rule: New rule → Surprise me → Restart, then tap again.
+// Restart with a fresh rule: New rule → Random solution → Restart, then tap again.
 await page.getByRole('button', { name: 'New rule' }).click();
-await page.getByRole('button', { name: 'Surprise me' }).click();
+await page.getByRole('button', { name: 'Random solution' }).click();
 await page.getByRole('button', { name: 'Restart with this rule' }).click();
 await page.waitForSelector('.arena-canvas');
 await page.waitForTimeout(300);

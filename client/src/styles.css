@@ -262,7 +262,10 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 
 /* Mode / solo options */
 .mode-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 10px; }
-.mode-blurb { margin: -4px 0 12px; font-size: 13px; }
+.lobby-room { margin: 0 0 12px; font-size: 14px; }
+.lobby-intro { margin-bottom: 12px; font-size: 14px; line-height: 1.5; }
+.lobby-intro p { margin: 0 0 8px; }
+.lobby-sig { font-style: italic; color: var(--muted); }
 .lobby-notice { margin: 0 0 10px; padding: 6px 10px; border: 1px solid color-mix(in srgb, var(--bad) 40%, transparent); border-radius: 6px; font-size: 14px; }
 .btn.is-on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
 .solo-row { display: flex; gap: 14px; align-items: end; flex-wrap: wrap; }
@@ -286,3 +289,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .patch-svg { width: 100%; height: auto; justify-self: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
 .patch-tiles path { stroke: color-mix(in srgb, var(--text) 16%, transparent); stroke-width: 0.05; }
 .patch-stats { font-size: 13px; }
+.patch-svg { pointer-events: none; }
+.patch-arrow { fill: var(--text); opacity: 0.2; }
+.patch-head { display: flex; justify-content: flex-end; font-size: 13px; }
+.patch-head label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }

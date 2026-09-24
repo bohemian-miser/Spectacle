@@ -52,7 +52,7 @@ line and you both die.
 </tr>
 <tr>
 <td><b>The rule lab.</b> Every edge wears its class number; click one to switch that class on everywhere, drag dot to dot to pair lines up. Odd tiles are tails.</td>
-<td><b>The preview.</b> A level-3 patch drawn with your rule: closed circuits coloured by length, open lines in red. <i>Surprise me</i> deals a random clean rule.</td>
+<td><b>The preview.</b> A level-3 patch drawn with your rule: closed circuits coloured by length, open lines in red. <i>Random solution</i> deals a random clean rule.</td>
 </tr>
 <tr>
 <td><img src="docs/images/arena-closeup.png" alt="The arena zoomed in: hexagons with rotation arrows, the faint rule pattern and players' circuits"></td>
@@ -67,8 +67,8 @@ line and you both die.
 <td><img src="docs/images/settings.png" alt="The settings panel over a live board"></td>
 </tr>
 <tr>
-<td><b>Team colours</b> (press <kbd>T</kbd>): you in blue, everyone else in red.</td>
-<td><b>Settings apply live</b> — theme, five circuit-colour styles, a plain board, team colours.</td>
+<td><b>Team colours</b> (on by default; press <kbd>T</kbd>): you in blue, everyone else in red.</td>
+<td><b>Settings apply live</b> — theme, five circuit-colour styles, a plain board and team colours (both on by default).</td>
 </tr>
 </table>
 
@@ -90,7 +90,7 @@ line and you both die.
    you draw the pairing by hand — drag dot to dot, click a dot to remove its
    line; lines never cross inside a tile. A level-3 patch underneath shows the
    circuits (coloured by length) and open lines the rule produces. Tiles with
-   an odd number of lines are flagged as *tails* — your line will end there. *Surprise me* deals a
+   an odd number of lines are flagged as *tails* — your line will end there. *Random solution* deals a
    random clean rule (one from the family's kernel, so every tile pairs up).
    The rules that draw one endless line exist; finding them is the game.
 2. **Tap a tile.** It fades and takes your colour, and the chord nearest your tap
@@ -327,6 +327,16 @@ request, and so a WebSocket, at an hour; the client reconnects and resumes the
 same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 5 min), so
 nobody notices. A page refresh does the same: the tab keeps its resume ticket
 in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
+
+*Watching it.* `/status` on the arena's address is a read-only page: rooms and
+who is in them, memory, how long a loop pass takes, joins, drops and errors,
+and the recent log (the same lines go to Cloud Run's logs). Every merge to
+`main` redeploys, and a redeploy drops everyone connected and starts an empty
+board, so merge when nobody is playing.
+
+*Private rooms.* `/?room=anything` puts everyone who opens it in the same room
+(a new one by that name if none exists); matchmaking never sends strangers
+in. The Invite button in the arena copies the link to the room you are in.
 
 *A domain for Cloud Run.* Buy one anywhere — Cloudflare Registrar sells at
 cost with free DNS — then run `DOMAIN=play.example.com ./deploy/gcp/domain.sh`

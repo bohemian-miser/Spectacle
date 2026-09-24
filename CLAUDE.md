@@ -44,7 +44,10 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
 server/index.ts   Node + ws. Rooms per game mode (`Room`: engine + bots +
                   clients), one 50 ms loop ticking them all, batched broadcast
                   per room, static dist/, resume tokens (RESUME_GRACE_MS),
-                  env config. tests/rooms.test.ts spawns it.
+                  env config, guard() round every message/tick, note() log.
+                  tests/rooms.test.ts spawns it.
+server/status-page.ts  /status (HTML, polls /status.json): rooms, players,
+                  memory, loop time, joins/drops/errors, the recent log.
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
   session.ts      The tab's resume ticket (sessionStorage) and the
@@ -53,7 +56,8 @@ client/src/       Vite + React.
                   same engine + bots inside the tab (solo mode / Pages build).
   store.ts        Applies events into plain mutable state; version counters.
   Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
-                  numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze()).
+                  numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
+                  cropped to ~97% tiles, arrows, edge-number toggle).
   Arena.tsx       Two stacked canvases + pointer handling + HUD. A lone
                   pointer taps, drags to pan, or held still for `HOLD_MS`
                   (300 ms) paints (each tile entered is the next tap, sent
@@ -64,7 +68,8 @@ client/src/       Vite + React.
                   and readBoardTheme() — the canvas half of the scheme, read
                   back out of the CSS tokens.
   settings.ts     Board display settings (localStorage): circuit style a–e
-                  (?circuits= overrides), plain board. SettingsButton.tsx is
+                  (?circuits= overrides), plain board and team colours (both
+                  on by default). SettingsButton.tsx is
                   the ⚙ button + modal (theme, circuit colours, plain board).
   styles.css      Spectre's explorer tokens, both schemes, incl. the board
                   knobs (--tile-*, --board-*, --strand-darken).
@@ -132,7 +137,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `ROOM_SIZE` (10) humans (held-for-resume players count), else a new room
   (up to `MAX_ROOMS`, 80), else the emptiest. A room with no sockets doesn't
   tick; an extra one empty for `ROOM_IDLE_MS` closes (one per mode stays).
-  Player ids are global, so a resume ticket finds its room.
+  Player ids are global, so a resume ticket finds its room. A `?room=name`
+  link (`join.room`, cleaned by `cleanRoomName`) leads into that room
+  whatever its mode and size cap, or opens a *named* room by that name;
+  matchmaking never puts anyone in a named room, and named rooms close when
+  idle. The arena's Invite button copies such a link.
 - **Scaling: many self-contained processes, each with a hard ceiling.** A
   process's rooms share only its `Field` — no cross-process state — so
   Cloud Run can run many instances side by side (`SPECTACLE_MAX_INSTANCES`,
@@ -248,6 +257,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `swap` event replaces the pattern in place — same index, same colour, same
   head — so path indices stay valid. Slot 0 never swaps; that is `setRule`.
   A rule held in another slot is refused.
+- **Nothing in a message or a tick may throw the process down.** One Node
+  process holds every room, so `guard()` logs an exception (every 10 s at
+  most per source) instead. The welcome snapshot doesn't count towards
+  `MAX_BUFFERED` (a client's `allowance`): on a busy board it alone can be
+  bigger. `/status` is read-only and public — no ids or tokens on it.
 - **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
@@ -340,6 +354,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   keep the team hue and shade only by length (`circuitShade`); the circuit
   style's own hues are ignored while it is on. Go through `Renderer.colorOf`,
   not `store.pathColor`, for anything drawn per path.
+- **Name labels** (`Renderer.drawNames`): each player's name floats in a
+  pill over one of their tiles — at most one label per player on screen. A
+  label sticks to its step while that step is on screen and still theirs;
+  otherwise it moves to their step nearest the screen's centre whose pill
+  doesn't cover another's (so a crowded player may go unlabelled).
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
   the old one dies (only its SHA-256 is kept server-side). A resume can take
   over a player whose old socket is still open — a refresh usually beats the

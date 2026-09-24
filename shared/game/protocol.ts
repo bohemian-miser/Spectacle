@@ -79,6 +79,11 @@ export type ClientMessage =
       readonly resume?: ResumeTicket;
       /** Which kind of arena to be put in (default normal); the server picks a room of it. */
       readonly mode?: GameMode;
+      /**
+       * A room by name, from a `?room=` link: that room whatever its mode, or
+       * a new one of `mode` by that name. Matchmaking never sends anyone else in.
+       */
+      readonly room?: string;
     }
   | { readonly t: 'tap'; readonly tile: number; readonly x: number; readonly y: number }
   | { readonly t: 'rule'; readonly rule: PlayerRule }

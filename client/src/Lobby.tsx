@@ -23,6 +23,8 @@ export interface LobbyProps {
   readonly struggling: boolean;
   /** Give up on the online arena and switch to solo. */
   onGiveUp(): void;
+  /** The room a `?room=` link names, if any (online only). */
+  readonly linkRoom: string | null;
   onMode(mode: Mode): void;
   onSolo(opts: SoloOptions): void;
   onGameMode(mode: GameMode): void;
@@ -36,19 +38,36 @@ export interface LobbyProps {
   onLeave(): void;
 }
 
-const MODE_BLURBS: Readonly<Record<GameMode, string>> = {
-  normal:
-    "Loop round a rival's line and it turns into yours — your pattern, on their tiles. Each new kind of line you convert gives you another head.",
-  conquest:
-    "Loop round a rival's line and you take their pattern: a new tab to draw with, their lines kept as they are, and another head.",
-};
+/** Where a `?room=` link leads: into that room, or opening it. */
+function LinkRoomNote({ room, store, gameMode }: { room: string; store: Store; gameMode: GameMode }): JSX.Element {
+  const there = store.hello?.rooms.find((r) => r.id === room);
+  // The same page without the link: matchmaking again.
+  const params = new URLSearchParams(location.search);
+  params.delete('room');
+  const q = params.toString();
+  const publicHref = `${location.pathname}${q ? `?${q}` : ''}`;
+  return (
+    <p className="lobby-room">
+      {there ? (
+        <>
+          Joining room <b>{room}</b> · {MODE_LABELS[there.mode]} · {there.players} playing.
+        </>
+      ) : (
+        <>
+          Opening room <b>{room}</b> · {MODE_LABELS[gameMode]}. Anyone with this link joins you there.
+        </>
+      )}{' '}
+      <a href={publicHref}>Play in a public room instead</a>
+    </p>
+  );
+}
 
 function tileCount(family: TileFamilyId, level: number): number {
   return countTiles(buildSystem(family, level)['Delta']);
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, gameMode, rule, name, inArena, notice, struggling, onGiveUp, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } =
+  const { store, mode, solo, gameMode, rule, name, inArena, notice, struggling, onGiveUp, linkRoom, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } =
     props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
@@ -88,6 +107,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
               )}
             </p>
           )}
+          {linkRoom && <LinkRoomNote room={linkRoom} store={store} gameMode={gameMode} />}
           {!SOLO_ONLY && (
             <div className="mode-row">
               <button type="button" className={`btn${mode === 'online' ? ' is-on' : ''}`} onClick={() => onMode('online')}>
@@ -117,7 +137,6 @@ export function Lobby(props: LobbyProps): JSX.Element {
               );
             })}
           </div>
-          <p className="muted mode-blurb">{MODE_BLURBS[gameMode]}</p>
           {mode === 'solo' && (
             <div className="solo-row">
               <label>
@@ -156,12 +175,11 @@ export function Lobby(props: LobbyProps): JSX.Element {
       )}
 
       <section className="panel">
-        <h2>1. Your name</h2>
         <input
           className="input"
           value={name}
           maxLength={store.knobs?.maxNameLength ?? 16}
-          placeholder="name"
+          placeholder="player name"
           disabled={inArena}
           onChange={(e) => {
             setTouched(true);
@@ -176,12 +194,23 @@ export function Lobby(props: LobbyProps): JSX.Element {
       </section>
 
       <section className="panel">
-        <h2>2. Your rule</h2>
-        <p className="muted">
-          Switch on edge classes to send a line in from every seam of that class; then choose, tile by tile, how the
-          lines pair up. Every tile plays by <em>your</em> rule when your line runs through it — a tile with an odd number
-          of lines is a tail, and your line stops there.
-        </p>
+        <div className="lobby-intro">
+          <p>
+            These fractals are called “Spectacles” based off the{' '}
+            <a href="https://bohemian-miser.github.io/Spectre/" target="_blank" rel="noreferrer">
+              Spectre tiling circuits
+            </a>{' '}
+            (see the link if you're interested in the maths).
+          </p>
+          <p>
+            The arena is a special layout of the hexagons below. 1s join up with 1s, 2s with 2s, etc... To make sure a
+            line never hits a dead end, either all the 1s need to have a line connected, or none of them. If any hexagon
+            has an odd number of active edges, then that's a dead end 'tail'.
+          </p>
+          <p>Once you've created a pattern you like, you'll then play using that pattern.</p>
+          <p>If any of that was confusing just give it a go, you'll work it out</p>
+          <p className="lobby-sig">- bo miser</p>
+        </div>
         {hello ? (
           <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} onDrafting={setDrafting} />
         ) : mode === 'online' ? (

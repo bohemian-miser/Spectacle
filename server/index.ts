@@ -49,8 +49,10 @@ import { GAME_MODES, isGameMode, knobsForMode, knobsFromEnv, type GameMode, type
 import type { ClientMessage, GameEvent, RoomSummary, ServerMessage } from '../shared/game/protocol';
 import { PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
+import { cleanRoomName } from '../shared/game/room-name';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
 import { Bots } from '../shared/game/bots';
+import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const ROOT = resolve(fileURLToPath(new URL('..', import.meta.url)));
@@ -65,6 +67,21 @@ function fieldSpecFromEnv(): FieldSpec {
   return { family, level, rootTile };
 }
 
+// --- log ----------------------------------------------------------------------
+
+/** The last few hundred things worth knowing, for /status. */
+const recent: LogLine[] = [];
+const RECENT_MAX = 300;
+const counters = { joins: 0, resumes: 0, leaves: 0, dropped: 0, errors: 0 };
+
+/** Log to stdout (Cloud Run keeps it) and to the /status page's list. */
+function note(level: LogLine['level'], text: string, detail?: string): void {
+  (level === 'error' ? console.error : level === 'warn' ? console.warn : console.log)(`[spectacle] ${text}`, ...(detail ? [detail] : []));
+  recent.push({ at: Date.now(), level, text });
+  if (recent.length > RECENT_MAX) recent.splice(0, recent.length - RECENT_MAX);
+}
+
+const startedAt = Date.now();
 const baseKnobs = knobsFromEnv(process.env);
 const spec = fieldSpecFromEnv();
 const t0 = Date.now();
@@ -73,7 +90,7 @@ const t0 = Date.now();
 const field = buildField(spec);
 // The outline is only needed when a line runs edge to edge; build it now, not mid-tick.
 fieldOutline(field);
-console.log(`[spectacle] field ${spec.family} level ${spec.level} root ${spec.rootTile}: ${field.count} tiles in ${Date.now() - t0} ms`);
+note('info', `field ${spec.family} level ${spec.level} root ${spec.rootTile}: ${field.count} tiles in ${Date.now() - t0} ms`);
 
 const seed = process.env.SEED ? Number(process.env.SEED) : (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
 const seedRng = mulberry32(seed);
@@ -91,8 +108,12 @@ const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS ?? 60_000);
  * header's "Scaling past one instance".
  */
 const MAX_INSTANCE_PLAYERS = Math.max(1, Number(process.env.MAX_INSTANCE_PLAYERS ?? 800));
-/** A socket this far behind on sends is dropped (it can resume) rather than buffered forever. */
-const MAX_BUFFERED = 4 * 1024 * 1024;
+/**
+ * A socket this far behind on sends is dropped (it can resume) rather than
+ * buffered forever. Its welcome doesn't count: that snapshot is one message,
+ * and on a busy board it alone can be bigger than this.
+ */
+const MAX_BUFFERED = Number(process.env.MAX_BUFFERED_MB ?? 4) * 1024 * 1024;
 // --- static files ------------------------------------------------------------
 
 const MIME: Record<string, string> = {
@@ -108,6 +129,16 @@ const MIME: Record<string, string> = {
 
 function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', 'http://x');
+  if (url.pathname === '/status.json') {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(statusReport()));
+    return;
+  }
+  if (url.pathname === '/status') {
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(STATUS_PAGE);
+    return;
+  }
   if (url.pathname === '/healthz') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(
@@ -163,6 +194,28 @@ interface Client {
   joined: boolean;
   lastTapAt: number;
   room: Room | null;
+  /** Bytes of the last welcome, which may still be draining: not "behind". */
+  allowance: number;
+  /** The player's name once joined, for the log. */
+  name: string;
+}
+
+/**
+ * Run `fn`, logging instead of throwing: one bad message or one room's broken
+ * tick must not take the process — and every room with it — down.
+ */
+const lastLogged = new Map<string, number>();
+function guard(what: string, fn: () => void): void {
+  try {
+    fn();
+  } catch (e) {
+    const now = Date.now();
+    // A tick that throws once tends to throw every 50 ms: log it every 10 s.
+    if (now - (lastLogged.get(what) ?? 0) < 10_000) return;
+    lastLogged.set(what, now);
+    counters.errors++;
+    note('error', `error in ${what}: ${e instanceof Error ? e.message : String(e)}`, e instanceof Error ? e.stack : undefined);
+  }
 }
 
 /**
@@ -181,6 +234,8 @@ class Room {
   constructor(
     readonly id: string,
     readonly mode: GameMode,
+    /** Opened by a `?room=` link: only links lead in, never matchmaking. */
+    readonly named = false,
   ) {
     const rng = mulberry32((seedRng.next() * 0xffffffff) >>> 0);
     this.engine = new Engine(field, knobsForMode(baseKnobs, mode), rng);
@@ -219,7 +274,9 @@ class Room {
     const payload = JSON.stringify({ t: 'events', ev } satisfies ServerMessage);
     for (const c of this.clients.values()) {
       if (!c.joined || c.ws.readyState !== c.ws.OPEN) continue;
-      if (c.ws.bufferedAmount > MAX_BUFFERED) {
+      if (c.ws.bufferedAmount > MAX_BUFFERED + c.allowance) {
+        counters.dropped++;
+        note('warn', `${c.name || c.id} in ${this.id} too far behind (${c.ws.bufferedAmount} bytes buffered), dropped`);
         c.ws.close(4001, 'too far behind');
         continue;
       }
@@ -233,10 +290,13 @@ const roomCount: Record<GameMode, number> = { normal: 0, conquest: 0 };
 /** Player id → the room holding them (connected or held for a resume). */
 const playerRoom = new Map<string, Room>();
 
-function openRoom(mode: GameMode): Room {
-  const room = new Room(`${mode}-${++roomCount[mode]}`, mode);
+function openRoom(mode: GameMode, name?: string): Room {
+  let id = name;
+  // A link may already have taken the next number's name.
+  while (!id || rooms.has(id)) id = `${mode}-${++roomCount[mode]}`;
+  const room = new Room(id, mode, name !== undefined);
   rooms.set(room.id, room);
-  console.log(`[spectacle] opened room ${room.id} (${rooms.size} rooms)`);
+  note('info', `opened room ${room.id}${room.named ? ' (from a link)' : ''} · ${rooms.size} rooms`);
   return room;
 }
 
@@ -245,7 +305,7 @@ function roomFor(mode: GameMode): Room {
   let best: Room | null = null;
   let emptiest: Room | null = null;
   for (const r of rooms.values()) {
-    if (r.mode !== mode) continue;
+    if (r.mode !== mode || r.named) continue;
     const n = r.humans();
     if (n < ROOM_SIZE && (!best || n > best.humans())) best = r;
     if (n < r.knobs.maxPlayers && (!emptiest || n < emptiest.humans())) emptiest = r;
@@ -255,14 +315,27 @@ function roomFor(mode: GameMode): Room {
   return emptiest;
 }
 
+/**
+ * The room a joiner goes into. A link names one: that room if it exists,
+ * whatever its mode, else a new room by that name (while there is space for
+ * one). Otherwise matchmaking by mode.
+ */
+function roomForJoin(mode: GameMode, link: unknown): Room {
+  const name = cleanRoomName(link);
+  if (!name) return roomFor(mode);
+  const room = rooms.get(name);
+  if (room) return room;
+  return rooms.size < MAX_ROOMS ? openRoom(mode, name) : roomFor(mode);
+}
+
 /** Close extra rooms that have sat empty — no one connected, no one held for a resume. */
 function reapRooms(now: number): void {
   for (const r of rooms.values()) {
     if (r.clients.size > 0 || r.humans() > 0 || r.emptySince === 0 || now - r.emptySince < ROOM_IDLE_MS) continue;
-    const others = [...rooms.values()].filter((q) => q.mode === r.mode && q !== r);
-    if (others.length === 0) continue; // keep one of each mode warm
+    const others = [...rooms.values()].filter((q) => q.mode === r.mode && q !== r && !q.named);
+    if (!r.named && others.length === 0) continue; // keep one matchmade room of each mode warm
     rooms.delete(r.id);
-    console.log(`[spectacle] closed idle room ${r.id} (${rooms.size} rooms)`);
+    note('info', `closed idle room ${r.id} · ${rooms.size} rooms`);
   }
 }
 
@@ -321,6 +394,7 @@ function detach(id: string): void {
       detached.delete(id);
       tokenHashes.delete(id);
       playerRoom.delete(id);
+      note('info', `${room.engine.players.get(id)?.name ?? id} timed out of ${room.id}`);
       room.pending.push(...room.engine.removePlayer(id));
     }, RESUME_GRACE_MS),
   );
@@ -366,7 +440,7 @@ function cleanName(raw: unknown): string {
 
 function welcome(client: Client, room: Room): void {
   const snap = room.engine.snapshot();
-  send(client.ws, {
+  const payload = JSON.stringify({
     t: 'welcome',
     you: client.id,
     token: issueToken(client.id),
@@ -375,11 +449,13 @@ function welcome(client: Client, room: Room): void {
     players: snap.players,
     paths: snap.paths,
     room: room.id,
-  });
+  } satisfies ServerMessage);
+  client.allowance = payload.length;
+  if (client.ws.readyState === client.ws.OPEN) client.ws.send(payload);
 }
 
 wss.on('connection', (ws) => {
-  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, room: null };
+  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, room: null, allowance: 0, name: '' };
   send(ws, {
     t: 'hello',
     field: spec,
@@ -389,7 +465,7 @@ wss.on('connection', (ws) => {
     rooms: [...rooms.values()].map((r) => r.summary()),
   });
 
-  ws.on('message', (data) => {
+  ws.on('message', (data) => guard('message', () => {
     let msg: ClientMessage;
     try {
       msg = JSON.parse(String(data)) as ClientMessage;
@@ -404,6 +480,9 @@ wss.on('connection', (ws) => {
         if (client.joined) return;
         const resumed = tryResume(client, msg.resume);
         if (resumed) {
+          client.name = resumed.engine.players.get(client.id)?.name ?? '';
+          counters.resumes++;
+          note('info', `${client.name} resumed in ${resumed.id}`);
           client.joined = true;
           client.room = resumed;
           resumed.clients.set(client.id, client);
@@ -422,12 +501,15 @@ wss.on('connection', (ws) => {
           send(ws, { t: 'error', message: 'invalid rule for this arena' });
           return;
         }
-        const target = roomFor(isGameMode(msg.mode) ? msg.mode : 'normal');
+        const target = roomForJoin(isGameMode(msg.mode) ? msg.mode : 'normal', msg.room);
         if (target.engine.players.size >= target.knobs.maxPlayers) {
           send(ws, { t: 'error', message: 'This room is full — try again shortly, or play bots.', code: 'full' });
           return;
         }
         const ev = target.engine.addPlayer(client.id, cleanName(msg.name), rule);
+        client.name = target.engine.players.get(client.id)?.name ?? '';
+        counters.joins++;
+        note('info', `${client.name} joined ${target.id}`);
         client.joined = true;
         client.room = target;
         target.clients.set(client.id, client);
@@ -478,6 +560,8 @@ wss.on('connection', (ws) => {
       case 'leave': {
         if (!client.joined || !room) return;
         // Gone for good: no resume, and the seat is free straight away.
+        counters.leaves++;
+        note('info', `${client.name} left ${room.id}`);
         client.joined = false;
         client.room = null;
         room.clients.delete(client.id);
@@ -493,30 +577,73 @@ wss.on('connection', (ws) => {
       default:
         return;
     }
-  });
+  }));
 
-  ws.on('close', () => {
+  ws.on('close', (code) => guard('close', () => {
     const room = client.room;
     if (!room) return;
+    if (client.joined) note('info', `${client.name} disconnected from ${room.id} (code ${code})`);
     if (room.clients.get(client.id) === client) room.clients.delete(client.id);
     if (client.joined) detach(client.id);
-  });
+  }));
   ws.on('error', () => ws.close());
 });
 
 // --- simulation loop -----------------------------------------------------------
+
+/** How long a loop pass takes: over `tickMs` and the game falls behind. */
+const tickStats = { avgMs: 0, maxMs: 0, maxSince: Date.now() };
 
 let last = Date.now();
 setInterval(() => {
   const now = Date.now();
   const dt = Math.min(1000, now - last);
   last = now;
-  for (const room of rooms.values()) room.tick(now, dt);
-  reapRooms(now);
+  const t = performance.now();
+  for (const room of rooms.values()) guard(`tick ${room.id}`, () => room.tick(now, dt));
+  guard('reap', () => reapRooms(now));
+  const took = performance.now() - t;
+  tickStats.avgMs = tickStats.avgMs * 0.98 + took * 0.02;
+  // The worst pass in the last minute or so.
+  if (now - tickStats.maxSince > 60_000) {
+    tickStats.maxMs = 0;
+    tickStats.maxSince = now;
+  }
+  tickStats.maxMs = Math.max(tickStats.maxMs, took);
 }, baseKnobs.tickMs);
 
+// --- status --------------------------------------------------------------------
+
+/** Everything /status shows. Read-only, and nothing in it lets anyone act as a player. */
+function statusReport(): StatusReport {
+  const mem = process.memoryUsage();
+  return {
+    now: Date.now(),
+    startedAt,
+    field: { ...spec, tiles: field.count },
+    memory: { rssMb: Math.round(mem.rss / 1e6), heapMb: Math.round(mem.heapUsed / 1e6) },
+    tick: { everyMs: baseKnobs.tickMs, avgMs: +tickStats.avgMs.toFixed(2), maxMs: +tickStats.maxMs.toFixed(1) },
+    sockets: wss.clients.size,
+    counters,
+    limits: { roomSize: ROOM_SIZE, maxRooms: MAX_ROOMS, botsPerRoom: BOTS },
+    rooms: [...rooms.values()].map((r) => {
+      const players = [...r.engine.players.values()].map((p) => ({
+        name: p.name,
+        bot: p.bot,
+        connected: p.bot || r.clients.has(p.id),
+        score: p.score,
+        lines: p.paths.length,
+        patterns: p.patterns.length,
+      }));
+      players.sort((a, b) => b.score - a.score);
+      let steps = 0;
+      for (const p of r.engine.players.values()) for (const path of p.paths) steps += path.steps.length;
+      return { id: r.id, mode: r.mode, named: r.named, emptySince: r.emptySince || null, steps, players };
+    }),
+    recent: recent.slice(-150).reverse(),
+  };
+}
+
 http.listen(PORT, () => {
-  console.log(
-    `[spectacle] listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots ${BOTS} per room, ${ROOM_SIZE} per room, max ${MAX_ROOMS} rooms)`,
-  );
+  note('info', `listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots ${BOTS} per room, ${ROOM_SIZE} per room, max ${MAX_ROOMS} rooms)`);
 });

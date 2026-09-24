@@ -8,6 +8,7 @@ import { Connection, type GameConnection } from './net';
 import { answerTabs, clearSession, heldElsewhere, loadSession, saveSession } from './session';
 import { Store } from './store';
 import { useStore } from './useStore';
+import { cleanRoomName } from '../../shared/game/room-name';
 
 export type Mode = 'online' | 'solo';
 type Screen = 'lobby' | 'arena';
@@ -38,6 +39,9 @@ function initialGameMode(): GameMode {
   }
   return 'normal';
 }
+
+/** A room named by a `?room=` link, online only: that room, or a new one by that name. */
+export const LINK_ROOM = SOLO_ONLY ? null : cleanRoomName(new URLSearchParams(location.search).get('room'));
 
 function initialMode(): Mode {
   if (SOLO_ONLY) return 'solo';
@@ -72,7 +76,7 @@ export function App(): JSX.Element {
   const joined = useRef(false);
   const retry = useRef(0);
   /** What to send on reconnect so the player is picked up where they were. */
-  const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null } | null>(null);
+  const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null; room?: string } | null>(null);
 
   // One connection per (mode, solo options); reconnect online with backoff.
   useEffect(() => {
@@ -98,7 +102,7 @@ export function App(): JSX.Element {
           // lobby.
           const r = rejoin.current;
           if (r && conn.kind === 'online') {
-            conn.send({ t: 'join', name: r.name, rule: r.rule, mode: r.mode, resume: r.resume ?? undefined });
+            conn.send({ t: 'join', name: r.name, rule: r.rule, mode: r.mode, resume: r.resume ?? undefined, room: r.room ?? LINK_ROOM ?? undefined });
             joined.current = true;
             setScreen('arena');
           }
@@ -112,7 +116,11 @@ export function App(): JSX.Element {
             rejoin.current = null;
             clearSession();
             setNotice('Your game carried on in another tab.');
-          } else if (rejoin.current && store.resume) rejoin.current.resume = store.resume;
+          } else if (rejoin.current) {
+            if (store.resume) rejoin.current.resume = store.resume;
+            // If the server forgot us (a restart), rejoin the same room.
+            if (store.room) rejoin.current.room = store.room;
+          }
           store.reset();
           if (!rejoin.current) setScreen('lobby');
           // Still retrying in the background either way (below) — this only
@@ -155,8 +163,9 @@ export function App(): JSX.Element {
     if (mode !== 'online' || !r || !store.resume) return;
     if (r.resume && r.resume.id !== store.resume.id) store.toast('Your last session had expired — you are a new player', 'info');
     r.resume = store.resume;
+    if (store.room) r.room = store.room;
     const rule = store.me?.rule ?? r.rule;
-    saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume });
+    saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume, room: r.room });
   }, [mode, store.resume, store]);
 
   // A saved session from an arena that has since changed family (a redeploy)
@@ -198,12 +207,13 @@ export function App(): JSX.Element {
     }
     if (joined.current) conn.send({ t: 'rule', rule });
     else {
-      conn.send({ t: 'join', name, rule, mode: gameMode });
+      conn.send({ t: 'join', name, rule, mode: gameMode, room: LINK_ROOM ?? undefined });
       joined.current = true;
     }
     const playing = rejoin.current?.mode ?? gameMode;
-    rejoin.current = { name, rule, mode: playing, resume: rejoin.current?.resume ?? null };
-    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, mode: playing, resume: rejoin.current.resume });
+    const room = rejoin.current?.room ?? LINK_ROOM ?? undefined;
+    rejoin.current = { name, rule, mode: playing, resume: rejoin.current?.resume ?? null, room };
+    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, mode: playing, resume: rejoin.current.resume, room });
     setScreen('arena');
   };
 
@@ -272,6 +282,7 @@ export function App(): JSX.Element {
       name={name}
       inArena={joined.current && !!store.you}
       notice={notice}
+      linkRoom={mode === 'online' ? LINK_ROOM : null}
       onMode={changeMode}
       onSolo={setSolo}
       onRule={setRule}
