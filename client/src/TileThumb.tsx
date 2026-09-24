@@ -41,7 +41,7 @@ const DOT_R = 0.16;
 const HIT_R = 0.34;
 
 /** Twice the signed area: its sign says which side of an edge is outside. */
-function signedArea(pts: readonly Pt[]): number {
+export function signedArea(pts: readonly Pt[]): number {
   let a = 0;
   for (let i = 0; i < pts.length; i++) {
     const p = pts[i];
@@ -56,7 +56,7 @@ function signedArea(pts: readonly Pt[]): number {
  * midpoint, or the vertex between the two middle edges) and the outward
  * normal there, so the number sits just outside the tile.
  */
-function seamLabelAt(pts: readonly Pt[], edges: readonly number[], orient: number): { x: number; y: number; nx: number; ny: number } {
+export function seamLabelAt(pts: readonly Pt[], edges: readonly number[], orient: number): { x: number; y: number; nx: number; ny: number } {
   const n = pts.length;
   const normal = (i: number): Pt => {
     const a = pts[i];

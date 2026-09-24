@@ -53,7 +53,8 @@ client/src/       Vite + React.
                   same engine + bots inside the tab (solo mode / Pages build).
   store.ts        Applies events into plain mutable state; version counters.
   Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
-                  numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze()).
+                  numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
+                  cropped to ~97% tiles, arrows, edge-number toggle).
   Arena.tsx       Two stacked canvases + pointer handling + HUD. A lone
                   pointer taps, drags to pan, or held still for `HOLD_MS`
                   (300 ms) paints (each tile entered is the next tap, sent

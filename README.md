@@ -52,7 +52,7 @@ line and you both die.
 </tr>
 <tr>
 <td><b>The rule lab.</b> Every edge wears its class number; click one to switch that class on everywhere, drag dot to dot to pair lines up. Odd tiles are tails.</td>
-<td><b>The preview.</b> A level-3 patch drawn with your rule: closed circuits coloured by length, open lines in red. <i>Surprise me</i> deals a random clean rule.</td>
+<td><b>The preview.</b> A level-3 patch drawn with your rule: closed circuits coloured by length, open lines in red. <i>Random solution</i> deals a random clean rule.</td>
 </tr>
 <tr>
 <td><img src="docs/images/arena-closeup.png" alt="The arena zoomed in: hexagons with rotation arrows, the faint rule pattern and players' circuits"></td>
@@ -90,7 +90,7 @@ line and you both die.
    you draw the pairing by hand — drag dot to dot, click a dot to remove its
    line; lines never cross inside a tile. A level-3 patch underneath shows the
    circuits (coloured by length) and open lines the rule produces. Tiles with
-   an odd number of lines are flagged as *tails* — your line will end there. *Surprise me* deals a
+   an odd number of lines are flagged as *tails* — your line will end there. *Random solution* deals a
    random clean rule (one from the family's kernel, so every tile pairs up).
    The rules that draw one endless line exist; finding them is the game.
 2. **Tap a tile.** It fades and takes your colour, and the chord nearest your tap
