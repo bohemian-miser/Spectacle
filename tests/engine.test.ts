@@ -319,7 +319,35 @@ describe('engine', () => {
     expect(r.result).toEqual({ ok: false, reason: "that's someone else's line" });
   });
 
-  it('lines block chords, not tiles: a free chord on a tile a line runs through can be started', () => {
+  it("a rival's tile is refused whole, even on a chord their line is not on", () => {
+    const table = chordTableFor(FIELD, SEL15);
+    const mid = (tile: number, c: number) => {
+      const [a, b] = worldChord(FIELD, table, tile, c);
+      return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
+    };
+    let checked = 0;
+    for (let start = 0; start < FIELD.count && checked < 3; start++) {
+      if (tileChords(FIELD, table, start).length === 0) continue;
+      const e = make({ tapInsideRivalCircuits: true });
+      e.addPlayer('a', 'Ann', SEL15);
+      e.addPlayer('b', 'Bob', SEL15);
+      const first = e.tap('a', start, tileCenter(FIELD, start)).result;
+      if (!first.ok) continue;
+      runUntil(e, () => e.getPath(first.path)?.status !== 'growing');
+      const line = e.getPath(first.path);
+      if (!line) continue;
+      const hit = line.steps.slice(1).find((q) => tileChords(FIELD, table, q.tile).length >= 2
+        && line.steps.filter((x) => x.tile === q.tile).length === 1);
+      if (!hit) continue;
+      const free = tileChords(FIELD, table, hit.tile).map((_, c) => c).find((c) => c !== hit.chord)!;
+      const r = e.tap('b', hit.tile, mid(hit.tile, free));
+      expect(r.result).toEqual({ ok: false, reason: "that's someone else's line" });
+      checked++;
+    }
+    expect(checked).toBeGreaterThan(0);
+  });
+
+  it('your own lines block chords, not tiles: a free chord on a tile your line runs through can be started', () => {
     const table = chordTableFor(FIELD, SEL15);
     const mid = (tile: number, c: number) => {
       const [a, b] = worldChord(FIELD, table, tile, c);
@@ -333,8 +361,8 @@ describe('engine', () => {
     };
     // Ann's line runs through one chord of a two-chord tile (not its first
     // tile, which would turn it round) and leaves the other free — they
-    // neither cross nor touch. A tap right on Ann's chord, by Ann or by Bob,
-    // starts on the free one.
+    // neither cross nor touch. A tap right on Ann's chord by Ann starts on the
+    // free one (Bob, a rival, is refused the whole tile — see above).
     let checked = 0;
     for (let start = 0; start < FIELD.count && checked < 3; start++) {
       if (tileChords(FIELD, table, start).length === 0) continue;
@@ -350,7 +378,7 @@ describe('engine', () => {
         return !chordsConflict(worldChord(FIELD, table, q.tile, 0), worldChord(FIELD, table, q.tile, 1), true);
       });
       if (!hit) continue;
-      for (const who of ['a', 'b']) {
+      for (const who of ['a']) {
         const e = setup();
         const again = e.tap('a', start, tileCenter(FIELD, start)).result;
         if (!again.ok) throw new Error('replay refused');

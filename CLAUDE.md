@@ -203,10 +203,13 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit —
-  nor on a tile your own line is on (see below). For rivals "on a line" is per chord, not per tile (`freeChord`):
-  a tap takes the nearest chord of the tile that no line runs along or
-  conflicts with (`pathMeets`, the same test a growing line uses), and is
-  refused only when every chord there is blocked. The exception is a tap
+  nor on a tile your own line is on (see below). A rival's line owns its
+  whole tile: a tap on any tile one passes through is refused, even on a
+  chord their line doesn't touch (owner's call; `tapOntoOthers` lifts it).
+  For your own lines it is per chord (`freeChord`): a tap takes the nearest
+  chord of the tile that none of them runs along or conflicts with
+  (`pathMeets`, the same test a growing line uses), and is refused only when
+  every chord there is blocked. The exception is a tap
   whose nearest chord is one of your own lines (`tapOwnLine`, checked before
   the head limit): a line of another pattern is recoloured to the active one
   (`recolor`: a fresh wave splits it on that tile, sprouts the active pattern
