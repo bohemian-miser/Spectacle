@@ -33,8 +33,11 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   engine.ts       Authoritative simulation: players, paths, tap, tick, cuts,
                   circuits, zero-sum points, tap restrictions. Deterministic
                   given its Rng. No I/O.
-  bots.ts         Bots: random clean rules, tap with a head to spare, aim
-                  beside rivals, draw with any captured pattern.
+  bots.ts         Bots: five kinds (wanderer, rotator, hunter, farmer,
+                  bridge) as a `BotMix`; `parseBotMix` reads `BOTS`.
+  bot-sense.ts    What bots see: the rule scout (one per field, sliced per
+                  tick or `prepareBots` up front), `probe` (walk a would-be
+                  line against the live board), isInfiniteLineRule.
   color.ts        mixHsl — a captured pattern's colour.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
@@ -125,7 +128,17 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   closed) stay until cut — `maxLivePaths` / `maxCompletedCircuits` exist as
   knobs, default 0. Losing the head in a collision blocks the next tap for
   `respawnDelayMs` (500 ms, engine clock = summed tick dt).
-- **One bot per room** (`BOTS=1` everywhere it is deployed).
+- **One bot per room** (`BOTS=1` everywhere it is deployed) unless the owner
+  sets a mix. `BOTS` takes a number (wanderers, as ever) or kinds
+  (`bridge+hunter:2`; `+` because gcloud splits env vars on commas),
+  `BOTS_NORMAL`/`BOTS_CONQUEST` override per mode. Solo picks per kind in
+  the lobby (localStorage `spectacle.soloBots`, `?bots=`), one of each by
+  default. **No bot plays an infinite-line rule** (the whole hex `128` /
+  spectre `1278` subset, any matching — `isInfiniteLineRule`) unless
+  `BOT_INFINITE_LINES=1`: a bot on one would show everyone the discovery.
+  (Before this, wanderers drew from every clean rule, the FASS subset included.)
+  Bot work per tick stays in single-digit ms at hex level 6 —
+  `scripts/bot-arena.ts` prints it; keep it there.
 - **Two game modes** (`knobs.mode`, per room): **Normal** (default in the
   lobby and on the server) and **Conquest (beta)** — everything described
   under "Captured patterns" below. In normal mode a rival line wholly inside

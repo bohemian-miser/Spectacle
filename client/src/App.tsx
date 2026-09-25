@@ -3,7 +3,7 @@ import { isGameMode, type GameMode } from '../../shared/game/knobs';
 import { defaultRule, type PlayerRule } from '../../shared/game/rule';
 import { Arena } from './Arena';
 import { Lobby } from './Lobby';
-import { DEFAULT_SOLO, LocalConnection, type SoloOptions } from './local';
+import { initialSolo, LocalConnection, saveSoloBots, type SoloOptions } from './local';
 import { Connection, type GameConnection } from './net';
 import { answerTabs, clearSession, heldElsewhere, loadSession, saveSession } from './session';
 import { Store } from './store';
@@ -61,7 +61,7 @@ export function App(): JSX.Element {
   const store = useMemo(() => new Store(), []);
   useStore(store);
   const [mode, setMode] = useState<Mode>(initialMode);
-  const [solo, setSolo] = useState<SoloOptions>(DEFAULT_SOLO);
+  const [solo, setSolo] = useState<SoloOptions>(initialSolo);
   const [gameMode, setGameMode] = useState<GameMode>(initialGameMode);
   /** Bumped to start over with a fresh connection (leaving the arena). */
   const [epoch, setEpoch] = useState(0);
@@ -284,7 +284,10 @@ export function App(): JSX.Element {
       notice={notice}
       linkRoom={mode === 'online' ? LINK_ROOM : null}
       onMode={changeMode}
-      onSolo={setSolo}
+      onSolo={(opts) => {
+        if (opts.bots !== solo.bots) saveSoloBots(opts.bots);
+        setSolo(opts);
+      }}
       onRule={setRule}
       onName={setName}
       onEnter={enter}

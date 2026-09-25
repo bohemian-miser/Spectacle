@@ -3,7 +3,8 @@ import { GAME_MODES, MODE_LABELS, type GameMode } from '../../shared/game/knobs'
 import type { PlayerRule } from '../../shared/game/rule';
 import { FAMILY_DISPLAY_NAMES, buildSystem, countTiles, type TileFamilyId } from '../../shared/tiles';
 import { ONLINE_URL, SOLO_ONLY, type Mode } from './App';
-import { SOLO_LEVELS, type SoloOptions } from './local';
+import { SOLO_LEVELS, SOLO_MAX_PER_KIND, type SoloOptions } from './local';
+import { BOT_INFO, BOT_KINDS } from '../../shared/game/bots';
 import { RuleEditor } from './RuleEditor';
 import type { Store } from './store';
 import { SettingsButton } from './SettingsButton';
@@ -167,10 +168,23 @@ export function Lobby(props: LobbyProps): JSX.Element {
                   ))}
                 </select>
               </label>
-              <label>
-                Bots
-                <input type="number" min={0} max={12} value={solo.bots} onChange={(e) => onSolo({ ...solo, bots: Math.max(0, Math.min(12, Number(e.target.value) || 0)) })} />
-              </label>
+              <fieldset className="bot-picks">
+                <legend>Bots</legend>
+                {BOT_KINDS.map((k) => (
+                  <label key={k} className="bot-pick">
+                    <input
+                      type="number"
+                      min={0}
+                      max={SOLO_MAX_PER_KIND}
+                      value={solo.bots[k] ?? 0}
+                      aria-label={`${BOT_INFO[k].label} bots`}
+                      onChange={(e) => onSolo({ ...solo, bots: { ...solo.bots, [k]: Math.max(0, Math.min(SOLO_MAX_PER_KIND, Math.floor(Number(e.target.value)) || 0)) } })}
+                    />
+                    <span className="bot-name">{BOT_INFO[k].label}</span>
+                    <span className="bot-blurb">{BOT_INFO[k].blurb}</span>
+                  </label>
+                ))}
+              </fieldset>
               <span className="muted">
                 Everything runs in your browser; nothing is shared.
                 {SOLO_ONLY && ONLINE_URL && (

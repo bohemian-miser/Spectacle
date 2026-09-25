@@ -271,6 +271,16 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .solo-row select, .solo-row input { background: var(--panel-2); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 7px 10px; font: inherit; font-size: 15px; }
 .solo-row input[type='number'] { width: 80px; }
 .solo-row a { color: var(--accent); }
+.bot-picks { flex-basis: 100%; display: grid; grid-template-columns: auto auto 1fr; gap: 6px 10px; align-items: center; border: 1px solid var(--line); border-radius: 10px; padding: 8px 12px 10px; margin: 0; }
+.bot-picks legend { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.08em; padding: 0 4px; }
+.solo-row .bot-pick { display: contents; text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); }
+.solo-row .bot-pick input[type='number'] { width: 58px; padding: 4px 8px; font-size: 14px; }
+.bot-pick .bot-name { font-weight: 600; }
+.bot-pick .bot-blurb { color: var(--muted); font-size: 13px; }
+@media (max-width: 520px) {
+  .bot-picks { grid-template-columns: auto 1fr; }
+  .bot-pick .bot-blurb { grid-column: 2; margin-top: -6px; }
+}
 
 /* Interactive thumbs + patch preview */
 .thumb.is-drawable { cursor: crosshair; touch-action: none; }

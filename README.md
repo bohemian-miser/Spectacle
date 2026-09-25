@@ -288,7 +288,10 @@ Server environment:
 | `FIELD_FAMILY` | `hex` | `hex` or `spectre` |
 | `FIELD_LEVEL` | `6` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 6 ≈ 273k |
 | `FIELD_ROOT` | `Delta` | root tile of the patch |
-| `BOTS` | `1` | bot players per room (random clean rules, occasionally aggressive) |
+| `BOTS` | `1` | bots per room: a number (that many wanderers) or kinds, e.g. `bridge+hunter:2+farmer` — see "Bots" below |
+| `BOTS_NORMAL`, `BOTS_CONQUEST` | `BOTS` | the same, for one game mode's rooms |
+| `BOT_ROTATE_MS` | `300000` | how long a rotator keeps a rule before starting over |
+| `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules (off: those are for players to find) |
 | `ROOM_SIZE` | `10` | humans per room; the next joiner of that mode gets a new room |
 | `MAX_ROOMS` | `80` | rooms at most, all modes; past it joiners share the emptiest room of their mode |
 | `ROOM_IDLE_MS` | `60000` | an extra room nobody is in (or holding for) closes after this long |
@@ -298,11 +301,31 @@ Server environment:
 
 `npm run bench:field` prints build time and size per level.
 
+## Bots
+
+Five kinds, mixed freely — on the server with `BOTS` (e.g.
+`BOTS=bridge+hunter:2`; use `+` rather than commas in Cloud Run env vars),
+in solo with the lobby's picker (or `/?solo&bots=bridge+farmer`):
+
+| Kind | What it does |
+|---|---|
+| **Wanderer** | a random clean rule, random taps, now and then right beside a rival's line — the easy one |
+| **Rotator** | a wanderer that starts over with a new rule every ~5 minutes (`BOT_ROTATE_MS`, ±25%) |
+| **Hunter** | picks on the leader: looks ~40 steps ahead from the tiles round their lines and taps where its line would hit theirs soonest |
+| **Farmer** | a rule that reliably closes small loops, a quiet corner of the board, and only taps where both ways round close without touching anyone |
+| **Bridge** | a rule that draws long thin lines; plans one through the busiest stretch of board and keeps tapping its middle — rebuilding what gets cut, cutting what's in the way, and turning a half that ran off the edge round so it can finish as an edge-to-edge claim |
+
+The farmer's and bridge's rules come from a scout that tries a spread of
+clean rules on the field once (~0.2 s at hex level 6, at startup).
+`npx tsx scripts/bot-arena.ts bridge,hunter:2 5 5` plays bots against each
+other headless for 5 simulated minutes and prints scores, circuits,
+collisions and what the bots cost per tick.
+
 ## Solo mode and GitHub Pages
 
 The engine and the bots are plain shared code, so the whole game can run
 inside one browser tab: pick *Solo, in this tab* in the lobby (or open
-`/?solo`), choose the family, size and bot count, and play against bots with
+`/?solo`), choose the family, size and which bots, and play against them with
 nothing shared. The static build on GitHub Pages
 (`.github/workflows/pages.yml`, published from `main`) is solo-only and links
 to the live arena when the repository variable `SPECTACLE_ONLINE_URL` is set.

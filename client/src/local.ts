@@ -7,7 +7,7 @@
  * what lets the static GitHub Pages build play without a server.
  */
 
-import { Bots } from '../../shared/game/bots';
+import { BOT_KINDS, Bots, parseBotMix, prepareBots, type BotMix } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
 import { buildField, fieldOutline, type FieldSpec } from '../../shared/game/field';
 import { DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
@@ -21,10 +21,44 @@ import type { Store } from './store';
 export interface SoloOptions {
   readonly family: TileFamilyId;
   readonly level: number;
-  readonly bots: number;
+  /** Which bots, how many of each (the lobby's picker; `?bots=bridge+hunter:2`). */
+  readonly bots: BotMix;
 }
 
-export const DEFAULT_SOLO: SoloOptions = { family: 'hex', level: 5, bots: 3 };
+/** One of each kind of bot. */
+export const DEFAULT_SOLO_BOTS: BotMix = Object.fromEntries(BOT_KINDS.map((k) => [k, 1]));
+
+export const DEFAULT_SOLO: SoloOptions = { family: 'hex', level: 5, bots: DEFAULT_SOLO_BOTS };
+
+/** Most of one kind the solo lobby offers. */
+export const SOLO_MAX_PER_KIND = 4;
+
+const BOTS_KEY = 'spectacle.soloBots';
+
+/** Solo options to start with: `?bots=` if given, else the bots picked last time, else one of each. */
+export function initialSolo(): SoloOptions {
+  let raw: string | null = new URLSearchParams(location.search).get('bots');
+  if (raw === null) {
+    try {
+      raw = localStorage.getItem(BOTS_KEY);
+    } catch {
+      /* private mode */
+    }
+  }
+  if (raw === null) return DEFAULT_SOLO;
+  const { mix } = parseBotMix(raw);
+  const bots = Object.fromEntries(BOT_KINDS.map((k) => [k, Math.min(SOLO_MAX_PER_KIND, mix[k] ?? 0)]));
+  return { ...DEFAULT_SOLO, bots };
+}
+
+/** Remember the bots picked, for next time. */
+export function saveSoloBots(bots: BotMix): void {
+  try {
+    localStorage.setItem(BOTS_KEY, Object.entries(bots).map(([k, n]) => `${k}:${n}`).join(','));
+  } catch {
+    /* private mode */
+  }
+}
 
 /** Levels offered in the solo lobby (6 is ~250k tiles: playable, but slow to build on a phone). */
 export const SOLO_LEVELS: readonly number[] = [3, 4, 5, 6];
@@ -56,6 +90,7 @@ export class LocalConnection implements GameConnection {
     fieldOutline(field);
     const rng = mulberry32((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
     this.engine = new Engine(field, this.knobs, rng);
+    prepareBots(field, this.opts.bots);
     this.bots = new Bots(this.engine, rng);
     const ev = this.bots.add(this.opts.bots, Date.now());
     this.store.connected = true;
