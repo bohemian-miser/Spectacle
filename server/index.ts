@@ -9,7 +9,12 @@
  *   FIELD_FAMILY  (hex)      hex | spectre
  *   FIELD_LEVEL   (6)        substitution level (hex: 5 ≈ 31k tiles, 6 ≈ 242k)
  *   FIELD_ROOT    (Delta)    root tile type
- *   BOTS          (1)        bot players per room
+ *   BOTS          (1)        bots per room: a number (that many wanderers) or
+ *                            kinds, e.g. `bridge+hunter:2+farmer` (wanderer,
+ *                            rotator, hunter, farmer, bridge — see shared/game/bots.ts)
+ *   BOTS_NORMAL, BOTS_CONQUEST (BOTS)  the same, for one game mode's rooms
+ *   BOT_ROTATE_MS (300000)   how long a rotator keeps a rule before starting over
+ *   BOT_INFINITE_LINES (0)   1 = bots may play the infinite-line (FASS) rules
  *   ROOM_SIZE     (10)       humans per room before another opens
  *   MAX_ROOMS     (80)       rooms at most (then joiners share the emptiest)
  *   ROOM_IDLE_MS  (60000)    an extra empty room closes after this long
@@ -56,7 +61,7 @@ import { PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
-import { Bots } from '../shared/game/bots';
+import { botTotal, Bots, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions } from '../shared/game/bots';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 
@@ -106,7 +111,27 @@ note('info', `field ${spec.family} level ${spec.level} root ${spec.rootTile}: ${
 
 const seed = process.env.SEED ? Number(process.env.SEED) : (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
 const seedRng = mulberry32(seed);
-const BOTS = Number(process.env.BOTS ?? 1);
+/** Which bots each room of a mode starts with (`BOTS`, or `BOTS_<MODE>`). */
+const BOT_MIX = Object.fromEntries(
+  GAME_MODES.map((m) => {
+    const name = `BOTS_${m.toUpperCase()}`;
+    const raw = process.env[name] ?? process.env.BOTS ?? '1';
+    const { mix, unknown } = parseBotMix(raw);
+    if (unknown.length) note('warn', `${process.env[name] !== undefined ? name : 'BOTS'}: ignoring ${unknown.join(', ')} (kinds: wanderer, rotator, hunter, farmer, bridge)`);
+    return [m, mix];
+  }),
+) as Record<GameMode, BotMix>;
+const BOT_OPTIONS: BotOptions = {
+  ...DEFAULT_BOT_OPTIONS,
+  rotateMs: positiveInt(process.env.BOT_ROTATE_MS, DEFAULT_BOT_OPTIONS.rotateMs),
+  infiniteLines: process.env.BOT_INFINITE_LINES === '1',
+};
+for (const m of GAME_MODES) {
+  const t = Date.now();
+  prepareBots(field, BOT_MIX[m]);
+  if (Date.now() - t > 5) note('info', `bots scouted the field's rules in ${Date.now() - t} ms`);
+}
+const botSummary = GAME_MODES.map((m) => `${m}: ${formatBotMix(BOT_MIX[m])}`).join(' · ');
 /** Humans per room before the next joiner is put in a new one. */
 const ROOM_SIZE = Math.max(1, Number(process.env.ROOM_SIZE ?? 10));
 /** Rooms at most, all modes together; past it, joiners squeeze into the emptiest room of their mode. */
@@ -302,8 +327,8 @@ class Room {
   ) {
     const rng = mulberry32((seedRng.next() * 0xffffffff) >>> 0);
     this.engine = new Engine(field, knobsForMode(baseKnobs, mode), rng);
-    this.bots = new Bots(this.engine, rng);
-    this.pending.push(...this.bots.add(BOTS, Date.now()));
+    this.bots = new Bots(this.engine, rng, BOT_OPTIONS.aggression, BOT_OPTIONS);
+    this.pending.push(...this.bots.add(BOT_MIX[mode], Date.now()));
   }
 
   get knobs(): Knobs {
@@ -713,7 +738,7 @@ function statusReport(): StatusReport {
     tick: { everyMs: baseKnobs.tickMs, avgMs: +tickStats.avgMs.toFixed(2), maxMs: +tickStats.maxMs.toFixed(1) },
     sockets: wss.clients.size,
     counters,
-    limits: { roomSize: ROOM_SIZE, maxRooms: MAX_ROOMS, botsPerRoom: BOTS },
+    limits: { roomSize: ROOM_SIZE, maxRooms: MAX_ROOMS, botsPerRoom: Math.max(...GAME_MODES.map((m) => botTotal(BOT_MIX[m]))), bots: botSummary },
     rooms: [...rooms.values()].map((r) => {
       const players = [...r.engine.players.values()].map((p) => ({
         name: p.name,
@@ -733,5 +758,5 @@ function statusReport(): StatusReport {
 }
 
 http.listen(PORT, () => {
-  note('info', `listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots ${BOTS} per room, ${ROOM_SIZE} per room, max ${MAX_ROOMS} rooms)`);
+  note('info', `listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots per room: ${botSummary}, ${ROOM_SIZE} per room, max ${MAX_ROOMS} rooms)`);
 });
