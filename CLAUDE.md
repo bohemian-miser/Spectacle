@@ -88,6 +88,7 @@ tests/            vitest. strand.test.ts pins the local walker against the
                   core's global analyze() — the most important test here.
                   resume.test.ts spawns the real server.
 scripts/smoke.ts  Headless Chromium round (needs PW_EXE or playwright browsers).
+scripts/flip-bench.ts  Conquest flip load: tick time, live flip pieces, pace.
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
@@ -263,7 +264,17 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   that reaches a chord its own pattern already holds stops (running on would
   only double the line); two pieces meeting end to end join, the shorter
   folded into the longer (`foldInto`: `reverse`, steps, `reverse` — far
-  fewer events than re-sending the long one). A burn whose pattern was
+  fewer events than re-sending the long one). Most pieces are laid right
+  against lines of their own pattern, so their next move is a join, a close
+  or a stop, not a new chord: `settle` (queue `Player.unsettled`, filled by
+  `sprout`, split runs and every piece step; `peekHead` looks without
+  moving) makes those moves at once instead of leaving a finished piece
+  pulsing as a head until its round-robin turn (about 60% of growing pieces
+  were such, before). Each still costs its turn, on credit
+  (`pieceProgress` goes negative), so a flip keeps its pace — making them
+  free sped flips 2–4× and circuit bonuses ran scores away.
+  `scripts/flip-bench.ts` prints the pace (circuits, top score) and live
+  pieces; `tests/settle.test.ts` pins the lingering share. A burn whose pattern was
   swapped out stops; a taken line stops burning. An edge-to-edge claim is
   `closed` but not a loop — never wrap it (`loop = closed && !region`).
   `tests/flip.test.ts` replays a flip-heavy bot game into the client `Store`

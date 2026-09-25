@@ -152,6 +152,8 @@ export interface Player {
   pieceProgress: number;
   /** Which piece grows next (round robin). */
   pieceCursor: number;
+  /** Flip pieces whose head may have nothing new to lay: `settle` checks them. */
+  readonly unsettled: Path[];
   /** `patterns[0]` is `rule`/`table`; captured patterns follow. */
   readonly patterns: Pattern[];
   /** The pattern a tap draws with. */
@@ -230,6 +232,7 @@ export class Engine {
       respawnAt: 0,
       pieceProgress: 0,
       pieceCursor: 0,
+      unsettled: [],
       patterns: [{ rule, table, color }],
       active: 0,
       converted: [],
@@ -569,6 +572,7 @@ export class Engine {
         if (ready.length === 0) break;
         for (const path of ready) if (path.burn && this.pathsById.has(path.id)) this.burnOn(p, path, ev);
       }
+      this.settle(p, ev);
     }
     return ev;
   }
@@ -576,12 +580,16 @@ export class Engine {
   /**
    * A flip's pieces share `flipPieceHeads` heads' worth of growth between
    * them, taking turns — however many there are, a flip spreads outward at
-   * the owner's speed rather than flooding the board.
+   * the owner's speed rather than flooding the board. A piece whose head
+   * would join a line already there, close or stop doesn't wait for its turn:
+   * `settle` does it straight away and the turn is taken on credit.
    */
   private growPieces(p: Player, dtMs: number, ev: GameEvent[]): void {
+    this.settle(p, ev);
     let pieces = p.paths.filter((q) => q.spawned && q.status === 'growing');
     if (pieces.length === 0) {
-      p.pieceProgress = 0;
+      // Nothing banked for the next flip, but a close's credit is still owed.
+      p.pieceProgress = Math.min(p.pieceProgress, 0);
       return;
     }
     const heads = this.knobs.flipPieceHeads;
@@ -591,10 +599,35 @@ export class Engine {
         pieces = p.paths.filter((q) => q.spawned && q.status === 'growing');
         if (pieces.length === 0) break;
       }
-      p.pieceProgress -= 1;
       const path = pieces[p.pieceCursor++ % pieces.length];
-      if (path.status === 'growing' && path.spawned && this.pathsById.has(path.id)) this.advance(p, path, ev);
+      if (path.status === 'growing' && path.spawned && this.pathsById.has(path.id)) {
+        p.pieceProgress -= 1;
+        p.unsettled.push(this.advance(p, path, ev));
+        this.settle(p, ev);
+      }
       if (p.pieceCursor % pieces.length === 0) pieces = [];
+    }
+  }
+
+  /**
+   * Flip pieces laid next to lines of their own pattern are mostly done
+   * before they start: the head's next chord is already drawn. Each queued
+   * piece whose head has nothing new to lay (`peekHead`) takes that move now —
+   * joins the line it abuts, closes, turns round or stops — until it needs a
+   * new chord, so a finished piece never sits on the board as a live head
+   * waiting for its turn. Each move still costs the turn it always did, taken
+   * on credit — the pieces' next new chords wait for it — so a flip spreads
+   * at the same pace; only the order changes.
+   */
+  private settle(p: Player, ev: GameEvent[]): void {
+    for (let path = p.unsettled.pop(); path; path = p.unsettled.pop()) {
+      // Each move folds a line away or ends a head, so this is short; the cap is a backstop.
+      for (let guard = 0; guard < 1024; guard++) {
+        if (!path.spawned || path.status !== 'growing' || !this.pathsById.has(path.id)) break;
+        if (this.peekHead(p, path) === 'grow') break;
+        p.pieceProgress -= 1;
+        path = this.advance(p, path, ev);
+      }
     }
   }
 
@@ -657,7 +690,8 @@ export class Engine {
     ev.push({ t: 'back', path: path.id, back: on });
   }
 
-  private advance(p: Player, path: Path, ev: GameEvent[]): void {
+  /** One step of `path`'s head. Returns the line that carries on: `path`, or the one a join folded it into. */
+  private advance(p: Player, path: Path, ev: GameEvent[]): Path {
     const cur = path.steps[path.steps.length - 1];
     const out = stepForward(
       this.field,
@@ -671,36 +705,65 @@ export class Engine {
       const region = boundaryRegion(this.field, line);
       if (region) {
         this.closeCircuit(p, path, ev, region);
-        return;
+        return path;
       }
     }
-    if (out.kind === 'dead' && !path.back && this.joinBehind(p, path, ev)) return;
+    if (out.kind === 'dead' && !path.back && this.joinBehind(p, path, ev)) return path;
     if (out.kind === 'dead' || out.kind === 'junction') {
       this.stop(path, ev);
-      return;
+      return path;
     }
     const s = out.step;
     const first = path.steps[0];
     if (s.tile === first.tile && s.chord === first.chord) {
       this.closeCircuit(p, path, ev);
-      return;
+      return path;
     }
     if (path.steps.some((q) => q.tile === s.tile && q.chord === s.chord)) {
       // Re-entered the middle of ourselves (only possible via a junction).
       this.stop(path, ev);
-      return;
+      return path;
     }
     const own = this.meetOwn(p, path, s);
     if (own === 'stop') {
       this.stop(path, ev);
-      return;
+      return path;
     }
     if (own) {
-      if (this.join(p, path, own, ev) !== path) return;
-    } else if (!this.addStep(p, path, s, ev)) return; // died in a collision
+      const joined = this.join(p, path, own, ev);
+      if (joined !== path) return joined;
+    } else if (!this.addStep(p, path, s, ev)) return path; // died in a collision
     if (this.knobs.maxPathLength > 0 && path.steps.length >= this.knobs.maxPathLength) {
       this.setStatus(path, 'stuck', ev);
     }
+    return path;
+  }
+
+  /**
+   * What would `advance` do to `path`'s head, without doing it? 'grow' lays a
+   * new step (or claims, or does something only `advance` should decide);
+   * 'join' folds in a line of its own already on the board; 'close' closes
+   * the line into a circuit; 'end' stops it (or turns a piece round). Only
+   * 'grow' lays a new chord. A junction the random policy would pick through
+   * counts as 'grow' (picking spends the rng).
+   */
+  private peekHead(p: Player, path: Path): 'grow' | 'join' | 'close' | 'end' {
+    // (The kinds are for reading; `settle` only asks whether it is 'grow'.)
+    const cur = path.steps[path.steps.length - 1];
+    const options = continuations(this.field, path.table, cur.tile, cur.chord, cur.b);
+    if (options.length === 0) {
+      // Off the edge, a claim or a join behind is `advance`'s to make.
+      const edge = onFieldBoundary(this.field, cur.tile, cur.b) && (this.startsAtEdge(path) || (!path.back && this.canTurn(path)));
+      return edge ? 'grow' : 'end';
+    }
+    if (options.length > 1) return this.knobs.junctionPolicy === 'random' ? 'grow' : 'end';
+    const o = options[0];
+    const first = path.steps[0];
+    if (o.tile === first.tile && o.chord === first.chord) return 'close';
+    if (path.steps.some((q) => q.tile === o.tile && q.chord === o.chord)) return 'end';
+    const seg = worldChord(this.field, path.table, o.tile, o.chord);
+    const own = this.meetOwn(p, path, { tile: o.tile, chord: o.chord, a: seg[o.end], b: seg[1 - o.end] });
+    return own === 'stop' ? 'end' : own ? 'join' : 'grow';
   }
 
   /**
@@ -982,6 +1045,7 @@ export class Engine {
       const start = loop || r.start > 0 || !!was?.start;
       const end = loop || r.end < n || !!was?.end;
       q.burn = { strain: carry, start, end, progress: was?.progress ?? 0 };
+      if (q.spawned && status === 'growing') owner?.unsettled.push(q);
       out.push(q);
       wire.push({ id: q.id, start: r.start, end: r.end, status });
     });
@@ -1022,6 +1086,7 @@ export class Engine {
       progress: was?.progress ?? 0,
     };
     ev.push({ t: 'split', path: path.id, runs: [{ id: path.id, start: run.start, end: run.end, status }] });
+    if (path.spawned && growing) this.players.get(path.owner)?.unsettled.push(path);
     return path;
   }
 
@@ -1108,6 +1173,7 @@ export class Engine {
         occ.add(piece);
       }
       if (closed) this.closeCircuit(p, piece, ev);
+      else p.unsettled.push(piece);
     }
     return made;
   }
