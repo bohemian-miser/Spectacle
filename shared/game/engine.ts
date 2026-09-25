@@ -18,8 +18,9 @@
  *    circuit (both knobs);
  *  - a tail (no continuation) leaves the path stuck; tap elsewhere to start
  *    another — every line a player draws stays until it is cut;
- *  - a tap starts on the nearest chord of the tile that no line is on or
- *    crosses (lines block chords, not whole tiles); it may not start on your
+ *  - a tap starts on the nearest chord of the tile that none of your lines is
+ *    on or crosses (your lines block chords, a rival's blocks its whole
+ *    tile); it may not start on your
  *    own line — a tap on it extends it instead: a stuck line with somewhere
  *    to go behind its start turns round and grows the other way, a growing
  *    one grows from both ends (a second head), and one of another of your
@@ -364,8 +365,9 @@ export class Engine {
         events: ev,
       };
     }
-    // Lines block chords, not tiles: a tap on a tile some line already runs
-    // through starts on the nearest chord of it that no line is on or crosses.
+    // Your lines block chords, not tiles: a tap on a tile one already runs
+    // through starts on the nearest chord of it that none is on or crosses.
+    // A tile a rival's line runs through is theirs — refused outright.
     const chord = this.freeChord(id, pattern, tile, at);
     if (typeof chord === 'string') return { result: { ok: false, reason: chord }, events: ev };
     if (!this.knobs.tapInsideRivalCircuits && this.insideRivalCircuit(id, tileCenter(this.field, tile))) {
@@ -469,7 +471,7 @@ export class Engine {
    * `pattern`: none of their own lines on it or crossing it (with
    * `overlapOwnLines`, none of their lines of the same pattern on it, and none
    * of another pattern on the tile at all — unless `flipOwnLines`, when the
-   * tap flips those), nor a rival's unless
+   * tap flips those), on a tile no rival's line passes through at all unless
    * `tapOntoOthers`. When every chord is blocked, the reason (for the chord
    * nearest `at`).
    */
@@ -513,7 +515,12 @@ export class Engine {
         }
         continue;
       }
-      if (!mine && this.knobs.tapOntoOthers) continue;
+      if (!mine) {
+        // A rival's line owns its whole tile: no chord of it is yours to start on.
+        if (this.knobs.tapOntoOthers) continue;
+        rival = true;
+        continue;
+      }
       if (!this.pathMeets(other, tile, seg)) continue;
       if (mine) return "that's your own line";
       rival = true;

@@ -153,8 +153,9 @@ line and you both die.
    it (proper intersection, or a shared connection point — both are knobs),
    both lines die — the one that was hit and the one that hit it — each with
    its points, and both combos reset (`mutualCut`; off makes it one-sided).
-   You cannot *start* on a rival's line or inside a rival's closed circuit
-   (`tapOntoOthers`, `tapInsideRivalCircuits`); you have to grow into them.
+   You cannot *start* on a tile a rival's line passes through — any chord of
+   it, not only theirs — or inside a rival's closed circuit (`tapOntoOthers`,
+   `tapInsideRivalCircuits`); you have to grow into them.
    Closed circuits take their colour from their length — short loops pale,
    long ones deep, the hue walking round from the owner's colour as they grow
    — and wash the tiles they enclose in it. The washes stack and each level of
