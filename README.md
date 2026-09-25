@@ -120,8 +120,12 @@ line and you both die.
    Lines block chords, not tiles: a tap on a tile a line already runs through
    starts on the nearest chord of it that no line is on or crosses. The one
    exception is a line of another of your patterns, which keeps its whole
-   tile. Tapping the first chord of a line that ran off the edge of the field
-   turns it round to grow out of its other end. A line that runs edge to edge cuts the
+   tile. Tapping your own line is different: a stuck one (it ran off the edge
+   of the field, or into a tail) turns round and grows out of its other end,
+   and one still growing grows out of both ends at once — if you have a
+   second head to spare, since each end is a head. Tapping one of your lines
+   drawn with another of your patterns turns it into the pattern you're
+   drawing with (no head needed). A line that runs edge to edge cuts the
    field in two and closes like a circuit, claiming the smaller side (scored
    on that side's area).
    A growing line runs on over the top of your own lines rather than stopping,

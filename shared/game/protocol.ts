@@ -32,6 +32,8 @@ export interface PathWire {
   readonly pattern?: number;
   /** Grown out of a flip rather than a tap: it doesn't take up one of the owner's heads. */
   readonly spawned?: true;
+  /** Growing from its start as well as its end: two of the owner's heads. */
+  readonly back?: true;
 }
 
 /**
@@ -148,6 +150,11 @@ export type GameEvent =
     }
   /** A line that ran off the board turned round: its steps now run the other way, and it grows again. */
   | { readonly t: 'reverse'; readonly path: number }
+  /**
+   * `path` started (`back`) or stopped growing from its start as well as its
+   * end. Its start-end steps arrive as `reverse`, the step's events, `reverse`.
+   */
+  | { readonly t: 'back'; readonly path: number; readonly back: boolean }
   /** A path was cut (`by`, in a collision at `at`) or abandoned (`by` absent) and is gone. */
   | { readonly t: 'wipe'; readonly path: number; readonly owner: string; readonly by?: string; readonly at?: Pt }
   | {

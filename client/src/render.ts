@@ -522,16 +522,21 @@ export class Renderer {
       ctx.globalAlpha = 1;
       if (fade < 1) return;
       const last = path.steps[path.steps.length - 1];
-      if (path.status === 'growing' && inView(last.b.x, last.b.y)) {
-        const [hx, hy] = toScreen(last.b.x, last.b.y);
+      if (path.status === 'growing') {
+        // A line growing both ways has a head at its start too.
+        const heads = path.back ? [last.b, path.steps[0].a] : [last.b];
         const pulse = 1 + 0.35 * Math.sin(t / 160);
-        ctx.beginPath();
-        ctx.arc(hx, hy, Math.max(3, 0.22 * s) * pulse, 0, Math.PI * 2);
-        ctx.fillStyle = ink;
-        ctx.fill();
-        ctx.lineWidth = Math.max(1, 0.05 * s);
-        ctx.strokeStyle = this.board.inkCss;
-        ctx.stroke();
+        for (const h of heads) {
+          if (!inView(h.x, h.y)) continue;
+          const [hx, hy] = toScreen(h.x, h.y);
+          ctx.beginPath();
+          ctx.arc(hx, hy, Math.max(3, 0.22 * s) * pulse, 0, Math.PI * 2);
+          ctx.fillStyle = ink;
+          ctx.fill();
+          ctx.lineWidth = Math.max(1, 0.05 * s);
+          ctx.strokeStyle = this.board.inkCss;
+          ctx.stroke();
+        }
       }
       if (path.status === 'stuck' && inView(last.b.x, last.b.y)) {
         const [hx, hy] = toScreen(last.b.x, last.b.y);
