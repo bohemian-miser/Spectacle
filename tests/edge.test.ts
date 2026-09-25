@@ -59,15 +59,22 @@ describe('the field edge', () => {
     expect(polygonArea(ring)).toBeCloseTo(FIELD.count * FIELD.tileArea, 3);
   });
 
-  it('a tap on your own line is refused', () => {
+  it('a tap anywhere on your stuck line turns it round; on a finished one it is refused', () => {
     const e = new Engine(FIELD, { ...DEFAULT_KNOBS, overlapOwnLines: false }, mulberry32(1));
     e.addPlayer('a', 'Ann', FASS);
     const { tile, chord } = edgeToEdge();
     tapChord(e, 'a', tile, chord);
     run(e, (all) => all.some((x) => x.t === 'status'));
     const path = e.players.get('a')!.paths[0];
-    const middle = path.steps[1].tile;
-    expect(e.tap('a', middle, tileCenter(FIELD, middle)).result).toEqual({ ok: false, reason: "that's your own line" });
+    expect(path.status).toBe('stuck');
+    const middle = path.steps[1];
+    const turn = tapChord(e, 'a', middle.tile, middle.chord);
+    expect(turn.result).toEqual({ ok: true, path: path.id });
+    expect(turn.events).toContainEqual({ t: 'reverse', path: path.id });
+    run(e, (all) => all.some((x) => x.t === 'circuit'));
+    expect(path.status).toBe('closed');
+    const mid = path.steps[1].tile;
+    expect(e.tap('a', mid, tileCenter(FIELD, mid)).result).toEqual({ ok: false, reason: "that's your own line" });
   });
 
   it('tapping the start of a line that ran off the edge turns it round; edge to edge claims the smaller side', () => {

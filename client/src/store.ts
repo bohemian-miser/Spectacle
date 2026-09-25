@@ -21,6 +21,8 @@ export interface ClientPath {
   pattern: number;
   /** Grown out of a flip: it doesn't take up a head. */
   spawned?: boolean;
+  /** Growing from its start too: a second head. */
+  back?: boolean;
 }
 
 export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active' | 'converted'> {
@@ -128,7 +130,7 @@ export class Store {
     const total = headLimit(k, me.patterns.length + me.converted);
     if (total === 0) return { free: Infinity, total };
     let growing = 0;
-    for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing' && !p.spawned) growing++;
+    for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing' && !p.spawned) growing += p.back ? 2 : 1;
     return { free: Math.max(0, total - growing), total };
   }
 
@@ -203,6 +205,7 @@ export class Store {
           const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps], pattern: pw.pattern ?? 0 };
           if (pw.region) path.region = pw.region;
           if (pw.spawned) path.spawned = true;
+          if (pw.back) path.back = true;
           this.paths.set(path.id, path);
           for (const s of path.steps) this.occupy(s.tile, path);
         }
@@ -336,6 +339,12 @@ export class Store {
             for (const s of steps) this.occupy(s.tile, run);
           }
         }
+        this.geometryVersion++;
+        return;
+      }
+      case 'back': {
+        const path = this.paths.get(ev.path);
+        if (path) path.back = ev.back || undefined;
         this.geometryVersion++;
         return;
       }

@@ -20,9 +20,10 @@
  *    another — every line a player draws stays until it is cut;
  *  - a tap starts on the nearest chord of the tile that no line is on or
  *    crosses (lines block chords, not whole tiles); it may not start on your
- *    own line, with one exception: tapping the
- *    start of a line that ran off the edge of the field turns it round to
- *    grow the other way. A line that runs edge to edge closes like a circuit
+ *    own line — a tap on it extends it instead: a stuck line with somewhere
+ *    to go behind its start turns round and grows the other way, a growing
+ *    one grows from both ends (a second head), and one of another of your
+ *    patterns changes to the active one. A line that runs edge to edge closes like a circuit
  *    and claims the smaller side of the board it cuts off;
  *  - a growing line that runs into another of its owner's lines stops, unless
  *    it meets that line's loose end on the same chord: then they join into one
@@ -102,6 +103,13 @@ export interface Path {
   spawned?: boolean;
   /** When its head stops, it turns round once and grows out of its other end (a flip's pieces). */
   twoWay?: boolean;
+  /**
+   * Its start grows too (a tap on the line while it grew, with a head to
+   * spare): a second head, taking a head of its owner's. It advances in
+   * `backProgress` by turning the line round, stepping, and turning it back.
+   */
+  back?: boolean;
+  backProgress?: number;
   /**
    * When the tap that started it (or the line whose flip grew it) happened:
    * where two of a player's patterns meet, the higher wave wins the tile.
@@ -281,7 +289,7 @@ export class Engine {
   /** Lines of `p`'s that are growing and take up a head (a flip's pieces don't). */
   headsInUse(p: Player): number {
     let n = 0;
-    for (const q of p.paths) if (q.status === 'growing' && !q.spawned) n++;
+    for (const q of p.paths) if (q.status === 'growing' && !q.spawned) n += q.back ? 2 : 1;
     return n;
   }
 
@@ -324,6 +332,7 @@ export class Engine {
         if (path.region) wire.region = path.region;
         if (path.pattern !== 0) wire.pattern = path.pattern;
         if (path.spawned) wire.spawned = true;
+        if (path.back && path.status === 'growing') wire.back = true;
         paths.push(wire);
       }
     }
@@ -338,26 +347,17 @@ export class Engine {
     if (this.now < p.respawnAt) {
       return { result: { ok: false, reason: 'still recovering from that collision' }, events: ev };
     }
-    const heads = this.headLimit(p);
-    if (heads > 0 && this.headsInUse(p) >= heads) {
-      return { result: { ok: false, reason: heads > 1 ? 'your lines are still growing' : 'your line is still growing' }, events: ev };
-    }
     if (!Number.isInteger(tile) || tile < 0 || tile >= this.field.count) {
       return { result: { ok: false, reason: 'no such tile' }, events: ev };
     }
-    // Turning round is per chord too: the tap has to be nearest the line's first chord.
-    const turn = p.paths.find(
-      (q) =>
-        q.status === 'stuck' &&
-        q.steps[0].tile === tile &&
-        nearestChord(this.field, q.table, tile, at) === q.steps[0].chord &&
-        this.canTurn(q),
-    );
-    if (turn) {
-      this.turnRound(turn, ev);
-      return { result: { ok: true, path: turn.id }, events: ev };
-    }
+    const heads = this.headLimit(p);
+    const free = heads === 0 || this.headsInUse(p) < heads;
     const pattern = p.patterns[p.active] ?? p.patterns[0];
+    const own = this.tapOwnLine(p, pattern, tile, at, free, ev);
+    if (own !== null) return { result: { ok: true, path: own }, events: ev };
+    if (!free) {
+      return { result: { ok: false, reason: heads > 1 ? 'your lines are still growing' : 'your line is still growing' }, events: ev };
+    }
     if (tileChords(this.field, pattern.table, tile).length === 0) {
       return {
         result: { ok: false, reason: p.active === 0 ? 'your rule draws no line on this tile' : 'that pattern draws no line on this tile' },
@@ -397,6 +397,71 @@ export class Engine {
     this.pathsById.set(path.id, path);
     this.addStep(p, path, startStep(this.field, pattern.table, tile, chord, exitEnd), ev);
     return { result: { ok: true, path: path.id }, events: ev };
+  }
+
+  /**
+   * A tap on one of `p`'s own lines (the chord of it nearest `at`), by
+   * the line's pattern:
+   *  - one of another pattern (`flipOwnLines`) changes to `pattern`: the tile
+   *    flips as if a newer line of it had arrived, and the flip burns on
+   *    along the whole line — no head needed;
+   *  - one of `pattern` that is stuck with somewhere to go behind its start
+   *    turns round and grows from there (a line that ran off the edge, or into
+   *    a tail);
+   *  - one of `pattern` still growing starts growing from its start too, a
+   *    second head (`Path.back`).
+   * The last two take a head, so only when one is `free`. Returns the line's
+   * id, or null when the tap is an ordinary one.
+   */
+  private tapOwnLine(p: Player, pattern: Pattern, tile: number, at: Pt, free: boolean, ev: GameEvent[]): number | null {
+    const occ = this.occupancy.get(tile);
+    if (!occ) return null;
+    for (const q of [...occ].sort((x, y) => y.wave - x.wave)) {
+      if (q.owner !== p.id) continue;
+      const near = nearestChord(this.field, q.table, tile, at);
+      if (!q.steps.some((s) => s.tile === tile && s.chord === near)) continue;
+      if (!sameRule(q.rule, pattern.rule)) {
+        if (!this.knobs.flipOwnLines) continue;
+        this.recolor(p, q, pattern, tile, ev);
+        return q.id;
+      }
+      if (!free || q.spawned || !this.canGrowBack(q)) continue;
+      if (q.status === 'stuck') {
+        this.turnRound(q, ev);
+        return q.id;
+      }
+      if (q.status === 'growing' && !q.back) {
+        this.setBack(q, true, ev);
+        return q.id;
+      }
+    }
+    return null;
+  }
+
+  /** Is there somewhere for `path` to grow behind its start (not back over itself)? */
+  private canGrowBack(path: Path): boolean {
+    const s = path.steps[0];
+    return continuations(this.field, path.table, s.tile, s.chord, s.a).some(
+      (o) => !path.steps.some((q) => q.tile === o.tile && q.chord === o.chord),
+    );
+  }
+
+  /**
+   * Change `path` (a line of `p`'s) to `pattern` from `tile` outward: a newer
+   * wave of `pattern` wins the tile, the line loses its steps there and burns
+   * on from the gap (`splitOff`), and `pattern` sprouts on the tile. The
+   * line's points go to the first piece (zero-sum), or stay on it when
+   * nothing could sprout.
+   */
+  private recolor(p: Player, path: Path, pattern: Pattern, tile: number, ev: GameEvent[]): void {
+    const strain: Strain = { rule: pattern.rule, table: pattern.table, pattern: p.patterns.indexOf(pattern), wave: this.nextWave++ };
+    const points = path.points;
+    path.points = 0;
+    const runs = this.splitOff(path, tile, ev, strain);
+    const made = this.sprout(p, strain, [tile], ev);
+    const heir = made.find((q) => this.pathsById.has(q.id)) ?? runs.find((q) => this.pathsById.has(q.id));
+    if (heir) heir.points += points;
+    else if (points > 0) this.addScore(p, -points, ev);
   }
 
   /**
@@ -484,6 +549,14 @@ export class Engine {
           this.advance(p, path, ev);
         }
         if (path.status !== 'growing') path.progress = 0;
+        if (path.back && path.status === 'growing' && this.pathsById.has(path.id)) {
+          path.backProgress = (path.backProgress ?? 0) + dtMs / stepIntervalMs(this.knobs, p.score, this.field.count);
+          let backBudget = 256;
+          while ((path.backProgress ?? 0) >= 1 && path.back && path.status === 'growing' && backBudget-- > 0) {
+            path.backProgress! -= 1;
+            this.advanceBack(p, path, ev);
+          }
+        }
       }
       if (shared) this.growPieces(p, dtMs, ev);
       // Flips travel at the owner's speed too: every burning line (and each
@@ -553,6 +626,37 @@ export class Engine {
 
   // --- internals -----------------------------------------------------------
 
+  /**
+   * One step from the start of a line growing both ways: turned round, the
+   * start is the head, so it steps like any head (collisions, joins, circuits,
+   * flips all as usual) and turns back. The client sees the same: `reverse`,
+   * the step's events, `reverse`. If that head stops, `stop` has already
+   * turned the line so its other head leads.
+   */
+  private advanceBack(p: Player, path: Path, ev: GameEvent[]): void {
+    this.reverseSteps(path, ev);
+    this.advance(p, path, ev);
+    if (!this.pathsById.has(path.id) || !path.back) return;
+    if (path.status === 'growing') this.reverseSteps(path, ev);
+    else this.setBack(path, false, ev);
+  }
+
+  /** Run `path`'s steps the other way (a flip burning along it keeps its ends). */
+  private reverseSteps(path: Path, ev: GameEvent[]): void {
+    const turned = path.steps.map((q) => ({ tile: q.tile, chord: q.chord, a: q.b, b: q.a })).reverse();
+    path.steps.length = 0;
+    path.steps.push(...turned);
+    if (path.burn) path.burn = { ...path.burn, start: path.burn.end, end: path.burn.start };
+    ev.push({ t: 'reverse', path: path.id });
+  }
+
+  private setBack(path: Path, on: boolean, ev: GameEvent[]): void {
+    if (!!path.back === on) return;
+    path.back = on || undefined;
+    path.backProgress = 0;
+    ev.push({ t: 'back', path: path.id, back: on });
+  }
+
   private advance(p: Player, path: Path, ev: GameEvent[]): void {
     const cur = path.steps[path.steps.length - 1];
     const out = stepForward(
@@ -570,7 +674,7 @@ export class Engine {
         return;
       }
     }
-    if (out.kind === 'dead' && this.joinBehind(p, path, ev)) return;
+    if (out.kind === 'dead' && !path.back && this.joinBehind(p, path, ev)) return;
     if (out.kind === 'dead' || out.kind === 'junction') {
       this.stop(path, ev);
       return;
@@ -604,6 +708,12 @@ export class Engine {
    * round, once, to grow out of its other end; anything else is stuck.
    */
   private stop(path: Path, ev: GameEvent[]): void {
+    // The other head carries on.
+    if (path.back) {
+      this.setBack(path, false, ev);
+      this.turnRound(path, ev);
+      return;
+    }
     if (path.twoWay) {
       path.twoWay = false;
       const s = path.steps[0];
@@ -800,6 +910,10 @@ export class Engine {
       else runs.push({ start: i, end: i + 1 });
     }
     if (runs.length === 1 && runs[0].start === 0 && runs[0].end === n) return [path];
+    // A line growing both ways keeps whichever heads the gap missed; the
+    // start's, if it survives, leads the first run (turned round below).
+    const startAlive = !!path.back && path.status === 'growing' && runs.length > 0 && runs[0].start === 0;
+    this.setBack(path, false, ev);
     if (runs.length === 0) {
       this.dropPath(path, undefined, ev);
       return [];
@@ -808,7 +922,11 @@ export class Engine {
     // A loop opens by wrapping round; an edge-to-edge claim is closed but its
     // ends are on the field's edge, not joined.
     const loop = closed && !path.region;
-    if (runs.length === 1 && !loop) return [this.trimEnds(path, tile, runs[0], strain, ev)];
+    if (runs.length === 1 && !loop) {
+      const run = this.trimEnds(path, tile, runs[0], strain, ev);
+      if (startAlive && run.status !== 'growing') this.turnRound(run, ev);
+      return [run];
+    }
     if (loop && runs.length > 1 && runs[0].start === 0 && runs[runs.length - 1].end === n) {
       const first = runs.shift()!;
       runs[runs.length - 1].end = n + first.end;
@@ -869,6 +987,7 @@ export class Engine {
     });
     path.region = undefined;
     ev.push({ t: 'split', path: path.id, runs: wire });
+    if (startAlive) this.turnRound(out[0], ev);
     return out;
   }
 
@@ -1091,12 +1210,9 @@ export class Engine {
 
   /** Run the line's steps the other way and let it grow again from its old start. */
   private turnRound(path: Path, ev: GameEvent[]): void {
-    const turned = path.steps.map((q) => ({ tile: q.tile, chord: q.chord, a: q.b, b: q.a })).reverse();
-    path.steps.length = 0;
-    path.steps.push(...turned);
+    this.reverseSteps(path, ev);
     path.status = 'growing';
     path.progress = 0;
-    ev.push({ t: 'reverse', path: path.id });
   }
 
   private closeCircuit(p: Player, path: Path, ev: GameEvent[], region?: Pt[]): void {
@@ -1108,6 +1224,7 @@ export class Engine {
     const bonus = Math.round(
       combo * (k.circuitBase + k.circuitLengthWeight * length + k.circuitAreaWeight * area),
     );
+    this.setBack(path, false, ev);
     path.status = 'closed';
     path.progress = 0;
     if (region) path.region = region;
@@ -1229,6 +1346,7 @@ export class Engine {
 
   private setStatus(path: Path, status: PathStatus, ev: GameEvent[]): void {
     if (path.status === status) return;
+    if (status !== 'growing') this.setBack(path, false, ev);
     path.status = status;
     ev.push({ t: 'status', path: path.id, status });
   }

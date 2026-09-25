@@ -193,9 +193,21 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   nor on a tile your own line is on (see below). For rivals "on a line" is per chord, not per tile (`freeChord`):
   a tap takes the nearest chord of the tile that no line runs along or
   conflicts with (`pathMeets`, the same test a growing line uses), and is
-  refused only when every chord there is blocked. The one exception: tapping the first chord of your stuck
-  line that ran off the field's edge turns it round (`reverse` event; steps
-  flip, it grows again). A line that runs edge to edge closes as a circuit
+  refused only when every chord there is blocked. The exception is a tap
+  whose nearest chord is one of your own lines (`tapOwnLine`, checked before
+  the head limit): a line of another pattern is recoloured to the active one
+  (`recolor`: a fresh wave splits it on that tile, sprouts the active pattern
+  there and burns along the rest; its points go to the first piece; no head
+  taken; only with `flipOwnLines`). One of the active pattern with somewhere
+  to go behind its start (`canGrowBack`) takes a head: stuck, it turns round
+  (`reverse` event; steps flip, it grows again); growing, it grows from both
+  ends (`Path.back`, a `back` event, `PathWire.back`; two heads in
+  `headsInUse` and the client's `heads()`). The start head steps by
+  `advanceBack`: `reverse`, an ordinary `advance`, `reverse`, so every rule
+  a head obeys holds for both. When either head stops, `stop` turns the line
+  so the other leads and `back` goes off; a flip's split keeps whichever
+  heads the gap missed. Otherwise the tap falls through to the normal rules.
+  A line that runs edge to edge closes as a circuit
   whose polygon is the line plus the smaller arc of `fieldOutline` (`region`
   on the path, the `circuit` event and `PathWire`); use `pathPolygon()` for
   any "inside" test so both kinds of circuit count.
