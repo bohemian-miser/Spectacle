@@ -11,6 +11,7 @@ import type { ServerMessage } from '../shared/game/protocol';
 import { defaultRule } from '../shared/game/rule';
 
 const PORT = 19000 + Math.floor(Math.random() * 1000);
+const STATS_KEY = 'test-key';
 let server: ChildProcess;
 
 async function waitForHealth(): Promise<void> {
@@ -45,7 +46,7 @@ async function join(mode?: GameMode, room?: string): Promise<Extract<ServerMessa
 
 beforeAll(async () => {
   server = spawn('npx', ['tsx', 'server/index.ts'], {
-    env: { ...process.env, PORT: String(PORT), BOTS: '1', FIELD_LEVEL: '3', ROOM_SIZE: '2' },
+    env: { ...process.env, PORT: String(PORT), BOTS: '1', FIELD_LEVEL: '3', ROOM_SIZE: '2', STATS_KEY },
     stdio: 'ignore',
   });
   await waitForHealth();
@@ -131,5 +132,20 @@ describe('rooms', () => {
     const page = await fetch(`http://127.0.0.1:${PORT}/status`);
     expect(page.headers.get('content-type')).toMatch(/text\/html/);
     expect(await page.text()).toContain('Spectacle status');
+  });
+
+  it('/patterns is only there with STATS_KEY, and counts the rules people play', async () => {
+    expect((await fetch(`http://127.0.0.1:${PORT}/patterns.json`)).status).toBe(404);
+    expect((await fetch(`http://127.0.0.1:${PORT}/patterns.json?key=wrong`)).status).toBe(404);
+    // Sampled once a second.
+    await new Promise((r) => setTimeout(r, 1200));
+    const r = (await (await fetch(`http://127.0.0.1:${PORT}/patterns.json?key=${STATS_KEY}`)).json()) as {
+      rows: { rule: string; bot: boolean; live: number }[];
+    };
+    const people = r.rows.filter((row) => !row.bot);
+    expect(people.length).toBeGreaterThan(0);
+    expect(people.reduce((n, row) => n + row.live, 0)).toBeGreaterThan(0);
+    const page = await fetch(`http://127.0.0.1:${PORT}/patterns?key=${STATS_KEY}`);
+    expect(await page.text()).toContain('Spectacle patterns');
   });
 });

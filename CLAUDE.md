@@ -48,6 +48,10 @@ server/index.ts   Node + ws. Rooms per game mode (`Room`: engine + bots +
                   tests/rooms.test.ts spawns it.
 server/status-page.ts  /status (HTML, polls /status.json): rooms, players,
                   memory, loop time, joins/drops/errors, the recent log.
+server/pattern-stats.ts  Which rules people play and how they score: a
+                  stint per (player, rule), sampled once a second; rows per
+                  (mode, rule, bot). /patterns(.json)?key=STATS_KEY, a JSON
+                  `stint` line per finished stint on stdout, STATS_FILE.
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
   session.ts      The tab's resume ticket (sessionStorage) and the
@@ -268,6 +272,15 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   most per source) instead. The welcome snapshot doesn't count towards
   `MAX_BUFFERED` (a client's `allowance`): on a busy board it alone can be
   bigger. `/status` is read-only and public — no ids or tokens on it.
+- **Pattern stats are private.** A table of rules by score would give away
+  the infinite-line rules, so it never goes on `/status`: `/patterns` 404s
+  unless `STATS_KEY` is set and `?key=` matches. On Cloud Run the durable
+  record is the log — one JSON line `{"message":"stint","stint":{…}}` per
+  finished stint (rule in `describeRule` form, mode, bot, ms, final and peak
+  score, circuits) — since memory and disk go with the instance, and with
+  several instances `/patterns` shows only the one that answered; the log
+  covers them all. `STATS_FILE` keeps the aggregate on the VM. Only players at the board are sampled, so a
+  reconnect splits a stint in two.
 - **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,

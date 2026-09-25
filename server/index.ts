@@ -21,6 +21,8 @@
  *                            — raise it only alongside more CPU and memory.
  *   SEED          (random)   RNG seed
  *   RESUME_GRACE_MS (300000) how long a dropped player is kept for `join.resume`
+ *   STATS_KEY     (unset)    serves /patterns?key=… (which rules people play, and their scores); unset = off
+ *   STATS_FILE    (unset)    keep those pattern stats in this JSON file across restarts
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
  *
  * Scaling past one instance: this process holds all its rooms in memory, so it
@@ -42,7 +44,7 @@
 
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { existsSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readFileSync, renameSync, statSync, writeFileSync } from 'node:fs';
 import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
@@ -55,6 +57,7 @@ import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
 import { Bots } from '../shared/game/bots';
+import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -123,6 +126,46 @@ const MAX_INSTANCE_PLAYERS = positiveInt(process.env.MAX_INSTANCE_PLAYERS, 400);
  * and on a busy board it alone can be bigger than this.
  */
 const MAX_BUFFERED = Number(process.env.MAX_BUFFERED_MB ?? 4) * 1024 * 1024;
+// --- pattern stats -------------------------------------------------------------
+
+/**
+ * The key for /patterns. Unset, the page doesn't exist: it ranks rules by
+ * score, which would give away the rules players are meant to discover.
+ */
+const STATS_KEY = process.env.STATS_KEY ?? '';
+const STATS_FILE = process.env.STATS_FILE ?? '';
+
+function loadStats(): PatternStatsFile | null {
+  if (!STATS_FILE || !existsSync(STATS_FILE)) return null;
+  try {
+    return JSON.parse(readFileSync(STATS_FILE, 'utf8')) as PatternStatsFile;
+  } catch (e) {
+    note('warn', `could not read STATS_FILE ${STATS_FILE}: ${e instanceof Error ? e.message : String(e)}`);
+    return null;
+  }
+}
+
+const patternStats = new PatternStats(Date.now(), loadStats());
+
+function saveStats(): void {
+  if (!STATS_FILE) return;
+  const tmp = `${STATS_FILE}.tmp`;
+  writeFileSync(tmp, JSON.stringify(patternStats.toFile()));
+  renameSync(tmp, STATS_FILE);
+}
+
+/** Each finished stint as one JSON line: Cloud Logging keeps it as a structured entry. */
+function logStints(stints: ReturnType<PatternStats['finishAll']>): void {
+  for (const s of stints) console.log(JSON.stringify({ message: 'stint', stint: s }));
+}
+
+function statsKeyOk(url: URL): boolean {
+  if (!STATS_KEY) return false;
+  const a = createHash('sha256').update(url.searchParams.get('key') ?? '').digest();
+  const b = createHash('sha256').update(STATS_KEY).digest();
+  return timingSafeEqual(a, b);
+}
+
 // --- static files ------------------------------------------------------------
 
 const MIME: Record<string, string> = {
@@ -141,6 +184,17 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   if (url.pathname === '/status.json') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(statusReport()));
+    return;
+  }
+  if (url.pathname === '/patterns' || url.pathname === '/patterns.json') {
+    if (!statsKeyOk(url)) {
+      res.writeHead(404, { 'content-type': 'text/plain' });
+      res.end('Not found');
+      return;
+    }
+    const json = url.pathname.endsWith('.json');
+    res.writeHead(200, { 'content-type': json ? 'application/json' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(json ? JSON.stringify(patternStats.report(Date.now())) : PATTERNS_PAGE);
     return;
   }
   if (url.pathname === '/status') {
@@ -280,6 +334,7 @@ class Room {
       this.pending = [];
     }
     if (ev.length === 0) return;
+    for (const e of ev) if (e.t === 'circuit') patternStats.circuit(e.owner);
     const payload = JSON.stringify({ t: 'events', ev } satisfies ServerMessage);
     for (const c of this.clients.values()) {
       if (!c.joined || c.ws.readyState !== c.ws.OPEN) continue;
@@ -620,6 +675,30 @@ setInterval(() => {
   }
   tickStats.maxMs = Math.max(tickStats.maxMs, took);
 }, baseKnobs.tickMs);
+
+/**
+ * Players on each rule, once a second; a rule change or a departure closes a
+ * stint. Only players at the board count: a room nobody watches stands still,
+ * and a player held for a resume isn't playing.
+ */
+setInterval(() => guard('pattern stats', () => {
+  const sampled = [...rooms.values()]
+    .filter((r) => r.clients.size > 0)
+    .map((r) => ({ mode: r.mode, players: [...r.engine.players.values()].filter((p) => p.bot || r.clients.has(p.id)) }));
+  logStints(patternStats.sample(Date.now(), sampled));
+}), 1000);
+if (STATS_FILE) setInterval(() => guard('save stats', saveStats), 60_000);
+
+// Cloud Run and docker stop send SIGTERM: finish the running stints so they reach the log and the file.
+for (const sig of ['SIGTERM', 'SIGINT'] as const) {
+  process.once(sig, () => {
+    guard('final stats', () => {
+      logStints(patternStats.finishAll(Date.now()));
+      saveStats();
+    });
+    process.exit(0);
+  });
+}
 
 // --- status --------------------------------------------------------------------
 
