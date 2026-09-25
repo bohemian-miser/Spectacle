@@ -22,6 +22,7 @@ import {
   flatten,
   leafOrder,
   leafPts,
+  levelMirror,
   metaEdges,
   pathLength,
   rgbToCss,
@@ -126,8 +127,12 @@ export function PatchPreview({ rule, level = 3, size = 520 }: PatchPreviewProps)
   const family = rule.family;
 
   // The tiling itself: rule-independent, so it survives every edit.
+  // Every substitution level is the mirror image of the one below, so at an
+  // odd level each leaf comes out reflected against its tile thumb (edge
+  // numbers running the other way round, the arrow on the far side).
+  // `levelMirror` undoes that, so the patch lines up with the thumbs.
   const geo = useMemo(() => {
-    const instances = flatten(buildSystem(family, level)['Delta']);
+    const instances = flatten(buildSystem(family, level)['Delta'], levelMirror(level));
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const polys = instances.map((inst) => {
       const pts = leafPts(family, inst.type).map((p) => transPt(inst.xform, p));
