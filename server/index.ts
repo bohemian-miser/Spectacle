@@ -99,6 +99,14 @@ function note(level: LogLine['level'], text: string, detail?: string): void {
 }
 
 const startedAt = Date.now();
+/**
+ * Which process this is. Cloud Run may run several instances (and, straight
+ * after a deploy, the old revision's instances keep their open sockets for up
+ * to the request timeout), each with its own rooms — so /status, /healthz and
+ * the heartbeat log name the instance they came from. `K_REVISION` is set by
+ * Cloud Run; the id is random per process.
+ */
+const INSTANCE = { id: randomBytes(3).toString('hex'), revision: process.env.K_REVISION ?? null };
 const baseKnobs = knobsFromEnv(process.env);
 const spec = fieldSpecFromEnv();
 const t0 = Date.now();
@@ -232,6 +240,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
     res.end(
       JSON.stringify({
         ok: true,
+        instance: INSTANCE,
         players: humansOnline(),
         maxPlayers: MAX_INSTANCE_PLAYERS,
         atCapacity: atCapacity(),
@@ -714,6 +723,25 @@ setInterval(() => guard('pattern stats', () => {
 }), 1000);
 if (STATS_FILE) setInterval(() => guard('save stats', saveStats), 60_000);
 
+/**
+ * One JSON line a minute per instance while anyone is connected: the only view
+ * across every instance is the log (Logs Explorer: jsonPayload.message="heartbeat"),
+ * since instances share nothing. Names only — no ids or tokens.
+ */
+setInterval(() => guard('heartbeat', () => {
+  if (wss.clients.size === 0) return;
+  console.log(JSON.stringify({
+    message: 'heartbeat',
+    instance: INSTANCE,
+    startedAt: new Date(startedAt).toISOString(),
+    sockets: wss.clients.size,
+    players: humansOnline(),
+    rooms: [...rooms.values()]
+      .filter((r) => r.clients.size > 0)
+      .map((r) => ({ id: r.id, mode: r.mode, humans: [...r.engine.players.values()].filter((p) => !p.bot && r.clients.has(p.id)).map((p) => p.name) })),
+  }));
+}), 60_000);
+
 // Cloud Run and docker stop send SIGTERM: finish the running stints so they reach the log and the file.
 for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   process.once(sig, () => {
@@ -733,6 +761,7 @@ function statusReport(): StatusReport {
   return {
     now: Date.now(),
     startedAt,
+    instance: INSTANCE,
     field: { ...spec, tiles: field.count },
     memory: { rssMb: Math.round(mem.rss / 1e6), heapMb: Math.round(mem.heapUsed / 1e6) },
     tick: { everyMs: baseKnobs.tickMs, avgMs: +tickStats.avgMs.toFixed(2), maxMs: +tickStats.maxMs.toFixed(1) },
