@@ -2,9 +2,12 @@
  * Arena renderer: a tile layer in the bottom canvas (WebGL2 instanced, or
  * Canvas2D where WebGL is missing) and a Canvas2D overlay on top for the
  * live things — every path as a polyline, a pulsing head on each growing
- * one, a cross on each stuck one. Claimed tiles are tinted in the tile layer,
- * and a closed circuit washes the tiles it encloses in its owner's colour —
- * the washes stack, so a loop inside a loop shows deeper.
+ * one someone steers (not on a flip's pieces), a cross on each stuck one.
+ * The lines sit on a cached layer, redrawn only when the board or the camera
+ * moved (see `drawOverlay`); heads, fades and sparks draw every frame.
+ * Claimed tiles are tinted in the tile layer, and a closed circuit washes the
+ * tiles it encloses in its owner's colour — the washes stack, so a loop
+ * inside a loop shows deeper.
  * Zoomed in close, your own rule is sketched faintly over the free tiles.
  */
 
@@ -55,9 +58,34 @@ const FADE_MS = 650;
 const SPARK_MS = 480;
 const SPARKS = 7;
 
+/** Least time between two rebuilds of the tile tints while the board is busy (ms). */
+const TINT_MIN_MS = 200;
+
+/** How long a player whose name found no place waits before the next search (ms). */
+const LABEL_RETRY_MS = 300;
+
 /** Player name labels: font size (CSS px) and the gap kept from the screen's edge. */
 const LABEL_PX = 12;
 const LABEL_MARGIN = 6;
+
+/**
+ * A board change redraws the lines layer at most once per this many times
+ * what its last redraw took (see `drawOverlay`).
+ */
+const LINES_BUDGET = 3;
+
+/** A cached overlay layer and what it was drawn for. */
+interface Layer {
+  readonly canvas: HTMLCanvasElement | OffscreenCanvas;
+  readonly ctx: CanvasRenderingContext2D;
+  /** Camera, size and looks it was drawn for. */
+  view: string;
+  /** Store versions it was drawn for. */
+  board: string;
+  /** When it was drawn (frame time) and how long that took (ms). */
+  at: number;
+  cost: number;
+}
 
 /** Where a player's name floats: one step of one of their lines. */
 interface LabelAnchor {
@@ -77,6 +105,7 @@ export class Renderer {
   private lastFrameAt = 0;
   private lastGeometry = -1;
   private lastPlayersVersion = -1;
+  private lastTintAt = -Infinity;
   private board: BoardTheme = boardTheme();
   /** How circuits are coloured (see `settings.ts`). */
   private style: CircuitStyle = getSettings().circuitStyle;
@@ -89,12 +118,26 @@ export class Renderer {
   /** A closed path's colour and darkening, keyed on the owner colour it was made from. */
   private looks = new WeakMap<ClientPath, readonly [string, readonly [string, number]]>();
   private readonly rgbCache = new Map<string, [number, number, number]>();
+  /** Bumped by anything that changes how lines look (theme, settings). */
+  private looksEpoch = 0;
+  /** Bumped by each tint rebuild (it works out `rivalInterior`, which the pattern skips). */
+  private tintEpoch = 0;
+  /** The lines layer (see `drawOverlay`). */
+  private lines: Layer | null = null;
+  /** The plain board's outline, which only changes with the camera. */
+  private outline: Layer | null = null;
+  /** Where the heads were when the lines were drawn: screen x, y pairs by ink. */
+  private headSpots = new Map<string, number[]>();
+  /** Line colours by the colour they come from (see `inkOf`). */
+  private readonly inks = new Map<string, string>();
   /** Tiles inside anyone else's closed circuit (rebuilt with the tints). */
   private rivalInterior = new Set<number>();
   private readonly visible: number[] = [];
   /** Each player's name sits on one of their tiles; it stays put while that tile is on screen. */
   private readonly labelAnchors = new Map<string, LabelAnchor>();
   private readonly labelWidths = new Map<string, number>();
+  /** A player whose name found no place: when to look again (the search walks all their steps). */
+  private readonly labelRetry = new Map<string, number>();
 
   constructor(
     private readonly tileCanvas: HTMLCanvasElement,
@@ -135,6 +178,8 @@ export class Renderer {
   /** Repaint in another scheme: new tile fills, ground and ink, and fresh tints. */
   setTheme(board: BoardTheme): void {
     this.board = board;
+    this.inks.clear();
+    this.looksEpoch++;
     if (this.field) this.tiles?.setTheme(board, this.fills(this.field));
     // The claim tint is mixed against the scheme's fills, so it has to go again.
     this.lastGeometry = -1;
@@ -142,14 +187,17 @@ export class Renderer {
 
   /** Apply the display settings: circuit colouring and the plain board, live. */
   setSettings(s: Settings): void {
+    this.looksEpoch++;
     if (s.circuitStyle !== this.style) {
       this.style = s.circuitStyle;
       this.looks = new WeakMap();
+      this.inks.clear();
       this.lastGeometry = -1;
     }
     if (s.teams !== this.teams) {
       this.teams = s.teams;
       this.looks = new WeakMap();
+      this.inks.clear();
       this.lastGeometry = -1;
     }
     if (s.plainTiles !== this.plain) {
@@ -256,15 +304,32 @@ export class Renderer {
     return { minX: Math.min(a.x, b.x), minY: Math.min(a.y, b.y), maxX: Math.max(a.x, b.x), maxY: Math.max(a.y, b.y) };
   }
 
-  /** Push the claimed-tile tints into the tile layer when paths or players changed. */
-  private syncTints(): void {
+  /**
+   * Push the claimed-tile tints into the tile layer when paths or players
+   * changed — at most every `TINT_MIN_MS`. The rebuild walks every claimed
+   * tile and every circuit's interior, so on a busy board it was the other
+   * half of a slow frame; the line itself is drawn every frame, so a tint a
+   * few frames late doesn't show.
+   */
+  private syncTints(now: number): void {
     const tiles = this.tiles;
     if (!tiles) return;
     const store = this.store;
     if (store.geometryVersion === this.lastGeometry && store.version === this.lastPlayersVersion) return;
+    if (now - this.lastTintAt < TINT_MIN_MS && this.lastGeometry !== -1) return;
+    this.lastTintAt = now;
+    // Your pattern skips rival circuits' interiors, which are worked out here.
+    this.tintEpoch++;
     this.lastGeometry = store.geometryVersion;
     this.lastPlayersVersion = store.version;
     tiles.clearTints();
+    // One colour per path, not per tile: a long line covers thousands.
+    const tintMemo = new Map<ClientPath, [number, number, number]>();
+    const tintOf = (path: ClientPath): [number, number, number] => {
+      let rgb = tintMemo.get(path);
+      if (!rgb) tintMemo.set(path, (rgb = this.tintOf(path)));
+      return rgb;
+    };
     for (const [tile, paths] of store.occupancy) {
       // Your own claim wins the tint; otherwise the first path on the tile.
       let pick: ClientPath | null = null;
@@ -276,7 +341,7 @@ export class Renderer {
         if (pick === null) pick = p;
       }
       if (pick === null) continue;
-      const [r, g, b] = this.tintOf(pick);
+      const [r, g, b] = tintOf(pick);
       tiles.setTint(tile, r, g, b, pick.status === 'closed' ? (pick.owner === store.you ? 175 : 150) : pick.owner === store.you ? 115 : 85);
     }
     // Interior wash: the free tiles a closed circuit encloses take its owner's
@@ -301,7 +366,7 @@ export class Renderer {
     const wash = new Map<number, [number, number, number, number, number]>();
     const innermost = new Map<number, ClientPath>();
     for (const { path, inside } of closed) {
-      const [r, g, b] = this.tintOf(path);
+      const [r, g, b] = tintOf(path);
       const a = path.owner === store.you ? 0.42 : 0.34;
       for (const t of inside) {
         if (store.occupancy.has(t)) continue;
@@ -380,6 +445,25 @@ export class Renderer {
     return [ch(rgb[0]), ch(rgb[1]), ch(rgb[2])];
   }
 
+  /**
+   * The colour a path's line is stroked in: its colour deepened for the
+   * board, or for a circuit its length colour darkened. Parsing colour
+   * strings per path per frame showed up in a busy frame's profile, so the
+   * answers are kept (cleared with the theme and settings).
+   */
+  private inkOf(path: ClientPath, color: string): string {
+    const closed = path.status === 'closed';
+    const from = closed ? this.closedLook(path, color)[0] : color;
+    const key = closed ? `c${from}` : from;
+    let ink = this.inks.get(key);
+    if (ink === undefined) {
+      ink = closed ? darkenCss(from, 0.3) : strandColor(this.board, from);
+      if (this.inks.size > 4096) this.inks.clear();
+      this.inks.set(key, ink);
+    }
+    return ink;
+  }
+
   /** A closed path's colour (the length ramp) and extra darkening (none, today). */
   private closedLook(path: ClientPath, color: string): readonly [string, number] {
     const hit = this.looks.get(path);
@@ -401,7 +485,7 @@ export class Renderer {
    * is not inside a rival's circuit — your own tiles included. Only when
    * zoomed in; it fades out on the way back.
    */
-  private drawPattern(toScreen: (x: number, y: number) => [number, number], box: Box): void {
+  private drawPattern(ctx: CanvasRenderingContext2D, toScreen: (x: number, y: number) => [number, number], box: Box): void {
     const field = this.field;
     const me = this.store.me;
     const scale = this.camera.scale;
@@ -410,7 +494,6 @@ export class Renderer {
     const pattern = me.patterns[me.active] ?? { rule: me.rule, color: me.color };
     const table = chordTableFor(field, pattern.rule);
     const occupancy = this.store.occupancy;
-    const ctx = this.ctx;
     ctx.beginPath();
     for (const i of tilesInBox(field, box, this.visible)) {
       if (this.rivalInterior.has(i)) continue;
@@ -435,7 +518,7 @@ export class Renderer {
   private draw(t: number): void {
     const f = this.field;
     if (!f || !this.tiles) return;
-    this.syncTints();
+    this.syncTints(t);
     // Both layers are cheap to call every frame: WebGL redraws in one pass,
     // the 2D layer caches its tiles by camera and only re-blits.
     this.tiles.draw(this.camera, this.width, this.height, this.dpr);
@@ -443,12 +526,11 @@ export class Renderer {
   }
 
   /** The arena's edge, for the plain board (where no tile fill shows it). */
-  private drawOutline(toScreen: (x: number, y: number) => [number, number]): void {
+  private drawOutline(ctx: CanvasRenderingContext2D, toScreen: (x: number, y: number) => [number, number]): void {
     const field = this.field;
     if (!field) return;
     const ring = fieldOutline(field);
     if (ring.length < 3) return;
-    const ctx = this.ctx;
     ctx.beginPath();
     for (let k = 0; k < ring.length; k++) {
       const [x, y] = toScreen(ring[k].x, ring[k].y);
@@ -463,12 +545,166 @@ export class Renderer {
     ctx.globalAlpha = 1;
   }
 
+  /** An offscreen canvas the size of the overlay, for a cached layer. */
+  private layer(W: number, H: number): Layer {
+    const canvas =
+      typeof OffscreenCanvas !== 'undefined' ? new OffscreenCanvas(W, H) : Object.assign(document.createElement('canvas'), { width: W, height: H });
+    return { canvas, ctx: canvas.getContext('2d') as CanvasRenderingContext2D, view: '', board: '', at: -Infinity, cost: 0 };
+  }
+
+  /** Trace a path's polyline (the parts in view) into `into`; false if none of it is. */
+  private trace(
+    path: ClientPath,
+    into: Path2D | CanvasRenderingContext2D,
+    toScreen: (x: number, y: number) => [number, number],
+    inView: (x: number, y: number) => boolean,
+  ): boolean {
+    let pen = false;
+    let any = false;
+    for (const st of path.steps) {
+      if (!(inView(st.a.x, st.a.y) || inView(st.b.x, st.b.y))) {
+        pen = false;
+        continue;
+      }
+      const [ax, ay] = toScreen(st.a.x, st.a.y);
+      const [bx, by] = toScreen(st.b.x, st.b.y);
+      if (!pen) into.moveTo(ax, ay);
+      else into.lineTo(ax, ay);
+      into.lineTo(bx, by);
+      pen = any = true;
+    }
+    // A loop joins back to its start; an edge-to-edge claim ends at the edge.
+    if (path.status === 'closed' && pen && !path.region) {
+      const first = path.steps[0];
+      const [ax, ay] = toScreen(first.a.x, first.a.y);
+      into.lineTo(ax, ay);
+    }
+    return any;
+  }
+
+  /**
+   * Everything that holds still between board changes, into the lines
+   * canvas: the arena's edge, your pattern, every line, the stuck crosses —
+   * and where the heads are (`headSpots`), which pulse on top every frame.
+   */
+  private drawLines(
+    ctx: CanvasRenderingContext2D,
+    toScreen: (x: number, y: number) => [number, number],
+    inView: (x: number, y: number) => boolean,
+    box: Box,
+    w: number,
+    wMine: number,
+    view: string,
+  ): void {
+    const store = this.store;
+    const s = this.camera.scale * this.dpr;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, ctx.canvas.width, ctx.canvas.height);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    if (this.plain) {
+      // Thousands of short segments: slow to stroke, so kept per camera.
+      const W = ctx.canvas.width;
+      const H = ctx.canvas.height;
+      const o = (this.outline ??= this.layer(W, H));
+      if (o.canvas.width !== W || o.canvas.height !== H) Object.assign(o, this.layer(W, H));
+      if (o.view !== view) {
+        o.view = view;
+        o.ctx.setTransform(1, 0, 0, 1, 0, 0);
+        o.ctx.clearRect(0, 0, W, H);
+        o.ctx.lineCap = 'round';
+        o.ctx.lineJoin = 'round';
+        this.drawOutline(o.ctx, toScreen);
+      }
+      ctx.drawImage(o.canvas as CanvasImageSource, 0, 0);
+    }
+    this.drawPattern(ctx, toScreen, box);
+    // Every line of one look goes into one Path2D and is stroked once: a
+    // flip storm leaves thousands of pieces, and a stroke each (a style
+    // change and a raster pass) added up. Team colours make that two or
+    // three strokes for the whole board.
+    type Batch = { line: Path2D; ink: string; mine: boolean; stuck: boolean };
+    const batches = new Map<string, Batch>();
+    const halo = new Path2D();
+    let haloAny = false;
+    const crosses = new Path2D();
+    let crossAny = false;
+    const crossR = Math.max(3, 0.18 * s);
+    const heads = new Map<string, number[]>();
+    for (const path of store.paths.values()) {
+      const color = this.colorOf(path);
+      if (!color || path.steps.length === 0) continue;
+      const mine = path.owner === store.you;
+      const ink = this.inkOf(path, color);
+      const stuck = path.status === 'stuck';
+      const key = `${mine ? 1 : 0}${stuck ? 1 : 0}${ink}`;
+      let b = batches.get(key);
+      if (!b) {
+        b = { line: new Path2D(), ink, mine, stuck };
+        batches.set(key, b);
+      }
+      if (!this.trace(path, b.line, toScreen, inView)) continue;
+      if (mine) {
+        this.trace(path, halo, toScreen, inView);
+        haloAny = true;
+      }
+      const last = path.steps[path.steps.length - 1];
+      // Only a line someone is steering gets a head. A flip's pieces
+      // (`spawned`) grow a few at a time, round robin; hundreds of pulsing
+      // dots on them said nothing and cost a lot.
+      if (path.status === 'growing' && !path.spawned) {
+        // A line growing both ways has a head at its start too.
+        const ends = path.back ? [last.b, path.steps[0].a] : [last.b];
+        for (const h of ends) {
+          if (!inView(h.x, h.y)) continue;
+          let spots = heads.get(ink);
+          if (!spots) heads.set(ink, (spots = []));
+          spots.push(...toScreen(h.x, h.y));
+        }
+      }
+      if (stuck && inView(last.b.x, last.b.y)) {
+        const [hx, hy] = toScreen(last.b.x, last.b.y);
+        crosses.moveTo(hx - crossR, hy - crossR);
+        crosses.lineTo(hx + crossR, hy + crossR);
+        crosses.moveTo(hx + crossR, hy - crossR);
+        crosses.lineTo(hx - crossR, hy + crossR);
+        crossAny = true;
+      }
+    }
+    this.headSpots = heads;
+    // Rivals' lines, then the halo under yours, then yours.
+    const strokeBatches = (mine: boolean): void => {
+      for (const b of batches.values()) {
+        if (b.mine !== mine) continue;
+        ctx.globalAlpha = b.stuck ? 0.6 : 1;
+        ctx.strokeStyle = b.ink;
+        ctx.lineWidth = mine ? wMine : w;
+        ctx.stroke(b.line);
+      }
+      ctx.globalAlpha = 1;
+    };
+    strokeBatches(false);
+    if (haloAny) {
+      ctx.strokeStyle = this.board.haloCss;
+      ctx.lineWidth = wMine + Math.max(2, 0.08 * s);
+      ctx.stroke(halo);
+    }
+    strokeBatches(true);
+    if (crossAny) {
+      ctx.strokeStyle = this.board.badCss;
+      ctx.lineWidth = Math.max(1.5, 0.06 * s);
+      ctx.stroke(crosses);
+    }
+  }
+
   private drawOverlay(t: number): void {
     const ctx = this.ctx;
     const store = this.store;
     const s = this.camera.scale * this.dpr;
+    const W = this.overlay.width;
+    const H = this.overlay.height;
     ctx.setTransform(1, 0, 0, 1, 0, 0);
-    ctx.clearRect(0, 0, this.overlay.width, this.overlay.height);
+    ctx.clearRect(0, 0, W, H);
     const box = this.viewBox();
     const pad = 4;
     const inView = (x: number, y: number): boolean =>
@@ -479,86 +715,68 @@ export class Renderer {
     ];
     ctx.lineCap = 'round';
     ctx.lineJoin = 'round';
-    if (this.plain) this.drawOutline(toScreen);
-    this.drawPattern(toScreen, box);
-    /** `fade` < 1: a line cut in a collision on its way out (no head, no cross). */
-    const drawPath = (path: ClientPath, mine: boolean, fade = 1, color = this.colorOf(path)): void => {
-      if (!color || path.steps.length === 0) return;
-      ctx.globalAlpha = fade;
-      const w = Math.max(1.5, 0.14 * s) * (mine ? 1.35 : 1);
+    const w = Math.max(1.5, 0.14 * s);
+    const wMine = w * 1.35;
+    // The lines only change with the board or the camera, but stroking them
+    // (and the plain board's long outline) was most of a busy frame; redrawn
+    // at 60 fps they cost it every frame. They go to a canvas of their own
+    // that is redrawn when something changed and otherwise just copied.
+    // A board change redraws them no more often than `LINES_BUDGET` times
+    // what the last redraw cost, so a busy board can't spend every frame on
+    // them: cheap redraws still happen every frame, a 30 ms one about every
+    // 90 ms. A camera move redraws at once — panning must not lag.
+    const cam = this.camera;
+    const view = `${cam.x}|${cam.y}|${cam.scale}|${W}x${H}|${this.looksEpoch}`;
+    const board = `${store.geometryVersion}|${store.version}|${this.tintEpoch}`;
+    const lines = (this.lines ??= this.layer(W, H));
+    if (lines.canvas.width !== W || lines.canvas.height !== H) Object.assign(lines, this.layer(W, H));
+    if (lines.view !== view || (lines.board !== board && t - lines.at >= LINES_BUDGET * lines.cost)) {
+      const t0 = performance.now();
+      lines.view = view;
+      lines.board = board;
+      lines.at = t;
+      this.drawLines(lines.ctx, toScreen, inView, box, w, wMine, view);
+      lines.cost = performance.now() - t0;
+    }
+    ctx.drawImage(lines.canvas as CanvasImageSource, 0, 0);
+    // Heads pulse, so they are drawn every frame over the cached lines.
+    const headR = Math.max(3, 0.22 * s) * (1 + 0.35 * Math.sin(t / 160));
+    ctx.lineWidth = Math.max(1, 0.05 * s);
+    ctx.strokeStyle = this.board.inkCss;
+    for (const [ink, pts] of this.headSpots) {
       ctx.beginPath();
-      let pen = false;
-      for (const st of path.steps) {
-        if (!(inView(st.a.x, st.a.y) || inView(st.b.x, st.b.y))) {
-          pen = false;
-          continue;
-        }
-        const [ax, ay] = toScreen(st.a.x, st.a.y);
-        const [bx, by] = toScreen(st.b.x, st.b.y);
-        if (!pen) ctx.moveTo(ax, ay);
-        else ctx.lineTo(ax, ay);
-        ctx.lineTo(bx, by);
-        pen = true;
+      for (let k = 0; k < pts.length; k += 2) {
+        ctx.moveTo(pts[k] + headR, pts[k + 1]);
+        ctx.arc(pts[k], pts[k + 1], headR, 0, Math.PI * 2);
       }
-      // A loop joins back to its start; an edge-to-edge claim ends at the edge.
-      if (path.status === 'closed' && pen && !path.region) {
-        const first = path.steps[0];
-        const [ax, ay] = toScreen(first.a.x, first.a.y);
-        ctx.lineTo(ax, ay);
-      }
+      ctx.fillStyle = ink;
+      ctx.fill();
+      ctx.stroke();
+    }
+    /** A line cut in a collision, fading out on its way off the board (no head, no cross). */
+    const drawDying = (path: ClientPath, mine: boolean, fade: number, color: string): void => {
+      if (path.steps.length === 0) return;
+      const lw = mine ? wMine : w;
+      ctx.globalAlpha = fade;
+      ctx.beginPath();
+      if (!this.trace(path, ctx, toScreen, inView)) return void (ctx.globalAlpha = 1);
       if (mine) {
         ctx.strokeStyle = this.board.haloCss;
-        ctx.lineWidth = w + Math.max(2, 0.08 * s);
+        ctx.lineWidth = lw + Math.max(2, 0.08 * s);
         ctx.stroke();
       }
-      const ink =
-        path.status !== 'closed'
-          ? strandColor(this.board, color)
-          : darkenCss(this.closedLook(path, color)[0], 0.3);
-      ctx.strokeStyle = ink;
-      ctx.lineWidth = w;
+      ctx.strokeStyle = this.inkOf(path, color);
+      ctx.lineWidth = lw;
       ctx.globalAlpha = (path.status === 'stuck' ? 0.6 : 1) * fade;
       ctx.stroke();
       ctx.globalAlpha = 1;
-      if (fade < 1) return;
-      const last = path.steps[path.steps.length - 1];
-      if (path.status === 'growing') {
-        // A line growing both ways has a head at its start too.
-        const heads = path.back ? [last.b, path.steps[0].a] : [last.b];
-        const pulse = 1 + 0.35 * Math.sin(t / 160);
-        for (const h of heads) {
-          if (!inView(h.x, h.y)) continue;
-          const [hx, hy] = toScreen(h.x, h.y);
-          ctx.beginPath();
-          ctx.arc(hx, hy, Math.max(3, 0.22 * s) * pulse, 0, Math.PI * 2);
-          ctx.fillStyle = ink;
-          ctx.fill();
-          ctx.lineWidth = Math.max(1, 0.05 * s);
-          ctx.strokeStyle = this.board.inkCss;
-          ctx.stroke();
-        }
-      }
-      if (path.status === 'stuck' && inView(last.b.x, last.b.y)) {
-        const [hx, hy] = toScreen(last.b.x, last.b.y);
-        const r = Math.max(3, 0.18 * s);
-        ctx.strokeStyle = this.board.badCss;
-        ctx.lineWidth = Math.max(1.5, 0.06 * s);
-        ctx.beginPath();
-        ctx.moveTo(hx - r, hy - r);
-        ctx.lineTo(hx + r, hy + r);
-        ctx.moveTo(hx + r, hy - r);
-        ctx.lineTo(hx - r, hy + r);
-        ctx.stroke();
-      }
     };
-    for (const path of store.paths.values()) if (path.owner !== store.you) drawPath(path, false);
-    for (const path of store.paths.values()) if (path.owner === store.you) drawPath(path, true);
     const now = performance.now();
     if (store.dying.length > 0) {
       store.dying = store.dying.filter((d) => now - d.born < FADE_MS);
       for (const d of store.dying) {
         const k = 1 - (now - d.born) / FADE_MS;
-        drawPath(d.path, d.mine, k * k, this.teams ? this.teamColor(d.mine) : d.color);
+        drawDying(d.path, d.mine, k * k, this.teams ? this.teamColor(d.mine) : d.color);
       }
     }
     if (store.bursts.length > 0) {
@@ -629,17 +847,24 @@ export class Renderer {
       placed.push(r);
       labels.push({ player, rect: r, x, y });
     }
-    if (pending.length > 0) {
+    const now = performance.now();
+    const search = pending.filter((player) => {
+      this.labelAnchors.delete(player.id);
+      return (this.labelRetry.get(player.id) ?? 0) <= now;
+    });
+    if (search.length > 0) {
       const byOwner = new Map<string, ClientPath[]>();
       for (const path of store.paths.values()) {
         const list = byOwner.get(path.owner);
         if (list) list.push(path);
         else byOwner.set(path.owner, [path]);
       }
-      for (const player of pending) {
-        this.labelAnchors.delete(player.id);
+      for (const player of search) {
         const paths = byOwner.get(player.id);
-        if (!paths) continue;
+        if (!paths) {
+          this.labelRetry.set(player.id, now + LABEL_RETRY_MS);
+          continue;
+        }
         const w = widthOf(player.name);
         let best: { anchor: LabelAnchor; rect: Rect; x: number; y: number } | null = null;
         let bestD = Infinity;
@@ -654,13 +879,18 @@ export class Renderer {
             bestD = d;
           }
         }
-        if (!best) continue;
+        if (!best) {
+          this.labelRetry.set(player.id, now + LABEL_RETRY_MS);
+          continue;
+        }
+        this.labelRetry.delete(player.id);
         this.labelAnchors.set(player.id, best.anchor);
         placed.push(best.rect);
         labels.push({ player, rect: best.rect, x: best.x, y: best.y });
       }
     }
     for (const id of this.labelAnchors.keys()) if (!store.players.has(id)) this.labelAnchors.delete(id);
+    for (const id of this.labelRetry.keys()) if (!store.players.has(id)) this.labelRetry.delete(id);
     for (const { player, rect, x, y } of labels) {
       const mine = player.id === store.you;
       const ink = strandColor(this.board, this.teams ? this.teamColor(mine) : player.color);

@@ -89,6 +89,10 @@ tests/            vitest. strand.test.ts pins the local walker against the
                   resume.test.ts spawns the real server.
 scripts/smoke.ts  Headless Chromium round (needs PW_EXE or playwright browsers).
 scripts/flip-bench.ts  Conquest flip load: tick time, live flip pieces, pace.
+scripts/lag-bench.ts  Where a busy frame goes: engine, wire, store, tints,
+                  overlay, per tick (FLIP=1 for a flip storm). Node counts JS
+                  only; lag-bench-browser.ts runs it in Chromium with a real
+                  canvas, so raster time counts too.
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
@@ -344,6 +348,19 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   auto-switches on `prefers-color-scheme` — the settings modal decides.
 
 ## Traps
+
+- **The lag is the client's canvas, not the maths.** In a flip storm
+  (`FLIP=1 npm run bench:lag -- conquest 5 wanderer:6 4000`, and the browser
+  twin) the engine is ~1 ms a tick while the overlay was ~30 ms a frame. So
+  the overlay keeps its lines on a cached layer (`Renderer.lines`), redrawn
+  on a camera move at once and on a board change at most once per
+  `LINES_BUDGET` × its last cost; the plain board's outline (thousands of
+  segments, ~10 ms to stroke) has a layer of its own per camera; lines are
+  stroked in one `Path2D` per look, not one stroke each; only pulsing heads,
+  fades, sparks and names draw every frame. A flip's `spawned` pieces get no
+  head dot — hundreds pulsed at once. Tints rebuild at most every
+  `TINT_MIN_MS`. Anything new drawn per path goes into `drawLines`, not the
+  per-frame part.
 
 - **Software WebGL.** This sandbox and CI runners have no GPU; WebGL runs on
   SwiftShader and 242k instances take seconds per frame. `tiles-gl.ts`

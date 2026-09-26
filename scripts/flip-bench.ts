@@ -1,7 +1,7 @@
 /**
  * Conquest flip load: bots holding several patterns draw with any of them, so
  * their lines flip all the time. Prints engine tick time, how many flip pieces
- * sit "growing" (each a pulsing head on every client) and how the game went
+ * sit "growing" (no head drawn on them any more, but each still a line to draw) and how the game went
  * (top score, circuits) — the pace to keep when touching flips.
  *
  *   npx tsx scripts/flip-bench.ts [family] [level] [bots] [ticks] [seed]
