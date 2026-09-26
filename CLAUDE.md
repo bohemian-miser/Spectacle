@@ -94,6 +94,10 @@ scripts/lag-bench.ts  Where a busy frame goes: engine, wire, store, tints,
                   only; lag-bench-browser.ts runs it in Chromium with a real
                   canvas, so raster time counts too.
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
+scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
+                  heartbeats (who is in which room), traffic, instance-count
+                  metric, /healthz, recent joins/leaves, via gcloud's token
+                  over REST. `--url` reads one server's /status.json instead.
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
@@ -113,6 +117,7 @@ PORT=8787 BOTS=3 FIELD_LEVEL=5 npx tsx server/index.ts
 PW_EXE=/opt/pw-browsers/chromium npx tsx scripts/smoke.ts http://localhost:8787/ out.png
 PW_EXE=/opt/pw-browsers/chromium npx tsx scripts/smoke.ts "http://localhost:8787/?solo" out.png
 npm run bench:field      # build time / size per level
+npm run servers          # who is on which instance (gcloud login); --url for one server
 ```
 
 Push to a `claude/...` branch, open a PR; CI must be green. Merging to main

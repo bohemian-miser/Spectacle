@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "bench:field": "tsx scripts/bench-field.ts",
-    "bench:lag": "tsx scripts/lag-bench.ts"
+    "bench:lag": "tsx scripts/lag-bench.ts",
+    "servers": "tsx scripts/servers.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

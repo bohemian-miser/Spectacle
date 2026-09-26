@@ -456,7 +456,20 @@ jsonPayload.message="heartbeat"
 ```
 
 and the Cloud Run console's *Metrics → Container instance count* graph shows
-how many are running.
+how many are running. Or, from a terminal logged in with `gcloud`, all of it
+at once — revisions and traffic, the running-instance count, which instance
+`/healthz` reaches, every instance with people on it and who is in which room,
+and the recent joins and leaves:
+
+```bash
+npm run servers                       # Cloud Run (gcloud's project, us-central1, spectacle)
+npm run servers -- --watch 30         # redraw every 30 s
+npm run servers -- --url http://localhost:8787   # one server (local, the VM) via /status.json
+```
+
+`--since 10m`, `--events 40`, `--json`, `--project/--region/--service` too.
+(On Cloud Run `/healthz` itself answers 404 from outside: Google's front end
+reserves paths ending in `z`. `/status` and `/status.json` get through.)
 
 That refusal is also where the client's own fallback kicks in: the lobby
 shows the reason and a **Play bots instead** link straight away, and if the
