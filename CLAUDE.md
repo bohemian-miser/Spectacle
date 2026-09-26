@@ -180,6 +180,9 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   relies on best-effort session affinity (a miss is a new player). Making
   invites exact across instances needs routing by room (e.g. several
   one-instance services with the shard in the link) — open, owner's call.
+  Every instance names itself (`INSTANCE`: random id + `K_REVISION`) on
+  `/status`, `/healthz`, and a once-a-minute `{"message":"heartbeat"}` log
+  line (only while it has sockets) — the log is the one view across them all.
 - **Client fallback: never a silent dead end.** `error.code` (protocol.ts)
   gives the client a machine-readable reason instead of parsing text.
   `store.lastError` (a fresh object every time, even a repeat message, so a

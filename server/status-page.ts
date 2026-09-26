@@ -18,6 +18,7 @@ export interface LogLine {
 export interface StatusReport {
   readonly now: number;
   readonly startedAt: number;
+  readonly instance: { readonly id: string; readonly revision: string | null };
   readonly field: FieldSpec & { readonly tiles: number };
   readonly memory: { readonly rssMb: number; readonly heapMb: number };
   readonly tick: { readonly everyMs: number; readonly avgMs: number; readonly maxMs: number };
@@ -119,7 +120,7 @@ export const STATUS_PAGE = `<!doctype html>
     const humans = r.rooms.flatMap((room) => room.players.filter((p) => !p.bot));
     const online = humans.filter((p) => p.connected).length;
     const held = humans.length - online;
-    $('state').innerHTML = '<span class="dot"></span>up ' + esc(ago(r.now - r.startedAt)) + ' · ' + esc(r.field.family) + ' level ' + esc(r.field.level) + ' · ' + esc(r.field.tiles.toLocaleString()) + ' tiles · bots: ' + esc(r.limits.bots);
+    $('state').innerHTML = '<span class="dot"></span>instance ' + esc(r.instance.id) + (r.instance.revision ? ' (' + esc(r.instance.revision) + ')' : '') + ' · up ' + esc(ago(r.now - r.startedAt)) + ' · ' + esc(r.field.family) + ' level ' + esc(r.field.level) + ' · ' + esc(r.field.tiles.toLocaleString()) + ' tiles · bots: ' + esc(r.limits.bots);
     const tickCls = r.tick.maxMs > r.tick.everyMs ? 'is-bad' : r.tick.maxMs > r.tick.everyMs / 2 ? 'is-warn' : '';
     const memCls = r.memory.rssMb > 900 ? 'is-bad' : r.memory.rssMb > 750 ? 'is-warn' : '';
     $('stats').innerHTML = [

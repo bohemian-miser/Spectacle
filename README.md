@@ -441,6 +441,23 @@ and find an empty room of the same name. While traffic fits on one instance
 keeps invites and resume exact, at the price of capping the online arena at
 one instance's players (everyone past it is offered bots).
 
+**Seeing every instance.** `/status` and `/healthz` show only the instance
+that answered — the header names it (`instance <id> (<revision>)`), so two
+people comparing notes can tell whether they are on the same one. A deploy
+also splits players: the old revision's instances keep their open sockets
+(up to `--timeout`, an hour) while new joins go to the new revision. For the
+whole picture, each instance with anyone connected logs a heartbeat once a
+minute — its id, revision, sockets and, per room, the humans' names. In
+Logs Explorer:
+
+```
+resource.type="cloud_run_revision" resource.labels.service_name="spectacle"
+jsonPayload.message="heartbeat"
+```
+
+and the Cloud Run console's *Metrics → Container instance count* graph shows
+how many are running.
+
 That refusal is also where the client's own fallback kicks in: the lobby
 shows the reason and a **Play bots instead** link straight away, and if the
 arena is simply unreachable (down, overloaded, a bad network) rather than
