@@ -369,7 +369,19 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the streak. So an untouched board ends at exactly `plan.outcome`: at most
   the old score, plus the stretch's price beyond its held tiles
   (`tests/regrow.test.ts`). A regrown circuit also captures as normal. A cut piece's circuit can still close:
-  the other pieces of it grow through the gap. `circuitBonus` snaps the
+  the other pieces of it grow through the gap. **Heads don't restart**:
+  as many heads as were growing at the switch (`headsInUse`, capped by the
+  new `headLimit`) are given straight to the regrowth pieces with the most
+  left to grow (`promote`: `spawned` off, a `promote` event, so they grow
+  at the owner's speed and count as heads). A tap on a slow piece of the
+  active pattern (a regrow's or a flip's) with a head free does the same
+  (`tapOwnLine`; a stuck one turns round first), keeping all it has laid.
+  A head that reaches a slow piece joins it and grows on from its far end
+  (`join`: it jumps what the piece already laid); a *regrow* piece that
+  reaches a growing head's line folds into it (`foldInto`), so the head
+  keeps its speed — a flip's pieces still take a head's line in, as before
+  (changing that changed flip-storm play). `tests/regrow-heads.test.ts`.
+  `circuitBonus` snaps the
   area to 1e-6: areas come in quarters, sums land on .5, and float noise
   from a different loop start rounded the bonus the other way. A plan at
   hex 5 with ~1.7k held tiles on an empty board takes up to ~200 ms, on

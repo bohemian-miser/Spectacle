@@ -295,6 +295,8 @@ export class Engine {
     // A strand into a tile an opponent's line is on can't close: the plan stops there.
     const blocked = (tile: number): boolean => this.rivalOn(tile, id);
     const plan = this.knobs.regrowOnRule && tiles.size > 0 ? planRegrow(this.field, table, tiles, p.score, this.knobs, blocked) : null;
+    // The heads you had growing carry over to the regrowth (below).
+    const heads = this.headsInUse(p);
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
     p.rule = rule;
     p.table = table;
@@ -329,7 +331,18 @@ export class Engine {
     if (plan && (plan.kept.length > 0 || plan.stretch)) {
       const only = new Set([...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => q.seeds));
       const strain: Strain = { rule, table, pattern: 0, wave: this.nextWave++ };
-      this.sprout(p, strain, [...new Set([...only].map((k) => Math.floor(k / 64)))], ev, { only, regrow: true });
+      const pieces = this.sprout(p, strain, [...new Set([...only].map((k) => Math.floor(k / 64)))], ev, { only, regrow: true });
+      // Your heads don't restart: as many as you had growing drive the
+      // pieces with the most left to grow, at a head's speed, instead of
+      // sharing the pieces' one head's worth.
+      const bought = [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])];
+      const whole = new Map<number, number>();
+      for (const q of bought) for (const k of q.seeds) whole.set(k, q.length);
+      const left = (q: Path): number => (whole.get(q.steps[0].tile * 64 + q.steps[0].chord) ?? 0) - q.steps.length;
+      const limit = this.headLimit(p);
+      const room = limit === 0 ? heads : Math.min(heads, limit);
+      const growing = pieces.filter((q) => q.status === 'growing' && q.spawned && this.pathsById.has(q.id)).sort((a, b) => left(b) - left(a));
+      for (const q of growing.slice(0, room)) this.promote(q, ev);
     }
     this.flushScores(ev);
     return ev;
@@ -514,7 +527,23 @@ export class Engine {
         this.recolor(p, q, pattern, tile, ev);
         return q.id;
       }
-      if (!free || q.spawned || !this.canGrowBack(q)) continue;
+      // A slow piece (a flip's, a regrow's) of the pattern you draw with: a free
+      // head takes it over and it carries on at a head's speed from where it
+      // is, keeping all it has laid (one that has stopped turns round first).
+      if (q.spawned) {
+        if (!free) continue;
+        if (q.status === 'growing') {
+          this.promote(q, ev);
+          return q.id;
+        }
+        if (q.status === 'stuck' && this.canGrowBack(q)) {
+          this.turnRound(q, ev);
+          this.promote(q, ev);
+          return q.id;
+        }
+        continue;
+      }
+      if (!free || !this.canGrowBack(q)) continue;
       if (q.status === 'stuck') {
         this.turnRound(q, ev);
         return q.id;
@@ -528,6 +557,14 @@ export class Engine {
   }
 
   /** Is there somewhere for `path` to grow behind its start (not back over itself)? */
+  /** A slow piece becomes a head: it grows at its owner's speed and counts against their heads. */
+  private promote(path: Path, ev: GameEvent[]): void {
+    if (!path.spawned) return;
+    path.spawned = undefined;
+    path.progress = 0;
+    ev.push({ t: 'promote', path: path.id });
+  }
+
   private canGrowBack(path: Path): boolean {
     const s = path.steps[0];
     return continuations(this.field, path.table, s.tile, s.chord, s.a).some(
@@ -943,7 +980,11 @@ export class Engine {
    */
   private join(p: Player, path: Path, meet: { other: Path; tail: WalkStep[] }, ev: GameEvent[]): Path {
     const { other, tail } = meet;
-    if (path.spawned && other.spawned && other.steps.length > path.steps.length) return this.foldInto(p, path, meet, ev);
+    // A regrowing piece meeting a growing head's line folds into it, so the
+    // head keeps its speed (and no head appears from nowhere); two pieces
+    // keep the longer. (A flip's pieces still take a head's line in, as ever.)
+    const head = path.regrow && !other.spawned && other.status === 'growing' && !other.back;
+    if (path.spawned && (head || (other.spawned && other.steps.length > path.steps.length))) return this.foldInto(p, path, meet, ev);
     const i = p.paths.indexOf(other);
     if (i >= 0) p.paths.splice(i, 1);
     this.pathsById.delete(other.id);

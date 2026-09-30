@@ -207,7 +207,11 @@ line and you both die.
    when it regrows it stops there rather than crashing into them. Each
    circuit or line is paid for once, however many of your tiles it runs
    through. In effect you only gain tiles from a new rule by giving up
-   smaller circuits you could otherwise have kept. A circuit
+   smaller circuits you could otherwise have kept. Your heads don't
+   restart: however many lines you had growing, that many of the regrowing
+   pieces grow at your full speed; the rest share one head's worth. Tap a
+   slow piece to put a free head on it, or grow a line into one — it takes
+   the piece in and carries on past it. A circuit
    that is cut on the way is lost like any line; one that closes round a
    rival's lines captures them as usual. Whatever the budget can't buy is
    lost (`regrowOnRule`; off, a new rule starts from nothing). Once you hold a captured pattern, the rule
