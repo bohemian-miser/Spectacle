@@ -27,7 +27,7 @@
  *   SEED          (random)   RNG seed
  *   RESUME_GRACE_MS (600000) a dropped player is kept for `join.resume` until
  *                            this long after their tiles last changed
- *   AWAY_RULE_MS  (30000)    a player dropped this long switches to the
+ *   AWAY_RULE_MS  (600000)   a player dropped this long switches to the
  *                            infinite-line rule while away (-1 = never)
  *   STATS_KEY     (unset)    serves /patterns?key=… (which rules people play, and their scores); unset = off
  *   STATS_FILE    (unset)    keep those pattern stats in this JSON file across restarts
@@ -483,7 +483,7 @@ let nextClient = 1;
  *   token proves ownership; the old socket is detached and closed.
  */
 const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 600_000);
-const AWAY_RULE_MS = Number(process.env.AWAY_RULE_MS ?? 30_000);
+const AWAY_RULE_MS = Number(process.env.AWAY_RULE_MS ?? 600_000);
 const tokenHashes = new Map<string, Buffer>(); // player id → sha256(token)
 /**
  * Players held for a resume: when they dropped, and when their tiles last
@@ -520,8 +520,10 @@ function detach(id: string): void {
 
 /**
  * Once a pass: a player away `AWAY_RULE_MS` switches to the infinite-line
- * rule (a refresh or Cloud Run's hourly reconnect comes back well inside
- * that); one whose tiles haven't changed for `RESUME_GRACE_MS` times out.
+ * rule: the price of not checking in (a refresh or Cloud Run's hourly
+ * reconnect comes back well inside that); one whose tiles haven't changed
+ * for `RESUME_GRACE_MS` times out. Once nobody is connected at all, Cloud
+ * Run retires the instance after ~15 idle minutes (scale to zero).
  */
 function sweepAway(now: number): void {
   for (const [id, away] of detached) {

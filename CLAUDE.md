@@ -425,11 +425,14 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the set a player's lines are on) and `sweepAway`, once a loop pass,
   restarts the clock whenever it moves — lines still growing (a room with
   others in it ticks) keep an absent player in. A player away
-  `AWAY_RULE_MS` (30 s, -1 = never; long enough for a refresh or Cloud
-  Run's hourly reconnect) is switched by the server to the infinite-line
-  rule (`fassRule`, via `setRule`, so it regrows), and keeps it on resume
-  (owner's call — the one place outside tests `fassRule` is used; the
-  README doesn't mention it). `tests/resume.test.ts` has a second server
+  `AWAY_RULE_MS` (10 min, -1 = never) is switched by the server to the
+  infinite-line rule — the owner's design: the game is for checking in
+  between meetings, and not checking in leaves you exposed. It goes
+  through `fassRule` and `setRule` (so it regrows) and is kept on resume;
+  the one place outside tests `fassRule` is used, and the README doesn't
+  mention it. Nothing stays on for idle players: once no socket is open,
+  Cloud Run retires the instance after ~15 min and the rooms go with it
+  (saving rooms to storage is open). `tests/resume.test.ts` has a second server
   with short timers for this.
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
