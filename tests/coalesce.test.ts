@@ -5,6 +5,7 @@ import { buildField, tileCenter } from '../shared/game/field';
 import { DEFAULT_KNOBS, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
 import { planRegrow } from '../shared/game/regrow';
+import { packEvents } from '../shared/game/wire';
 import { mulberry32 } from '../shared/game/rng';
 import { defaultRule, randomCleanRule } from '../shared/game/rule';
 import { chordTableFor, tileChords } from '../shared/game/strand';
@@ -71,6 +72,25 @@ describe('a rule change coalesces', () => {
       const k = c.from.findIndex((q) => key(q) === key(tileCenter(HEX, t)));
       expect(key(c.to[k]!)).toBe(key(c.from[k]));
     }
+  });
+
+  it('reads the switch just the same from the packed stream (begin / grow)', () => {
+    const knobs: Knobs = { ...DEFAULT_KNOBS, maxHeads: 0 };
+    const plain = setup(knobs);
+    const packed = setup(knobs);
+    const rule = randomCleanRule('hex', mulberry32(11));
+    const ev = plain.e.setRule('a', rule);
+    const ev2 = packed.e.setRule('a', rule);
+    plain.store.handle({ t: 'events', ev });
+    const wire = packEvents(HEX, ev2, (owner, pattern) => packed.e.players.get(owner)?.patterns[pattern]?.table);
+    expect(wire.some((x) => x.t === 'begin')).toBe(true);
+    expect(wire.some((x) => x.t === 'step')).toBe(false);
+    packed.store.handle({ t: 'events', ev: wire });
+    expect(packed.store.coalesce).toHaveLength(1);
+    const [a, b] = [plain.store.coalesce[0], packed.store.coalesce[0]];
+    expect(b.to.filter(Boolean).length).toBeGreaterThan(0);
+    expect(b.from.map(key)).toEqual(a.from.map(key));
+    expect(b.to.map((q) => (q ? key(q) : null))).toEqual(a.to.map((q) => (q ? key(q) : null)));
   });
 
   it('motesPerTile splits in proportion, rounds to whole motes, and drops what was lost', () => {

@@ -517,6 +517,7 @@ export class Store {
         const step = unpackStep(this.field, table, ev.first);
         path.steps.push(step);
         this.occupy(step.tile, path);
+        this.switched.get(ev.owner)?.add(step.tile);
         this.geometryVersion++;
         return;
       }
@@ -528,6 +529,7 @@ export class Store {
           if (!step) break;
           path.steps.push(step);
           this.occupy(step.tile, path);
+          this.switched.get(path.owner)?.add(step.tile);
         }
         this.geometryVersion++;
         return;
