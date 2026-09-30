@@ -536,18 +536,22 @@ function cleanName(raw: unknown): string {
   return s || 'anon';
 }
 
-function welcome(client: Client, room: Room): void {
-  const snap = room.engine.snapshot();
-  const payload = JSON.stringify({
-    t: 'welcome',
-    you: client.id,
-    token: issueToken(client.id),
-    field: spec,
-    knobs: room.knobs,
-    players: snap.players,
-    paths: snap.paths,
-    room: room.id,
-  } satisfies ServerMessage);
+/**
+ * The board as it stands, to a client joining or resuming. One that asked
+ * with `join.packed` gets its lines packed (`wire.ts`, ~8× smaller: a busy
+ * board's welcome was tens of MB); older clients still get them plain.
+ */
+function welcome(client: Client, room: Room, packed: boolean): void {
+  const common = { t: 'welcome', you: client.id, token: issueToken(client.id), field: spec, knobs: room.knobs, room: room.id } as const;
+  let message: ServerMessage;
+  if (packed) {
+    const snap = room.engine.packedSnapshot();
+    message = { ...common, players: snap.players, paths: [], packed: snap.packed };
+  } else {
+    const snap = room.engine.snapshot();
+    message = { ...common, players: snap.players, paths: snap.paths };
+  }
+  const payload = JSON.stringify(message);
   client.allowance = payload.length;
   if (client.ws.readyState === client.ws.OPEN) client.ws.send(payload);
 }
@@ -584,7 +588,7 @@ wss.on('connection', (ws) => {
           client.joined = true;
           client.room = resumed;
           resumed.clients.set(client.id, client);
-          welcome(client, resumed);
+          welcome(client, resumed, msg.packed === true);
           return;
         }
         // A brand new player, not a returning one (those went through
@@ -612,7 +616,7 @@ wss.on('connection', (ws) => {
         client.room = target;
         target.clients.set(client.id, client);
         playerRoom.set(client.id, target);
-        welcome(client, target);
+        welcome(client, target, msg.packed === true);
         // Everyone else learns about the newcomer now; the newcomer already
         // has themselves in the snapshot.
         const payload = JSON.stringify({ t: 'events', ev } satisfies ServerMessage);

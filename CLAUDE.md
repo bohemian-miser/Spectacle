@@ -38,6 +38,8 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   bot-sense.ts    What bots see: the rule scout (one per field, sliced per
                   tick or `prepareBots` up front), `probe` (walk a would-be
                   line against the live board), isInfiniteLineRule.
+  wire.ts         The packed welcome: each line as its first step + length
+                  (a loop: first step only), regrown on the client.
   color.ts        mixHsl — a captured pattern's colour.
   knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
@@ -332,6 +334,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   several instances `/patterns` shows only the one that answered; the log
   covers them all. `STATS_FILE` keeps the aggregate on the VM. Only players at the board are sampled, so a
   reconnect splits a stint in two.
+- **Every line is a stretch of one strand of its rule.** Lines only ever grow
+  by `stepForward`, and joins, splits and folds keep unbroken stretches, and
+  a clean rule never branches (a junction is a bug, not a choice). So the
+  welcome (`welcome.packed`, `wire.ts`, asked for with `join.packed`) sends a
+  line as `[id, owner, flags, rule, first, n]` and the client grows it back
+  with `stepForward` — a loop from its first step alone. A busy board's
+  welcome went from ~21 MB to well under one. Anything that would put a step
+  on a line that isn't the rule's next one breaks this: the client logs
+  "its strand branches/ends" and `tests/wire.test.ts` fails. Older clients
+  (no `join.packed`) still get plain `paths`.
 - **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
@@ -398,9 +410,9 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
     the incremental tints against a full rebuild every 50 ticks.
   - *Lines layer.* `trace` emits one point per step (consecutive steps share
     an end) and skips points under `TRACE_MIN_PX` from the last drawn.
-  - *Still open:* the wire (~600 KB/s per client at that load, 78% `step`
-    events with full-precision coordinates; ~20 MB `welcome` on reconnect),
-    and the board filling at all — `maxLivePaths`/`maxCompletedCircuits`
+  - *Still open:* the live wire (~600 KB/s per client at that load, 78%
+    `step` events with full-precision coordinates — the client could grow
+    those from the head too), and the board filling at all — `maxLivePaths`/`maxCompletedCircuits`
     and `flipPieceHeads` are the owner's knobs for that.
 
 - **Software WebGL.** This sandbox and CI runners have no GPU; WebGL runs on

@@ -102,7 +102,7 @@ export function App(): JSX.Element {
           // lobby.
           const r = rejoin.current;
           if (r && conn.kind === 'online') {
-            conn.send({ t: 'join', name: r.name, rule: r.rule, mode: r.mode, resume: r.resume ?? undefined, room: r.room ?? LINK_ROOM ?? undefined });
+            conn.send({ t: 'join', name: r.name, rule: r.rule, mode: r.mode, resume: r.resume ?? undefined, room: r.room ?? LINK_ROOM ?? undefined, packed: true });
             joined.current = true;
             setScreen('arena');
           }
@@ -207,7 +207,7 @@ export function App(): JSX.Element {
     }
     if (joined.current) conn.send({ t: 'rule', rule });
     else {
-      conn.send({ t: 'join', name, rule, mode: gameMode, room: LINK_ROOM ?? undefined });
+      conn.send({ t: 'join', name, rule, mode: gameMode, room: LINK_ROOM ?? undefined, packed: true });
       joined.current = true;
     }
     const playing = rejoin.current?.mode ?? gameMode;
