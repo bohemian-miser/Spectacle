@@ -248,3 +248,22 @@ describe('rule change: the head limit carries over', () => {
     expect(refused).toBe(1);
   });
 });
+
+describe('tileChanges', () => {
+  it('moves while a line takes new tiles and stands still once it stops', () => {
+    const knobs: Knobs = { ...DEFAULT_KNOBS };
+    const e = new Engine(HEX, knobs, mulberry32(1));
+    e.addPlayer('a', 'Ann', defaultRule('hex'));
+    const a = e.players.get('a')!;
+    const table = chordTableFor(HEX, defaultRule('hex'));
+    const start = [...Array(HEX.count).keys()].find((i) => tileChords(HEX, table, i).length > 0)!;
+    expect(e.tap('a', start, tileCenter(HEX, start)).result.ok).toBe(true);
+    const c0 = a.tileChanges;
+    expect(c0).toBeGreaterThan(0);
+    for (let t = 0; t < 4000 && a.paths.some((q) => q.status === 'growing'); t++) e.tick(knobs.tickMs);
+    expect(a.tileChanges).toBeGreaterThan(c0);
+    const settled = a.tileChanges;
+    for (let t = 0; t < 50; t++) e.tick(knobs.tickMs);
+    expect(a.tileChanges).toBe(settled);
+  });
+});

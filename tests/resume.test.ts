@@ -7,15 +7,18 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../shared/game/protocol';
-import { fassRule } from '../shared/game/rule';
+import { defaultRule, fassRule } from '../shared/game/rule';
 
 const PORT = 18000 + Math.floor(Math.random() * 1000);
+/** A second server, with short away timers. */
+const AWAY_PORT = PORT + 1000;
 let server: ChildProcess;
+let awayServer: ChildProcess;
 
-async function waitForHealth(): Promise<void> {
+async function waitForHealth(port = PORT): Promise<void> {
   for (let i = 0; i < 100; i++) {
     try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/healthz`);
+      const r = await fetch(`http://127.0.0.1:${port}/healthz`);
       if (r.ok) return;
     } catch {
       /* not up yet */
@@ -29,8 +32,8 @@ class Client {
   readonly ws: WebSocket;
   private queue: ServerMessage[] = [];
   private waiters: ((m: ServerMessage) => void)[] = [];
-  constructor() {
-    this.ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+  constructor(readonly port = PORT) {
+    this.ws = new WebSocket(`ws://127.0.0.1:${port}/ws`);
     this.ws.on('message', (d) => {
       const m = JSON.parse(String(d)) as ServerMessage;
       const w = this.waiters.shift();
@@ -67,7 +70,7 @@ class Client {
 async function awaitDrop(c: Client): Promise<void> {
   c.ws.close();
   await new Promise<void>((r) => c.ws.once('close', () => r()));
-  await fetch(`http://127.0.0.1:${PORT}/healthz`);
+  await fetch(`http://127.0.0.1:${c.port}/healthz`);
 }
 
 beforeAll(async () => {
@@ -75,11 +78,16 @@ beforeAll(async () => {
     env: { ...process.env, PORT: String(PORT), BOTS: '0', FIELD_LEVEL: '3', RESUME_GRACE_MS: '5000' },
     stdio: 'ignore',
   });
-  await waitForHealth();
+  awayServer = spawn('npx', ['tsx', 'server/index.ts'], {
+    env: { ...process.env, PORT: String(AWAY_PORT), BOTS: '0', FIELD_LEVEL: '3', RESUME_GRACE_MS: '2500', AWAY_RULE_MS: '300' },
+    stdio: 'ignore',
+  });
+  await Promise.all([waitForHealth(), waitForHealth(AWAY_PORT)]);
 }, 30_000);
 
 afterAll(() => {
   server.kill();
+  awayServer.kill();
 });
 
 describe('resume', () => {
@@ -158,5 +166,32 @@ describe('resume', () => {
     expect(ev.ev.some((e) => e.t === 'join' && e.player.name === 'Fay')).toBe(true);
     b.ws.close();
     c.ws.close();
+  }, 20_000);
+
+  it('a player away switches to the infinite-line rule, and is kept until their tiles stand still for the grace period', async () => {
+    const join = async (resume?: { id: string; token: string }) => {
+      const c = new Client(AWAY_PORT);
+      await c.open();
+      await c.until('hello');
+      c.send({ t: 'join', name: 'Gil', rule: defaultRule('hex'), resume });
+      const w = await c.until('welcome');
+      if (w.t !== 'welcome') throw new Error();
+      return { c, w };
+    };
+    const first = await join();
+    expect(first.w.players.find((p) => p.id === first.w.you)!.rule).toEqual(defaultRule('hex'));
+    await awaitDrop(first.c);
+    await new Promise((r) => setTimeout(r, 800));
+
+    const back = await join({ id: first.w.you, token: first.w.token });
+    expect(back.w.you).toBe(first.w.you);
+    expect(back.w.players.find((p) => p.id === first.w.you)!.rule).toEqual(fassRule('hex'));
+    await awaitDrop(back.c);
+
+    // Nothing of theirs moves in a room nobody watches: past the grace, gone.
+    await new Promise((r) => setTimeout(r, 3500));
+    const late = await join({ id: first.w.you, token: back.w.token });
+    expect(late.w.you).not.toBe(first.w.you);
+    late.c.ws.close();
   }, 20_000);
 });

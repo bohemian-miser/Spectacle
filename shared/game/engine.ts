@@ -181,6 +181,12 @@ export interface Player {
    * that many more captured patterns in `headLimit`.
    */
   keptHeads: number;
+  /**
+   * Bumped whenever a tile joins or leaves the set this player's lines are
+   * on — the server times a disconnected player out this long after it last
+   * moved (`RESUME_GRACE_MS`).
+   */
+  tileChanges: number;
 }
 
 export type TapResult = { ok: true; path: number } | { ok: false; reason: string };
@@ -268,6 +274,7 @@ export class Engine {
       active: 0,
       converted: [],
       keptHeads: 0,
+      tileChanges: 0,
     };
     this.players.set(id, player);
     return [{ t: 'join', player: this.publicOf(player) }];
@@ -1414,8 +1421,9 @@ export class Engine {
     const n = (held.get(tile) ?? 0) + d;
     if (n > 0) held.set(tile, n);
     else held.delete(tile);
-    if (!this.knobs.scoreTiles) return;
     const p = this.players.get(owner);
+    if (p && (n === 0 || (n === 1 && d > 0))) p.tileChanges++;
+    if (!this.knobs.scoreTiles) return;
     if (p && p.score !== held.size) {
       p.score = held.size;
       this.scoreDirty.add(owner);

@@ -134,7 +134,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 ## Settled decisions (don't relitigate without the owner)
 
 - **No FASS preset, no hint.** The infinite-line rules (hex `128`, spectre
-  `1278`) are for players to discover. `fassRule()` exists for tests only; the
+  `1278`) are for players to discover. `fassRule()` exists for tests and the away switch (see "Resume window") only; the
   README must not name them. Default rule is selection `15`.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
@@ -419,7 +419,18 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   player's last `score` in a batch goes — ~620 KB/s became ~215 KB/s on the
   stress board. Older clients (no `join.packed`) still get plain `paths` and
   `step`s.
-- **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
+- **Resume window is 10 min after your tiles last changed**
+  (`RESUME_GRACE_MS` default 600 000), not after the drop: `detach` notes
+  `Player.tileChanges` (bumped in `hold` whenever a tile joins or leaves
+  the set a player's lines are on) and `sweepAway`, once a loop pass,
+  restarts the clock whenever it moves — lines still growing (a room with
+  others in it ticks) keep an absent player in. A player away
+  `AWAY_RULE_MS` (30 s, -1 = never; long enough for a refresh or Cloud
+  Run's hourly reconnect) is switched by the server to the infinite-line
+  rule (`fassRule`, via `setRule`, so it regrows), and keeps it on resume
+  (owner's call — the one place outside tests `fassRule` is used; the
+  README doesn't mention it). `tests/resume.test.ts` has a second server
+  with short timers for this.
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
   and most players are in North America). Cloud Run (scale to zero) via CI is
