@@ -296,7 +296,8 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
   const growing = mine.filter((p) => p.status === 'growing');
   const stuck = mine.filter((p) => p.status === 'stuck').length;
   const closed = mine.filter((p) => p.status === 'closed').length;
-  const tiles = mine.reduce((n, p) => n + p.steps.length, 0);
+  // The tiles your lines are on, each once — what the score counts, with `scoreTiles`.
+  const tiles = new Set(mine.flatMap((p) => p.steps.map((s) => s.tile))).size;
   const parts: string[] = [];
   if (growing.length) parts.push(`${growing.length} growing`);
   if (stuck) parts.push(`${stuck} stuck`);
