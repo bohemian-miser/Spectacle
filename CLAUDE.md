@@ -326,7 +326,12 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `pointsPerTile`), and the plan's `outcome` counts its full price; so a
   few tiles on one huge circuit get it, if it grows round uncut. Strands
   are walked whole (the stretch may be the biggest there is), capped at
-  `WALK_CAP` steps all told. The old lines are wiped (points leave), then
+  `WALK_CAP` steps all told, but a walk stops at the first tile an
+  opponent's line is on (`blocked`): that strand is no circuit. That also
+  keeps plans cheap on a live board — at hex 5 with one rival on ~3% of
+  the tiles, the worst plan fell from 88 ms to 2.6 ms; only a near-empty
+  board still walks the huge strands. The infinite-line rules are eligible
+  like any other (owner's call: finding one should pay). The old lines are wiped (points leave), then
   `sprout` (with `only` and `regrow`) lays the bought circuits' chords on
   the held tiles alone, each scoring a tile's points. From there they grow
   as flip pieces, and `regrow` paths close at `comboStart` without feeding
@@ -336,7 +341,8 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the other pieces of it grow through the gap. `circuitBonus` snaps the
   area to 1e-6: areas come in quarters, sums land on .5, and float noise
   from a different loop start rounded the bonus the other way. A plan at
-  hex 5 with ~1.7k held tiles takes up to ~200 ms, on the message handler.
+  hex 5 with ~1.7k held tiles on an empty board takes up to ~200 ms, on
+  the message handler.
 - **Nothing in a message or a tick may throw the process down.** One Node
   process holds every room, so `guard()` logs an exception (every 10 s at
   most per source) instead. The welcome snapshot doesn't count towards

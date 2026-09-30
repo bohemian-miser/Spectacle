@@ -194,7 +194,9 @@ line and you both die.
    you get start again on the tiles you already held and grow the rest of
    the way, earning their points as they go. If nobody gets in the way, you
    end up with the score you spent, plus whatever the stretch circuit is
-   worth beyond its tiles. A circuit
+   worth beyond its tiles. The plan goes by the board as it is: a circuit
+   that would run through a tile someone else's line is on can't be
+   completed, so it is never bought. A circuit
    that is cut on the way is lost like any line; one that closes round a
    rival's lines captures them as usual. Whatever the budget can't buy is
    lost (`regrowOnRule`; off, a new rule starts from nothing). Once you hold a captured pattern, the rule

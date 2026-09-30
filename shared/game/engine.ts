@@ -272,7 +272,9 @@ export class Engine {
     const table = chordTableFor(this.field, rule);
     const tiles = new Set<number>();
     for (const path of p.paths) for (const s of path.steps) tiles.add(s.tile);
-    const plan = this.knobs.regrowOnRule && tiles.size > 0 ? planRegrow(this.field, table, tiles, p.score, this.knobs) : null;
+    // A strand through a tile an opponent's line is on can't close: the plan stops there.
+    const blocked = (tile: number): boolean => [...(this.occupancy.get(tile) ?? [])].some((q) => q.owner !== id);
+    const plan = this.knobs.regrowOnRule && tiles.size > 0 ? planRegrow(this.field, table, tiles, p.score, this.knobs, blocked) : null;
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
     p.rule = rule;
     p.table = table;

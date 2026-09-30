@@ -238,33 +238,56 @@ describe('regrowOnRule', () => {
     expect(planRegrow(SPECTRE, table, tiles, 0, KNOBS).kept).toHaveLength(0);
   });
 
-  it('a circuit regrowing into a rival is cut like any line, and its price is lost', () => {
+  /** Ann's hex territory, a circuit of the new rule that restarts as one piece and must grow out, and a tile on it she never held. */
+  function lonePiece() {
     const { e } = territory(HEX, 1);
     const a = e.players.get('a')!;
     const rule = nthRule('hex', 1);
     const table = chordTableFor(HEX, rule);
     const tiles = heldTiles(e, 'a');
     const plan = planRegrow(HEX, table, tiles, a.score, KNOBS);
-    // A circuit that starts again as one piece and has to grow out of Ann's
-    // tiles to close. (With several, the others would regrow through the gap
-    // a collision leaves and close it anyway.)
+    // One piece: with several, the others would regrow through the gap a
+    // collision leaves and close it anyway.
     const runs = (q: (typeof plan.kept)[number]): number =>
       q.steps.filter((s, i) => tiles.has(s.tile) && !tiles.has(q.steps[(i + q.steps.length - 1) % q.steps.length].tile)).length;
-    const target = plan.kept.find((q) => !q.region && runs(q) === 1 && q.steps.some((s) => !tiles.has(s.tile)));
+    const target = plan.kept.find((q) => !q.region && runs(q) === 1 && q.steps.some((s) => !tiles.has(s.tile)))!;
     expect(target).toBeDefined();
-    // Bea's line sits on a tile of it Ann never held, on its very chord.
-    e.addPlayer('b', 'Bea', rule);
-    const out = target!.steps.find((s) => !tiles.has(s.tile) && e.pathsOn(s.tile).length === 0)!;
+    const out = target.steps.find((s) => !tiles.has(s.tile) && e.pathsOn(s.tile).length === 0)!;
     const mid = { x: (out.a.x + out.b.x) / 2, y: (out.a.y + out.b.y) / 2 };
+    e.addPlayer('b', 'Bea', rule);
+    return { e, a, rule, table, tiles, plan, target, out, mid };
+  }
+
+  it('an opponent already on a circuit stops the plan there: it is not bought', () => {
+    const { e, a, rule, table, tiles, plan, target, out, mid } = lonePiece();
+    // Bea's line sits on a tile of it before Ann switches.
     expect(e.tap('b', out.tile, mid).result.ok).toBe(true);
+    const blocked = (t: number) => e.pathsOn(t).some((q) => q.owner === 'b');
+    const now = planRegrow(HEX, table, tiles, a.score, KNOBS, blocked);
+    const key = (q: { seeds: readonly number[] }) => q.seeds[0];
+    expect([...now.kept, ...now.skipped, ...(now.stretch ? [now.stretch] : [])].map(key)).not.toContain(key(target));
+    // Every other circuit is still found; the budget it would have cost goes elsewhere or is lost.
+    expect(now.kept.length + now.skipped.length + (now.stretch ? 1 : 0)).toBe(plan.kept.length + plan.skipped.length + (plan.stretch ? 1 : 0) - 1);
     e.setRule('a', rule);
+    settle(e, 'a');
+    const chord = (s: { tile: number; chord: number }) => s.tile * 64 + s.chord;
+    const lost = new Set(target.steps.map(chord));
+    expect(a.paths.some((q) => q.steps.some((s) => lost.has(chord(s))))).toBe(false);
+    expect(a.score).toBe(now.outcome);
+  });
+
+  it('a circuit an opponent gets in the way of while it regrows is cut like any line, and its price is lost', () => {
+    const { e, a, rule, plan, target, out, mid } = lonePiece();
+    e.setRule('a', rule);
+    // The switch is planned; Bea's line lands on its path straight after.
+    expect(e.tap('b', out.tile, mid).result.ok).toBe(true);
     const { ev } = settle(e, 'a');
     // They meet: whoever hits, both lines go (mutual cut).
     expect(ev.some((x) => x.t === 'wipe' && x.owner === 'a' && x.by !== undefined)).toBe(true);
     const closed = a.paths.filter((q) => q.status === 'closed');
     expect(closed.some((q) => q.steps.some((s) => s.tile === out.tile))).toBe(false);
-    expect(closed.length).toBe(plan.kept.length - 1);
-    expect(a.score).toBe(plan.outcome - target!.price);
+    expect(closed.length).toBe(plan.kept.length + (plan.stretch ? 1 : 0) - 1);
+    expect(a.score).toBe(plan.outcome - target.price);
     expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
   });
 

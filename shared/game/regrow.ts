@@ -17,13 +17,18 @@
  * gets cut on the way is lost like any other line; one that closes round a
  * rival's lines captures them as usual — a bonus the price doesn't include.
  *
- * Pure: a function of the field, the new rule's table, the tiles and budget.
+ * Planned against the board as it stands: a strand that runs through a tile
+ * an opponent's line is on (`blocked`) can't be completed, so it is no
+ * circuit — the walk stops there, and it is neither bought nor stretched to.
+ *
+ * Pure: a function of the field, the new rule's table, the tiles, the budget
+ * and which tiles are blocked.
  */
 
 import type { Pt } from '../tiles';
 import { boundaryRegion, onFieldBoundary, polygonArea, type Field } from './field';
 import type { Knobs } from './knobs';
-import { tileChords, walkStrand, type ChordTable, type WalkStep } from './strand';
+import { startStep, stepForward, tileChords, type ChordTable, type WalkStep } from './strand';
 
 /** A circuit the new rule would draw through tiles you hold. */
 export interface RegrowCircuit {
@@ -68,7 +73,14 @@ export function circuitBonus(knobs: Knobs, length: number, area: number, combo: 
 /** Total chord steps the plan may walk, whatever the territory (a guard, far above real use). */
 const WALK_CAP = 400_000;
 
-export function planRegrow(field: Field, table: ChordTable, tiles: ReadonlySet<number>, budget: number, knobs: Knobs): RegrowPlan {
+export function planRegrow(
+  field: Field,
+  table: ChordTable,
+  tiles: ReadonlySet<number>,
+  budget: number,
+  knobs: Knobs,
+  blocked: (tile: number) => boolean = () => false,
+): RegrowPlan {
   const key = (t: number, c: number): number => t * 64 + c;
   // Every strand is walked whole, however long — the stretch may be the
   // biggest circuit there is — but all of them together stay under WALK_CAP.
@@ -80,7 +92,7 @@ export function planRegrow(field: Field, table: ChordTable, tiles: ReadonlySet<n
     const chords = tileChords(field, table, tile);
     for (let c = 0; c < chords.length; c++) {
       if (seen.has(key(tile, c)) || walked >= WALK_CAP) continue;
-      const circuit = walkCircuit(field, table, tile, c, WALK_CAP - walked, knobs);
+      const circuit = walkCircuit(field, table, tile, c, WALK_CAP - walked, knobs, blocked);
       walked += circuit.walked.length;
       for (const s of circuit.walked) seen.add(key(s.tile, s.chord));
       if (!circuit.found) continue;
@@ -128,14 +140,16 @@ function walkCircuit(
   c: number,
   limit: number,
   knobs: Knobs,
+  blocked: (tile: number) => boolean,
 ): { walked: readonly WalkStep[]; found?: Omit<RegrowCircuit, 'seeds'> } {
-  const fwd = walkStrand(field, table, tile, c, 1, limit);
+  const fwd = walk(field, table, tile, c, 1, limit, blocked);
+  if (fwd.stoppedAt === 'blocked') return { walked: fwd.steps };
   if (fwd.closed) {
     const steps = fwd.steps;
     const area = polygonArea(steps.map((s) => s.a)) / field.tileArea;
     return { walked: steps, found: priced(knobs, steps, area) };
   }
-  const back = walkStrand(field, table, tile, c, 0, limit);
+  const back = walk(field, table, tile, c, 0, limit, blocked);
   const walked = [...fwd.steps, ...back.steps.slice(1)];
   if (fwd.stoppedAt !== 'dead' || back.stoppedAt !== 'dead') return { walked };
   // Both ways dead: a claim when both ends are on the field's edge.
@@ -154,6 +168,43 @@ function walkCircuit(
   if (!region) return { walked };
   const area = polygonArea(region) / field.tileArea;
   return { walked, found: { ...priced(knobs, steps, area), region } };
+}
+
+interface Walk {
+  readonly steps: readonly WalkStep[];
+  readonly closed: boolean;
+  readonly stoppedAt: 'closed' | 'dead' | 'junction' | 'limit' | 'blocked';
+}
+
+/**
+ * `walkStrand`, stopping at the first tile that is `blocked` (the start
+ * included): as far as the plan goes, a strand ends where an opponent is.
+ */
+function walk(
+  field: Field,
+  table: ChordTable,
+  i: number,
+  c: number,
+  exitEnd: 0 | 1,
+  limit: number,
+  blocked: (tile: number) => boolean,
+): Walk {
+  const steps: WalkStep[] = [startStep(field, table, i, c, exitEnd)];
+  if (blocked(i)) return { steps, closed: false, stoppedAt: 'blocked' };
+  const seen = new Set<number>([i * 64 + c]);
+  for (;;) {
+    if (steps.length >= limit) return { steps, closed: false, stoppedAt: 'limit' };
+    const out = stepForward(field, table, steps[steps.length - 1]);
+    if (out.kind === 'dead') return { steps, closed: false, stoppedAt: 'dead' };
+    if (out.kind === 'junction') return { steps, closed: false, stoppedAt: 'junction' };
+    const s = out.step;
+    if (s.tile === i && s.chord === c) return { steps, closed: true, stoppedAt: 'closed' };
+    if (blocked(s.tile)) return { steps, closed: false, stoppedAt: 'blocked' };
+    const k = s.tile * 64 + s.chord;
+    if (seen.has(k)) return { steps, closed: false, stoppedAt: 'dead' };
+    seen.add(k);
+    steps.push(s);
+  }
 }
 
 function priced(knobs: Knobs, steps: readonly WalkStep[], area: number): Omit<RegrowCircuit, 'seeds' | 'region'> {
