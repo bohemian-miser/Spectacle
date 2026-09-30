@@ -1,9 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { Store } from '../client/src/store';
+import { flow, motesPerTile, Store } from '../client/src/store';
 import { Engine } from '../shared/game/engine';
 import { buildField, tileCenter } from '../shared/game/field';
 import { DEFAULT_KNOBS, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
+import { planRegrow } from '../shared/game/regrow';
 import { mulberry32 } from '../shared/game/rng';
 import { defaultRule, randomCleanRule } from '../shared/game/rule';
 import { chordTableFor, tileChords } from '../shared/game/strand';
@@ -32,34 +33,68 @@ function setup(knobs: Knobs) {
 const key = (p: { x: number; y: number }) => `${p.x.toFixed(4)},${p.y.toFixed(4)}`;
 
 describe('a rule change coalesces', () => {
-  it('sends a mote from every old tile to the nearest tile the new lines start on', () => {
+  it('sends every old tile’s mote to the new tiles in proportion to the budget each takes in', () => {
     const knobs: Knobs = { ...DEFAULT_KNOBS, maxHeads: 0 };
     const { e, store } = setup(knobs);
-    const old = new Set(e.players.get('a')!.paths.flatMap((q) => q.steps.map((s) => s.tile)));
+    const a = e.players.get('a')!;
+    const old = new Set(a.paths.flatMap((q) => q.steps.map((s) => s.tile)));
+    const budget = a.score;
+    const rule = randomCleanRule('hex', mulberry32(11));
+    const plan = planRegrow(HEX, chordTableFor(HEX, rule), old, budget, knobs);
     expect(store.coalesce).toHaveLength(0);
-    const ev = e.setRule('a', randomCleanRule('hex', mulberry32(11)));
+    const ev = e.setRule('a', rule);
     store.handle({ t: 'events', ev });
-    const seeds = new Set(ev.flatMap((x) => (x.t === 'step' ? [x.step.tile] : [])));
-    expect(seeds.size).toBeGreaterThan(0);
+    const seeds = [...new Set(ev.flatMap((x) => (x.t === 'step' ? [x.step.tile] : [])))];
+    expect(seeds.length).toBeGreaterThan(1);
+    // The server's shares: what each bought circuit costs, over its held tiles, as a fraction of the budget.
+    const rev = ev.find((x) => x.t === 'rule');
+    if (rev?.t !== 'rule' || !rev.absorb) throw new Error('no shares');
+    const share = new Map<number, number>();
+    for (let k = 0; k < rev.absorb.length; k += 2) share.set(rev.absorb[k], rev.absorb[k + 1]);
+    const bought = [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])];
+    const total = [...share.values()].reduce((x, y) => x + y, 0);
+    expect(total * budget).toBeCloseTo(bought.reduce((n, q) => n + q.price, 0), 0);
+
     expect(store.coalesce).toHaveLength(1);
     const c = store.coalesce[0];
-    expect(c).toMatchObject({ owner: 'a', mine: true, color: e.players.get('a')!.color });
+    expect(c).toMatchObject({ owner: 'a', mine: true, color: a.color });
     // One mote per old tile, from its centre.
     expect(new Set(c.from.map(key))).toEqual(new Set([...old].map((t) => key(tileCenter(HEX, t)))));
-    const targets = [...seeds].map((t) => tileCenter(HEX, t));
-    c.from.forEach((a, k) => {
-      const b = c.to[k]!;
-      // Always to a tile the new lines start on — itself, when it survives — and the nearest one.
-      expect(targets.map(key)).toContain(key(b));
-      const d = (q: { x: number; y: number }) => (q.x - a.x) ** 2 + (q.y - a.y) ** 2;
-      expect(d(b)).toBeCloseTo(Math.min(...targets.map(d)), 9);
-    });
-    // Tiles that carry on stay put.
+    // Each new tile takes exactly its share of them; what the budget couldn't spend goes nowhere.
+    const cap = motesPerTile(seeds.map((t) => share.get(t) ?? 0), c.from.length);
+    const got = new Map<string, number>();
+    for (const q of c.to) if (q) got.set(key(q), (got.get(key(q)) ?? 0) + 1);
+    seeds.forEach((t, j) => expect(got.get(key(tileCenter(HEX, t))) ?? 0, `tile ${t}`).toBe(cap[j]));
+    expect(c.to.filter((q) => q === null).length).toBe(c.from.length - Math.round(c.from.length * Math.min(1, total)));
+    // A tile that carries on keeps its own mote.
     for (const t of seeds) {
       const k = c.from.findIndex((q) => key(q) === key(tileCenter(HEX, t)));
-      expect(k).toBeGreaterThanOrEqual(0);
       expect(key(c.to[k]!)).toBe(key(c.from[k]));
     }
+  });
+
+  it('motesPerTile splits in proportion, rounds to whole motes, and drops what was lost', () => {
+    expect(motesPerTile([0.5, 0.25, 0.25], 8)).toEqual([4, 2, 2]);
+    // Only 60% bought: 6 of 10 motes land, 3:1:2.
+    expect(motesPerTile([0.3, 0.1, 0.2], 10)).toEqual([3, 1, 2]);
+    // A stretch takes the budget past 1: every mote lands.
+    expect(motesPerTile([1.5, 0.5], 4)).toEqual([3, 1]);
+    const r = motesPerTile([1 / 3, 1 / 3, 1 / 3], 10);
+    expect(r.reduce((x, y) => x + y, 0)).toBe(10);
+    expect(Math.max(...r) - Math.min(...r)).toBeLessThanOrEqual(1);
+    expect(motesPerTile([], 5)).toEqual([]);
+  });
+
+  it('flow fills each target to its room, nearest pairs first', () => {
+    const from = [0, 1, 2, 3, 10, 11].map((x) => ({ x, y: 0 }));
+    const to = [{ x: 0, y: 0 }, { x: 11, y: 0 }];
+    // Room for 4 at the left and 1 at the right: 0–3 fill the left, 11 takes the right,
+    // and 10 finds both full — its energy is lost.
+    const out = flow(from, to, [4, 1]);
+    expect(out.filter((q) => q?.x === 0)).toHaveLength(4);
+    expect(out.filter((q) => q?.x === 11)).toHaveLength(1);
+    expect(out[5]).toEqual({ x: 11, y: 0 });
+    expect(out.filter((q) => q === null)).toHaveLength(1);
   });
 
   it('with nothing regrowing, the motes fade where they are', () => {

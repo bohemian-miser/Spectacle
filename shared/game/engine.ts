@@ -304,7 +304,19 @@ export class Engine {
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     this.scoreDirty.delete(id);
-    ev.push({ t: 'rule', id, rule, score: p.score, combo: p.combo });
+    // Where the budget goes: each bought circuit's price, shared by the held
+    // tiles it starts again on — the switch animation sends the old tiles'
+    // motes there in proportion.
+    const absorb = new Map<number, number>();
+    for (const q of plan ? [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])] : []) {
+      const at = new Set(q.seeds.map((k) => Math.floor(k / 64)));
+      for (const t of at) absorb.set(t, (absorb.get(t) ?? 0) + q.price / at.size);
+    }
+    // Sent as fractions of the budget: they add up to what it bought (under 1
+    // when some was lost; past it with a stretch).
+    const budget = plan?.budget ?? 0;
+    const shares = budget > 0 ? [...absorb].flatMap(([t, w]) => [t, Number((w / budget).toPrecision(4))]) : [];
+    ev.push(shares.length > 0 ? { t: 'rule', id, rule, score: p.score, combo: p.combo, absorb: shares } : { t: 'rule', id, rule, score: p.score, combo: p.combo });
     if (plan && (plan.kept.length > 0 || plan.stretch)) {
       const only = new Set([...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => q.seeds));
       const strain: Strain = { rule, table, pattern: 0, wave: this.nextWave++ };

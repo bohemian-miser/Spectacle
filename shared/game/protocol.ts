@@ -109,7 +109,19 @@ export type GameEvent =
   | { readonly t: 'join'; readonly player: PlayerPublic }
   | { readonly t: 'leave'; readonly id: string }
   /** A new rule is a restart: paths gone, captured patterns gone, own pattern active. */
-  | { readonly t: 'rule'; readonly id: string; readonly rule: PlayerRule; readonly score: number; readonly combo: number }
+  | {
+      readonly t: 'rule';
+      readonly id: string;
+      readonly rule: PlayerRule;
+      readonly score: number;
+      readonly combo: number;
+      /**
+       * A regrow's energy, for the switch animation: `[tile, share, …]` — each
+       * held tile the new rule starts on, and the fraction of the budget it
+       * takes in (what its circuits cost, split over their held tiles).
+       */
+      readonly absorb?: readonly number[];
+    }
   /**
    * A path grew by one step (the first step creates it and says so with
    * `first`; it carries `pattern` when that is not 0, and `spawned` when a
