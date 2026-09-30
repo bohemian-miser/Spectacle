@@ -578,7 +578,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   otherwise it moves to their step nearest the screen's centre whose pill
   doesn't cover another's (so a crowded player may go unlabelled).
 - **Resume tokens are single use.** Every `welcome` carries a fresh token and
-  the old one dies (only its SHA-256 is kept server-side). A resume can take
+  the old one dies (only its SHA-256 is kept server-side) — once the client
+  sends `ack` for that welcome, not before (`priorHashes`): a welcome lost to
+  a second drop left the client holding only the dead token, and it came
+  back as a new player with the same name beside its own ghost. A resume can take
   over a player whose old socket is still open — a refresh usually beats the
   old page's close — so `tryResume` renames the old client before closing it,
   or its close handler would unhook the new one. The ticket lives in

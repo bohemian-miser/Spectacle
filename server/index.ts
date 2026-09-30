@@ -474,12 +474,19 @@ let nextClient = 1;
  *   in constant time.
  * - Single use: every successful resume issues a new token and the old one
  *   dies, so a copied or leaked ticket stops working once the owner is back.
+ *   It dies once the client `ack`s the new one, not before: the welcome
+ *   carrying it can be lost (the connection drops again straight after the
+ *   resume, as it does on a flaky phone), and then all the client holds is
+ *   the old token — killing it at once turned that player into a new one
+ *   with the same name, next to their own ghost.
  * - A resume may take over a player whose old socket is still open — a
  *   refresh often reconnects before the server has seen the old page go. The
  *   token proves ownership; the old socket is detached and closed.
  */
 const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 300_000);
 const tokenHashes = new Map<string, Buffer>(); // player id → sha256(token)
+/** Player id → sha256 of the token it resumed on, still good until the client `ack`s the new one. */
+const priorHashes = new Map<string, Buffer>();
 const detached = new Map<string, ReturnType<typeof setTimeout>>(); // player id → expiry
 
 function hashToken(token: string): Buffer {
@@ -493,14 +500,21 @@ function issueToken(id: string): string {
   return token;
 }
 
+/** Forget every token of `id`. */
+function dropTokens(id: string): void {
+  tokenHashes.delete(id);
+  priorHashes.delete(id);
+}
+
 function detach(id: string): void {
   const room = playerRoom.get(id);
   if (!room || !room.engine.players.has(id)) return;
+  clearTimeout(detached.get(id));
   detached.set(
     id,
     setTimeout(() => {
       detached.delete(id);
-      tokenHashes.delete(id);
+      dropTokens(id);
       playerRoom.delete(id);
       note('info', `${room.engine.players.get(id)?.name ?? id} timed out of ${room.id}`);
       room.pending.push(...room.engine.removePlayer(id));
@@ -513,8 +527,14 @@ function tryResume(client: Client, resume: unknown): Room | null {
   const r = resume as { id?: unknown; token?: unknown };
   if (typeof r.id !== 'string' || typeof r.token !== 'string' || r.token.length > 128) return null;
   const want = tokenHashes.get(r.id);
+  const prior = priorHashes.get(r.id);
   const room = playerRoom.get(r.id);
-  if (!want || !room || !room.engine.players.has(r.id) || !timingSafeEqual(want, hashToken(r.token))) return null;
+  if (!want || !room || !room.engine.players.has(r.id)) return null;
+  const got = hashToken(r.token);
+  if (!timingSafeEqual(want, got) && !(prior && timingSafeEqual(prior, got))) return null;
+  // The welcome about to go out rotates the token; this one stays good until
+  // the client acks that it has the new one.
+  priorHashes.set(r.id, got);
   const expiry = detached.get(r.id);
   if (expiry !== undefined) {
     clearTimeout(expiry);
@@ -679,12 +699,16 @@ wss.on('connection', (ws) => {
         client.joined = false;
         client.room = null;
         room.clients.delete(client.id);
-        tokenHashes.delete(client.id);
+        dropTokens(client.id);
         playerRoom.delete(client.id);
         room.pending.push(...room.engine.removePlayer(client.id));
         client.id = `p${nextClient++}`;
         return;
       }
+      case 'ack':
+        // The client has this welcome's token: the one it resumed on can go.
+        if (client.joined) priorHashes.delete(client.id);
+        return;
       case 'ping':
         send(ws, { t: 'pong', n: msg.n });
         return;

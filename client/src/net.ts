@@ -34,7 +34,12 @@ export class Connection implements GameConnection {
     };
     ws.onmessage = (e) => {
       try {
-        this.store.handle(JSON.parse(String(e.data)) as ServerMessage);
+        const msg = JSON.parse(String(e.data)) as ServerMessage;
+        this.store.handle(msg);
+        // The token this welcome carries is ours now: the server may let the
+        // one we resumed on go (until then it keeps both, in case this
+        // welcome was lost on the way).
+        if (msg.t === 'welcome') this.send({ t: 'ack' });
       } catch (err) {
         console.error('bad message', err);
       }

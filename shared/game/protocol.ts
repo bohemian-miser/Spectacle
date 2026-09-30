@@ -101,6 +101,8 @@ export type ClientMessage =
   | { readonly t: 'swap'; readonly index: number; readonly rule: PlayerRule }
   /** Leave the arena for good: your lines and points go now, not after the resume window. */
   | { readonly t: 'leave' }
+  /** The `welcome` (and its resume token) arrived: the token resumed on may die now. */
+  | { readonly t: 'ack' }
   | { readonly t: 'ping'; readonly n: number };
 
 // --- server → client ---------------------------------------------------------
