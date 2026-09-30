@@ -71,7 +71,8 @@ export function createCanvasTiles(canvas: HTMLCanvasElement, field: Field, fills
       tints.clear();
     },
     setTint(tile, r, g, b, a) {
-      tints.set(tile, `rgba(${r},${g},${b},${(a / 255).toFixed(3)})`);
+      if (a <= 0) tints.delete(tile);
+      else tints.set(tile, `rgba(${r},${g},${b},${(a / 255).toFixed(3)})`);
     },
     draw(cam, w, h, dpr) {
       const key = `${cam.x.toFixed(3)}|${cam.y.toFixed(3)}|${cam.scale.toFixed(4)}|${w}x${h}`;

@@ -19,7 +19,7 @@ export interface TileLayer {
   /** Re-colour for another scheme; the renderer owns the field, so it hands over the fills. */
   setTheme(board: BoardTheme, fills: readonly Rgb01[]): void;
   clearTints(): void;
-  /** 0..255 channels; `a` is the tint strength. */
+  /** 0..255 channels; `a` is the tint strength (0 takes the tint off). */
   setTint(tile: number, r: number, g: number, b: number, a: number): void;
   /** Show or hide the direction arrows (the plain board hides them). */
   setArrows(on: boolean): void;

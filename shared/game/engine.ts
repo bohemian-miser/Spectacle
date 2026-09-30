@@ -63,7 +63,7 @@
 
 import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
-import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, type Field } from './field';
+import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesInBox, type Box, type Field } from './field';
 import { headLimit, stepIntervalMs, type Knobs } from './knobs';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
@@ -155,6 +155,11 @@ export interface Player {
   pieceCursor: number;
   /** Flip pieces whose head may have nothing new to lay: `settle` checks them. */
   readonly unsettled: Path[];
+  /**
+   * Lines a flip may be burning along (`Path.burn`): every line one was set
+   * on, some since gone out or taken. `tick` walks these, not every line.
+   */
+  readonly burning: Set<Path>;
   /** `patterns[0]` is `rule`/`table`; captured patterns follow. */
   readonly patterns: Pattern[];
   /** The pattern a tap draws with. */
@@ -199,6 +204,11 @@ export class Engine {
   private readonly pathsById = new Map<number, Path>();
   /** tile → paths that have a step on it. */
   private readonly occupancy = new Map<number, Set<Path>>();
+  /** `shapeOf`'s answers. */
+  private readonly shapes = new WeakMap<
+    Path,
+    { n: number; first?: WalkStep; last?: WalkStep; region?: Pt[]; poly: readonly Pt[]; box: Box }
+  >();
   private nextPathId = 1;
   private nextWave = 1;
   /** Engine clock: the sum of every `tick` dt, ms. */
@@ -234,6 +244,7 @@ export class Engine {
       pieceProgress: 0,
       pieceCursor: 0,
       unsettled: [],
+      burning: new Set(),
       patterns: [{ rule, table, color }],
       active: 0,
       converted: [],
@@ -573,9 +584,13 @@ export class Engine {
       // run it splits into, which inherits what is left of its progress) takes
       // as many steps as its progress allows.
       const step = dtMs / stepIntervalMs(this.knobs, p.score, this.field.count);
-      for (const path of p.paths) if (path.burn) path.burn.progress += step;
+      for (const path of p.burning) {
+        if (path.burn && path.owner === p.id && this.pathsById.has(path.id)) path.burn.progress += step;
+        else p.burning.delete(path);
+      }
       for (let budget = 256; budget > 0; budget--) {
-        const ready = p.paths.filter((q) => q.burn && q.burn.progress >= 1);
+        const ready: Path[] = [];
+        for (const q of p.burning) if (q.burn && q.burn.progress >= 1 && q.owner === p.id) ready.push(q);
         if (ready.length === 0) break;
         for (const path of ready) if (path.burn && this.pathsById.has(path.id)) this.burnOn(p, path, ev);
       }
@@ -1052,6 +1067,7 @@ export class Engine {
       const start = loop || r.start > 0 || !!was?.start;
       const end = loop || r.end < n || !!was?.end;
       q.burn = { strain: carry, start, end, progress: was?.progress ?? 0 };
+      owner?.burning.add(q);
       if (q.spawned && status === 'growing') owner?.unsettled.push(q);
       out.push(q);
       wire.push({ id: q.id, start: r.start, end: r.end, status });
@@ -1093,7 +1109,9 @@ export class Engine {
       progress: was?.progress ?? 0,
     };
     ev.push({ t: 'split', path: path.id, runs: [{ id: path.id, start: run.start, end: run.end, status }] });
-    if (path.spawned && growing) this.players.get(path.owner)?.unsettled.push(path);
+    const owner = this.players.get(path.owner);
+    owner?.burning.add(path);
+    if (path.spawned && growing) owner?.unsettled.push(path);
     return path;
   }
 
@@ -1336,9 +1354,13 @@ export class Engine {
     }
     const inside = (q: Pt): boolean =>
       q.x >= minX && q.x <= maxX && q.y >= minY && q.y <= maxY && pointInPolygon(q, polygon as Pt[]);
+    // Most circuits are small (a flip's pieces close them by the dozen) and a
+    // busy board holds tens of thousands of lines: look up the lines near the
+    // circuit rather than testing every one on the board.
+    const near = this.linesInBox({ minX, minY, maxX, maxY }, p.id);
     for (const rival of [...this.players.values()]) {
       if (rival.id === p.id) continue;
-      for (const other of [...rival.paths]) {
+      for (const other of near ? (near.get(rival.id) ?? []) : [...rival.paths]) {
         // A conversion's pieces can close circuits of their own and take lines mid-loop.
         if (other.steps.length === 0 || other.owner !== rival.id || !this.pathsById.has(other.id)) continue;
         const enclosed = other.steps.every((s) => inside({ x: (s.a.x + s.b.x) / 2, y: (s.a.y + s.b.y) / 2 }));
@@ -1362,6 +1384,30 @@ export class Engine {
         if (k.takeEnclosed && index >= 0) this.takePath(other, rival, p, index, ev);
       }
     }
+  }
+
+  /**
+   * Every line not `not`'s with a step on a tile touching `box`, by owner, in
+   * the order they were made — or null when the box covers so much of the
+   * board that testing every line is cheaper than walking its tiles. A line
+   * wholly inside the box has every step there, so none is missed.
+   */
+  private linesInBox(box: Box, not: string): Map<string, Path[]> | null {
+    const g = this.field.grid;
+    const cells = (Math.floor((box.maxX - box.minX) / g.cell) + 3) * (Math.floor((box.maxY - box.minY) / g.cell) + 3);
+    if (cells * (this.field.count / (g.cols * g.rows)) > this.pathsById.size) return null;
+    const seen = new Set<Path>();
+    for (const t of tilesInBox(this.field, box)) {
+      const occ = this.occupancy.get(t);
+      if (occ) for (const q of occ) if (q.owner !== not) seen.add(q);
+    }
+    const out = new Map<string, Path[]>();
+    for (const q of [...seen].sort((x, y) => x.id - y.id)) {
+      const list = out.get(q.owner);
+      if (list) list.push(q);
+      else out.set(q.owner, [q]);
+    }
+    return out;
   }
 
   /**
@@ -1430,21 +1476,39 @@ export class Engine {
       if (rival.id === id) continue;
       for (const path of rival.paths) {
         if (path.status !== 'closed') continue;
-        const poly = pathPolygon(path);
+        const { poly, box } = this.shapeOf(path);
         if (poly.length < 3) continue;
         // Cheap bounding-box reject before the polygon test.
-        let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-        for (const q of poly) {
-          if (q.x < minX) minX = q.x;
-          if (q.x > maxX) maxX = q.x;
-          if (q.y < minY) minY = q.y;
-          if (q.y > maxY) maxY = q.y;
-        }
-        if (p.x < minX || p.x > maxX || p.y < minY || p.y > maxY) continue;
+        if (p.x < box.minX || p.x > box.maxX || p.y < box.minY || p.y > box.maxY) continue;
         if (pointInPolygon(p, poly)) return true;
       }
     }
     return false;
+  }
+
+  /**
+   * `path`'s `pathPolygon` and its bounding box, kept while the line's ends,
+   * length and region stay as they were (a closed line's steps change only
+   * by leaving it open): a tap tests every rival circuit, and on a busy board
+   * building them afresh was most of a tap's time.
+   */
+  private shapeOf(path: Path): { poly: readonly Pt[]; box: Box } {
+    const { steps, region } = path;
+    const first = steps[0];
+    const last = steps[steps.length - 1];
+    const hit = this.shapes.get(path);
+    if (hit && hit.n === steps.length && hit.first === first && hit.last === last && hit.region === region) return hit;
+    const poly = pathPolygon(path);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const q of poly) {
+      if (q.x < minX) minX = q.x;
+      if (q.x > maxX) maxX = q.x;
+      if (q.y < minY) minY = q.y;
+      if (q.y > maxY) maxY = q.y;
+    }
+    const shape = { n: steps.length, first, last, region, poly, box: { minX, minY, maxX, maxY } };
+    this.shapes.set(path, shape);
+    return shape;
   }
 
   /**

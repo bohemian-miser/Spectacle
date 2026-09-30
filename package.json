@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "bench:field": "tsx scripts/bench-field.ts",
     "bench:lag": "tsx scripts/lag-bench.ts",
+    "bench:stress": "tsx scripts/stress-bench.ts",
     "servers": "tsx scripts/servers.ts"
   },
   "dependencies": {
