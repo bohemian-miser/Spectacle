@@ -369,7 +369,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the streak. So an untouched board ends at exactly `plan.outcome`: at most
   the old score, plus the stretch's price beyond its held tiles
   (`tests/regrow.test.ts`). A regrown circuit also captures as normal. A cut piece's circuit can still close:
-  the other pieces of it grow through the gap. **Heads don't restart**:
+  the other pieces of it grow through the gap. **The head limit carries
+  over**: `setRule` clears `patterns` and `converted` but keeps the slots
+  they gave in `Player.keptHeads` (counted like captured patterns in
+  `headLimit`, so a later capture adds on top; `kept` on `PlayerPublic` and
+  the `rule` event for the client's `heads()`). **Heads don't restart**:
   as many heads as were growing at the switch (`headsInUse`, capped by the
   new `headLimit`) are given straight to the regrowth pieces with the most
   left to grow (`promote`: `spawned` off, a `promote` event, so they grow

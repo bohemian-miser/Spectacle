@@ -208,7 +208,8 @@ line and you both die.
    circuit or line is paid for once, however many of your tiles it runs
    through. In effect you only gain tiles from a new rule by giving up
    smaller circuits you could otherwise have kept. Your heads don't
-   restart: however many lines you had growing, that many of the regrowing
+   restart: you keep as many heads as you had, captured patterns or not
+   (and a capture on the new rule adds one more), and however many lines you had growing, that many of the regrowing
    pieces grow at your full speed; the rest share one head's worth. Tap a
    slow piece to put a free head on it, or grow a line into one — it takes
    the piece in and carries on past it. A circuit

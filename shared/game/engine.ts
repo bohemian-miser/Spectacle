@@ -175,6 +175,12 @@ export interface Player {
   active: number;
   /** Normal mode: the kinds (rules) of rival line converted so far — a head each, like a captured pattern. */
   readonly converted: PlayerRule[];
+  /**
+   * Head slots carried over from earlier rules: a new rule clears `patterns`
+   * and `converted`, but not the heads they gave (`setRule`). Counts like
+   * that many more captured patterns in `headLimit`.
+   */
+  keptHeads: number;
 }
 
 export type TapResult = { ok: true; path: number } | { ok: false; reason: string };
@@ -261,6 +267,7 @@ export class Engine {
       patterns: [{ rule, table, color }],
       active: 0,
       converted: [],
+      keptHeads: 0,
     };
     this.players.set(id, player);
     return [{ t: 'join', player: this.publicOf(player) }];
@@ -297,6 +304,8 @@ export class Engine {
     const plan = this.knobs.regrowOnRule && tiles.size > 0 ? planRegrow(this.field, table, tiles, p.score, this.knobs, blocked) : null;
     // The heads you had growing carry over to the regrowth (below).
     const heads = this.headsInUse(p);
+    // …and so does your head limit: the slots your patterns gave stay yours.
+    p.keptHeads = this.headSlots(p) - 1;
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
     p.rule = rule;
     p.table = table;
@@ -325,6 +334,7 @@ export class Engine {
       ? [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => [packStep(this.field, table, q.steps[0]), q.steps.length, q.closed ? (q.region ? 2 : 1) : 0])
       : [];
     const rev: { -readonly [K in keyof Extract<GameEvent, { t: 'rule' }>]: Extract<GameEvent, { t: 'rule' }>[K] } = { t: 'rule', id, rule, score: p.score, combo: p.combo };
+    if (p.keptHeads > 0) rev.kept = p.keptHeads;
     if (shares.length > 0) rev.absorb = shares;
     if (outline.length > 0) rev.outline = outline;
     ev.push(rev);
@@ -360,12 +370,20 @@ export class Engine {
       patterns: p.patterns.map(patternPublic),
       active: p.active,
     };
-    return p.converted.length > 0 ? { ...pub, converted: p.converted.length } : pub;
+    const out: { -readonly [K in keyof PlayerPublic]: PlayerPublic[K] } = pub;
+    if (p.converted.length > 0) out.converted = p.converted.length;
+    if (p.keptHeads > 0) out.kept = p.keptHeads;
+    return out;
   }
 
   /** How many lines `p` may have growing at once (0 = unlimited). */
   headLimit(p: Player): number {
-    return headLimit(this.knobs, p.patterns.length + p.converted.length);
+    return headLimit(this.knobs, this.headSlots(p));
+  }
+
+  /** What `headLimit` counts: patterns, converted kinds and slots kept from earlier rules. */
+  private headSlots(p: Player): number {
+    return p.patterns.length + p.converted.length + p.keptHeads;
   }
 
   /** Lines of `p`'s that are growing and take up a head (a flip's pieces don't). */
