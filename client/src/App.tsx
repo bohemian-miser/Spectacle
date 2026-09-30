@@ -5,7 +5,7 @@ import { Arena } from './Arena';
 import { Lobby } from './Lobby';
 import { initialSolo, LocalConnection, saveSoloBots, type SoloOptions } from './local';
 import { Connection, type GameConnection } from './net';
-import { answerTabs, clearSession, heldElsewhere, loadSession, saveSession } from './session';
+import { answerTabs, clearSession, forgetSession, heldElsewhere, loadSession, saveSession, touchSession } from './session';
 import { Store } from './store';
 import { useStore } from './useStore';
 import { cleanRoomName } from '../../shared/game/room-name';
@@ -85,8 +85,9 @@ export function App(): JSX.Element {
     joined.current = false;
     setStruggling(false);
     // A refresh lands here with the tab's saved session: go straight back in.
+    // So does a new tab soon after the last one closed (the shared copy).
     const saved = mode === 'online' ? loadSession() : null;
-    rejoin.current = saved ? { ...saved, mode: saved.mode ?? 'normal' } : null;
+    rejoin.current = saved ? { name: saved.name, rule: saved.rule, resume: saved.resume, room: saved.room, mode: saved.mode ?? 'normal' } : null;
     store.reset();
     setScreen(rejoin.current ? 'arena' : 'lobby');
     const connect = (): void => {
@@ -131,8 +132,9 @@ export function App(): JSX.Element {
         },
       );
     };
-    // A duplicated tab brings the original's ticket along: if that tab is
-    // still playing the player, start afresh here instead of taking it over.
+    // A duplicated tab brings the original's ticket along, and a new tab may
+    // have picked up the shared copy: if another tab is still playing the
+    // player, start afresh here instead of taking it over.
     if (saved) {
       void heldElsewhere(saved.resume.id).then((held) => {
         if (disposed) return;
@@ -154,7 +156,9 @@ export function App(): JSX.Element {
   }, [mode, solo, store, mode === 'solo' ? gameMode : null, epoch]);
 
   // Tell a duplicated tab when this one is playing the player its ticket names.
-  useEffect(() => answerTabs(() => (mode === 'online' && joined.current ? store.you : '')), [mode, store]);
+  // Also while reconnecting (no `store.you` yet): a new tab on the shared
+  // ticket would otherwise take the player over mid-reconnect.
+  useEffect(() => answerTabs(() => (mode !== 'online' ? '' : joined.current && store.you ? store.you : (rejoin.current?.resume?.id ?? ''))), [mode, store]);
 
   // Every welcome carries a fresh token (the server rotates it on resume):
   // keep the latest, for the next drop and the next refresh.
@@ -168,13 +172,28 @@ export function App(): JSX.Element {
     saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume, room: r.room });
   }, [mode, store.resume, store]);
 
+  // Keep the shared ticket's clock running while this tab plays its player,
+  // so a new tab opened soon after this one closes still picks it up.
+  useEffect(() => {
+    if (mode !== 'online') return;
+    const touch = (): void => {
+      if (joined.current && store.you) touchSession(store.you);
+    };
+    const timer = window.setInterval(touch, 30_000);
+    window.addEventListener('pagehide', touch);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('pagehide', touch);
+    };
+  }, [mode, store]);
+
   // A saved session from an arena that has since changed family (a redeploy)
   // can't rejoin on its rule, and no longer names a player here: start over.
   useEffect(() => {
     const r = rejoin.current;
     if (mode !== 'online' || joined.current === false || store.you || !r || !store.hello) return;
     if (r.rule.family === store.hello.field.family) return;
-    clearSession();
+    forgetSession();
     rejoin.current = null;
     joined.current = false;
     setScreen('lobby');
@@ -220,7 +239,7 @@ export function App(): JSX.Element {
   /** Leave the arena for the main screen: the player goes, and a fresh connection brings the lobby back. */
   const leave = (): void => {
     connRef.current?.send({ t: 'leave' });
-    clearSession();
+    forgetSession();
     rejoin.current = null;
     joined.current = false;
     setEpoch((n) => n + 1);
@@ -235,7 +254,7 @@ export function App(): JSX.Element {
   /** Give up on the online arena (it's full, or unreachable) and switch to solo, in this tab. */
   const leaveToSolo = (): void => {
     connRef.current?.send({ t: 'leave' });
-    clearSession();
+    forgetSession();
     rejoin.current = null;
     joined.current = false;
     setStruggling(false);
