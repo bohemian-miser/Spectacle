@@ -11,6 +11,7 @@ import type { Pt } from '../tiles';
 import type { FieldSpec } from './field';
 import type { GameMode, Knobs } from './knobs';
 import type { PlayerRule } from './rule';
+import type { PackedPaths } from './wire';
 
 export type PathStatus = 'growing' | 'stuck' | 'closed';
 
@@ -86,6 +87,8 @@ export type ClientMessage =
        * a new one of `mode` by that name. Matchmaking never sends anyone else in.
        */
       readonly room?: string;
+      /** This client reads `welcome.packed`; without it (older clients) the lines come as plain `paths`. */
+      readonly packed?: true;
     }
   | { readonly t: 'tap'; readonly tile: number; readonly x: number; readonly y: number }
   | { readonly t: 'rule'; readonly rule: PlayerRule }
@@ -201,7 +204,10 @@ export type ServerMessage =
       readonly field: FieldSpec;
       readonly knobs: Knobs;
       readonly players: readonly PlayerPublic[];
+      /** The lines, plain — or empty, when they come as `packed`. */
       readonly paths: readonly PathWire[];
+      /** The lines, packed (`wire.ts`): to a client that asked with `join.packed`. */
+      readonly packed?: PackedPaths;
       /** The room you were put in (online), e.g. "normal-2". */
       readonly room?: string;
     }

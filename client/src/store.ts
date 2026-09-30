@@ -6,6 +6,7 @@
 
 import { buildField, type Field } from '../../shared/game/field';
 import { headLimit, type Knobs } from '../../shared/game/knobs';
+import { unpackPaths } from '../../shared/game/wire';
 import type { Pt } from '../../shared/tiles';
 import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomSummary, ServerMessage } from '../../shared/game/protocol';
 
@@ -243,7 +244,7 @@ export class Store {
           this.field = buildField(msg.field);
         }
         for (const p of msg.players) this.players.set(p.id, clientPlayer(p));
-        for (const pw of msg.paths) {
+        for (const pw of msg.packed ? unpackPaths(this.field, msg.packed) : msg.paths) {
           const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps], pattern: pw.pattern ?? 0 };
           if (pw.region) path.region = pw.region;
           if (pw.spawned) path.spawned = true;

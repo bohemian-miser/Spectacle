@@ -129,6 +129,14 @@ for (let t = 1; t <= ticks; t++) {
     a = performance.now();
     const snap = JSON.stringify(e.snapshot());
     add(S.snapshot, performance.now() - a);
+    // The packed welcome (what current clients get): build, size, and what a
+    // joining client pays to parse and apply it.
+    a = performance.now();
+    const packed = JSON.stringify({ t: 'welcome', you: 'late', token: '', field: field.spec, knobs, ...e.packedSnapshot(), paths: [] });
+    const build = performance.now() - a;
+    a = performance.now();
+    new Store().handle(JSON.parse(packed));
+    const join = performance.now() - a;
     let paths = 0, steps = 0, heads = 0;
     for (const p of e.players.values()) for (const q of p.paths) {
       paths++; steps += q.steps.length; if (q.status === 'growing') heads++;
@@ -139,7 +147,8 @@ for (let t = 1; t <= ticks; t++) {
       `${(now / 1000).toFixed(0)}s paths ${paths} steps ${steps} growing ${heads} taps ok/refused ${ok}/${refused} score ${ids.map((id) => e.players.get(id)!.score).join('/')}\n` +
         `  avg/max ms: tick ${f(S.tick)} tap ${f(S.taps)} json ${f(S.json)} store ${f(S.store)} tints ${f(S.tints)} overlay ${f(S.overlay)}\n` +
         `  wire ${((S.bytes.sum / S.bytes.n) * (1000 / knobs.tickMs) / 1024).toFixed(0)} KB/s (${[...mix].sort((x, y) => y[1] - x[1]).slice(0, 4).map(([k, v]) => `${k} ${((100 * v) / all).toFixed(0)}%`).join(', ')})` +
-        ` | welcome ${(snap.length / 1024).toFixed(0)} KB in ${S.snapshot.max.toFixed(0)} ms`,
+        ` | welcome plain ${(snap.length / 1024).toFixed(0)} KB in ${S.snapshot.max.toFixed(0)} ms,` +
+        ` packed ${(packed.length / 1024).toFixed(0)} KB in ${build.toFixed(0)} ms (a joiner applies it in ${join.toFixed(0)} ms)`,
     );
     S = { ...S, tick: stat(), taps: stat(), json: stat(), store: stat(), tints: stat(), overlay: stat(), bytes: stat() };
     ok = refused = 0;

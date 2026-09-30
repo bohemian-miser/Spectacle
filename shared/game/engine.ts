@@ -68,6 +68,7 @@ import { headLimit, stepIntervalMs, type Knobs } from './knobs';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
+import { packPaths, type PackedPaths } from './wire';
 import {
   chordTableFor,
   type ChordEnd,
@@ -339,8 +340,20 @@ export class Engine {
   }
 
   snapshot(): { players: PlayerPublic[]; paths: PathWire[] } {
-    const players = [...this.players.values()].map((p) => this.publicOf(p));
-    const paths: PathWire[] = [];
+    return { players: this.publicPlayers(), paths: this.pathWires().map((q) => q.wire) };
+  }
+
+  /** `snapshot`, with the lines packed (`wire.ts`): what a welcome carries. */
+  packedSnapshot(): { players: PlayerPublic[]; packed: PackedPaths } {
+    return { players: this.publicPlayers(), packed: packPaths(this.field, this.pathWires()) };
+  }
+
+  private publicPlayers(): PlayerPublic[] {
+    return [...this.players.values()].map((p) => this.publicOf(p));
+  }
+
+  private pathWires(): { wire: PathWire; rule: PlayerRule; table: ChordTable }[] {
+    const out: { wire: PathWire; rule: PlayerRule; table: ChordTable }[] = [];
     for (const p of this.players.values()) {
       for (const path of p.paths) {
         const wire: { -readonly [K in keyof PathWire]: PathWire[K] } = { id: path.id, owner: path.owner, status: path.status, steps: path.steps };
@@ -348,10 +361,10 @@ export class Engine {
         if (path.pattern !== 0) wire.pattern = path.pattern;
         if (path.spawned) wire.spawned = true;
         if (path.back && path.status === 'growing') wire.back = true;
-        paths.push(wire);
+        out.push({ wire, rule: path.rule, table: path.table });
       }
     }
-    return { players, paths };
+    return out;
   }
 
   // --- taps ----------------------------------------------------------------
