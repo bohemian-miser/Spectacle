@@ -17,6 +17,7 @@ import { getSettings, type CircuitStyle, type Settings } from './settings';
 import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { Burst, ClientPath, ClientPlayer, Store } from './store';
+import type { PathStepWire } from '../../shared/game/protocol';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
@@ -74,6 +75,9 @@ const LABEL_MARGIN = 6;
  */
 const LINES_BUDGET = 3;
 
+/** A line's points closer than this (device px, x + y) to the last one drawn are skipped (see `trace`). */
+const TRACE_MIN_PX = 1;
+
 /** A cached overlay layer and what it was drawn for. */
 interface Layer {
   readonly canvas: HTMLCanvasElement | OffscreenCanvas;
@@ -104,7 +108,12 @@ export class Renderer {
   private frameHandle = 0;
   private lastFrameAt = 0;
   private lastGeometry = -1;
-  private lastPlayersVersion = -1;
+  private lastTintsVersion = -1;
+  private lastClosedVersion = -1;
+  /** Tiles whose lines changed since the last tint pass (the store fills it). */
+  private readonly touched: Set<number>;
+  /** Each washed tile's tint, from the last time the closed lines changed. */
+  private wash = new Map<number, [number, number, number, number]>();
   private lastTintAt = -Infinity;
   private board: BoardTheme = boardTheme();
   /** How circuits are coloured (see `settings.ts`). */
@@ -130,8 +139,12 @@ export class Renderer {
   private headSpots = new Map<string, number[]>();
   /** Line colours by the colour they come from (see `inkOf`). */
   private readonly inks = new Map<string, string>();
-  /** Tiles inside anyone else's closed circuit (rebuilt with the tints). */
-  private rivalInterior = new Set<number>();
+  /** Tiles inside anyone else's closed circuit, and how many such circuits (kept with the washes). */
+  private readonly rivalInterior = new Map<number, number>();
+  /** The closed lines the washes were last worked out for, as they were then. */
+  private readonly closedSeen = new Map<ClientPath, { owner: string; pattern: number; inside: readonly number[] }>();
+  /** Tile → the closed lines round it (the washes' layers). */
+  private readonly cover = new Map<number, ClientPath[]>();
   private readonly visible: number[] = [];
   /** Each player's name sits on one of their tiles; it stays put while that tile is on screen. */
   private readonly labelAnchors = new Map<string, LabelAnchor>();
@@ -145,6 +158,7 @@ export class Renderer {
     private readonly store: Store,
   ) {
     this.ctx = overlay.getContext('2d')!;
+    this.touched = store.watchTiles();
   }
 
   get layerKind(): 'webgl' | 'canvas2d' | 'none' {
@@ -294,6 +308,7 @@ export class Renderer {
 
   stop(): void {
     cancelAnimationFrame(this.frameHandle);
+    this.store.unwatchTiles(this.touched);
     this.tiles?.dispose();
     this.tiles = null;
   }
@@ -306,23 +321,26 @@ export class Renderer {
 
   /**
    * Push the claimed-tile tints into the tile layer when paths or players
-   * changed — at most every `TINT_MIN_MS`. The rebuild walks every claimed
-   * tile and every circuit's interior, so on a busy board it was the other
-   * half of a slow frame; the line itself is drawn every frame, so a tint a
-   * few frames late doesn't show.
+   * changed — at most every `TINT_MIN_MS`. Only the tiles the store says were
+   * touched are re-tinted: a busy board has over a hundred thousand claimed
+   * tiles, and walking them all every rebuild took a phone-killing ~150 ms.
+   * The circuit washes are worked out again only when the closed lines
+   * changed, and everything goes again when the players, theme or settings
+   * did. The line itself is drawn every frame, so a tint a few frames late
+   * doesn't show.
    */
   private syncTints(now: number): void {
     const tiles = this.tiles;
     if (!tiles) return;
     const store = this.store;
-    if (store.geometryVersion === this.lastGeometry && store.version === this.lastPlayersVersion) return;
+    const full = this.lastGeometry === -1 || store.tintsVersion !== this.lastTintsVersion;
+    const washes = full || store.closedVersion !== this.lastClosedVersion;
+    if (!full && !washes && this.touched.size === 0) return;
     if (now - this.lastTintAt < TINT_MIN_MS && this.lastGeometry !== -1) return;
     this.lastTintAt = now;
-    // Your pattern skips rival circuits' interiors, which are worked out here.
-    this.tintEpoch++;
     this.lastGeometry = store.geometryVersion;
-    this.lastPlayersVersion = store.version;
-    tiles.clearTints();
+    this.lastTintsVersion = store.tintsVersion;
+    this.lastClosedVersion = store.closedVersion;
     // One colour per path, not per tile: a long line covers thousands.
     const tintMemo = new Map<ClientPath, [number, number, number]>();
     const tintOf = (path: ClientPath): [number, number, number] => {
@@ -330,67 +348,134 @@ export class Renderer {
       if (!rgb) tintMemo.set(path, (rgb = this.tintOf(path)));
       return rgb;
     };
-    for (const [tile, paths] of store.occupancy) {
-      // Your own claim wins the tint; otherwise the first path on the tile.
-      let pick: ClientPath | null = null;
-      for (const p of paths) {
-        if (p.owner === store.you) {
-          pick = p;
-          break;
-        }
-        if (pick === null) pick = p;
-      }
-      if (pick === null) continue;
-      const [r, g, b] = tintOf(pick);
-      tiles.setTint(tile, r, g, b, pick.status === 'closed' ? (pick.owner === store.you ? 175 : 150) : pick.owner === store.you ? 115 : 85);
+    const touched = this.touched;
+    if (washes) {
+      this.washes(full, tintOf, touched);
+      // Your pattern skips rival circuits' interiors, which the washes work out.
+      this.tintEpoch++;
     }
-    // Interior wash: the free tiles a closed circuit encloses take its owner's
-    // colour, fainter than the loop itself. Washes stack: outer circuits go
-    // down first and each one inside lays its colour over them, so nesting
-    // deepens the tile rather than hiding behind the first loop to claim it.
+    const tint = (tile: number): void => {
+      const paths = store.occupancy.get(tile);
+      if (paths) {
+        // Your own claim wins the tint; otherwise the first path on the tile.
+        let pick: ClientPath | null = null;
+        for (const p of paths) {
+          if (p.owner === store.you) {
+            pick = p;
+            break;
+          }
+          if (pick === null) pick = p;
+        }
+        if (pick !== null) {
+          const [r, g, b] = tintOf(pick);
+          tiles.setTint(tile, r, g, b, pick.status === 'closed' ? (pick.owner === store.you ? 175 : 150) : pick.owner === store.you ? 115 : 85);
+          return;
+        }
+      }
+      // A free tile inside circuits takes their wash.
+      const w = this.wash.get(tile);
+      if (w) tiles.setTint(tile, w[0], w[1], w[2], w[3]);
+      else if (!full) tiles.setTint(tile, 0, 0, 0, 0);
+    };
+    if (full) {
+      tiles.clearTints();
+      for (const tile of store.occupancy.keys()) tint(tile);
+      for (const tile of this.wash.keys()) if (!store.occupancy.has(tile)) tint(tile);
+    } else {
+      for (const tile of touched) tint(tile);
+    }
+    touched.clear();
+  }
+
+  /**
+   * Interior wash: the tiles a closed circuit encloses take its owner's
+   * colour, fainter than the loop itself (a tile with a line on it shows the
+   * line's tint instead). Washes stack: outer circuits go down first and each
+   * one inside lays its colour over them, so nesting deepens the tile rather
+   * than hiding behind the first loop to claim it. Flip pieces close circuits
+   * all the time, so only the tiles inside the circuits that closed, opened,
+   * went or changed hands since last time are worked out again (all of them
+   * when `full`); those go into `touched`. Keeps `rivalInterior` too.
+   */
+  private washes(full: boolean, tintOf: (path: ClientPath) => [number, number, number], touched: Set<number>): void {
+    const store = this.store;
     const field = this.field;
-    this.rivalInterior = new Set();
+    if (full) {
+      this.closedSeen.clear();
+      this.cover.clear();
+      this.wash.clear();
+      this.rivalInterior.clear();
+    }
     if (!field) return;
-    const closed: { path: ClientPath; inside: readonly number[] }[] = [];
+    const redo = new Set<number>();
+    const cover = (path: ClientPath, inside: readonly number[], owner: string, on: boolean): void => {
+      const rival = owner !== store.you;
+      for (const t of inside) {
+        redo.add(t);
+        const list = this.cover.get(t);
+        if (on) {
+          if (list) list.push(path);
+          else this.cover.set(t, [path]);
+        } else if (list) {
+          const i = list.indexOf(path);
+          if (i >= 0) list.splice(i, 1);
+          if (list.length === 0) this.cover.delete(t);
+        }
+        if (!rival) continue;
+        const n = (this.rivalInterior.get(t) ?? 0) + (on ? 1 : -1);
+        if (n > 0) this.rivalInterior.set(t, n);
+        else this.rivalInterior.delete(t);
+      }
+    };
+    const live = new Set<ClientPath>();
     for (const path of store.paths.values()) {
       if (path.status !== 'closed' || path.steps.length < 2 || !store.players.has(path.owner)) continue;
+      live.add(path);
+      const seen = this.closedSeen.get(path);
+      if (seen && seen.owner === path.owner && seen.pattern === path.pattern) continue;
+      if (seen) cover(path, seen.inside, seen.owner, false);
       let inside = this.interiors.get(path);
       if (!inside) {
         inside = tilesInsidePolygon(field, pathPolygon(path));
         this.interiors.set(path, inside);
       }
-      if (path.owner !== store.you) for (const t of inside) this.rivalInterior.add(t);
-      closed.push({ path, inside });
+      cover(path, inside, path.owner, true);
+      this.closedSeen.set(path, { owner: path.owner, pattern: path.pattern, inside });
     }
-    closed.sort((a, b) => b.inside.length - a.inside.length);
-    const wash = new Map<number, [number, number, number, number, number]>();
-    const innermost = new Map<number, ClientPath>();
-    for (const { path, inside } of closed) {
-      const [r, g, b] = tintOf(path);
-      const a = path.owner === store.you ? 0.42 : 0.34;
-      for (const t of inside) {
-        if (store.occupancy.has(t)) continue;
-        innermost.set(t, path);
-        const under = wash.get(t);
-        if (!under) {
-          wash.set(t, [r, g, b, a, 1]);
+    for (const [path, seen] of [...this.closedSeen]) {
+      if (live.has(path)) continue;
+      cover(path, seen.inside, seen.owner, false);
+      this.closedSeen.delete(path);
+    }
+    const size = (path: ClientPath): number => this.closedSeen.get(path)!.inside.length;
+    for (const t of redo) {
+      touched.add(t);
+      const list = this.cover.get(t);
+      if (!list) {
+        this.wash.delete(t);
+        continue;
+      }
+      // Outermost (most tiles inside) first; equal ones oldest first.
+      const layers = list.length === 1 ? list : [...list].sort((a, b) => size(b) - size(a) || a.id - b.id);
+      let r = 0, g = 0, b = 0, a = 0;
+      for (const path of layers) {
+        const [pr, pg, pb] = tintOf(path);
+        const pa = path.owner === store.you ? 0.42 : 0.34;
+        if (a === 0) {
+          [r, g, b, a] = [pr, pg, pb, pa];
           continue;
         }
         // Porter–Duff "over": this loop's colour on top of what is already there.
-        const ua = under[3] * (1 - a);
-        const oa = a + ua;
-        under[0] = (r * a + under[0] * ua) / oa;
-        under[1] = (g * a + under[1] * ua) / oa;
-        under[2] = (b * a + under[2] * ua) / oa;
-        under[3] = oa;
-        under[4]++;
+        const ua = a * (1 - pa);
+        const oa = pa + ua;
+        r = (pr * pa + r * ua) / oa;
+        g = (pg * pa + g * ua) / oa;
+        b = (pb * pa + b * ua) / oa;
+        a = oa;
       }
-    }
-    // Each level of nesting also sinks the wash a step deeper, so depth reads
-    // even where two nested loops happen to share a hue.
-    for (const [t, [r, g, b, a, depth]] of wash) {
-      const tint = this.washTint(r, g, b, a, depth, innermost.get(t)!);
-      tiles.setTint(t, tint[0], tint[1], tint[2], tint[3]);
+      // Each level of nesting also sinks the wash a step deeper, so depth reads
+      // even where two nested loops happen to share a hue.
+      this.wash.set(t, this.washTint(r, g, b, a, layers.length, layers[layers.length - 1]));
     }
   }
 
@@ -561,18 +646,39 @@ export class Renderer {
   ): boolean {
     let pen = false;
     let any = false;
+    // The last point drawn, and the last point reached (drawn or not): zoomed
+    // out a step is under a pixel, and a busy board has a hundred thousand of
+    // them, so points closer than `TRACE_MIN_PX` to the last one drawn wait
+    // until the line has gone far enough, or ends.
+    let lx = 0, ly = 0, px = 0, py = 0;
+    let owed = false;
+    let prev: PathStepWire | null = null;
     for (const st of path.steps) {
       if (!(inView(st.a.x, st.a.y) || inView(st.b.x, st.b.y))) {
-        pen = false;
+        if (owed) into.lineTo(px, py);
+        pen = owed = false;
         continue;
       }
-      const [ax, ay] = toScreen(st.a.x, st.a.y);
-      const [bx, by] = toScreen(st.b.x, st.b.y);
-      if (!pen) into.moveTo(ax, ay);
-      else into.lineTo(ax, ay);
-      into.lineTo(bx, by);
+      // Each step starts where the last one ended; only a break (or the
+      // first step) needs its start.
+      if (!pen || prev === null || prev.b.x !== st.a.x || prev.b.y !== st.a.y) {
+        if (owed) into.lineTo(px, py);
+        [lx, ly] = toScreen(st.a.x, st.a.y);
+        if (pen) into.lineTo(lx, ly);
+        else into.moveTo(lx, ly);
+        owed = false;
+      }
+      [px, py] = toScreen(st.b.x, st.b.y);
+      if (Math.abs(px - lx) + Math.abs(py - ly) >= TRACE_MIN_PX) {
+        into.lineTo(px, py);
+        lx = px;
+        ly = py;
+        owed = false;
+      } else owed = true;
+      prev = st;
       pen = any = true;
     }
+    if (owed) into.lineTo(px, py);
     // A loop joins back to its start; an edge-to-edge claim ends at the edge.
     if (path.status === 'closed' && pen && !path.region) {
       const first = path.steps[0];
@@ -581,6 +687,7 @@ export class Renderer {
     }
     return any;
   }
+
 
   /**
    * Everything that holds still between board changes, into the lines
