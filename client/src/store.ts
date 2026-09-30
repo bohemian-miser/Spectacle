@@ -388,7 +388,7 @@ export class Store {
           path.status = 'closed';
           if (ev.region) path.region = ev.region;
         }
-        if (ev.owner === this.you) this.toast(`${ev.region ? 'Claimed' : 'Circuit'} +${ev.bonus}`, 'good');
+        if (ev.owner === this.you) this.toast(`${ev.region ? 'Claimed' : 'Circuit'}${ev.bonus ? ` +${ev.bonus}` : ' closed'}`, 'good');
         this.geometryVersion++;
         return;
       }

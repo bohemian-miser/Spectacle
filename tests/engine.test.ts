@@ -12,7 +12,8 @@ const FIELD = buildField({ family: 'spectre', level: 3, rootTile: 'Delta' });
 const SEL15 = ruleFromCombo('spectre', '15', '0000000000');
 
 function make(knobs: Partial<Knobs> = {}) {
-  return new Engine(FIELD, { ...DEFAULT_KNOBS, ...knobs }, mulberry32(42));
+  // These tests pin the points scoring (bonuses, combo, points moving with lines).
+  return new Engine(FIELD, { ...DEFAULT_KNOBS, scoreTiles: false, ...knobs }, mulberry32(42));
 }
 
 /** A tile whose sel-15 strand closes into a small loop. */

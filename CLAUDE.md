@@ -214,7 +214,20 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Speed** in tiles/s: `(1000 / baseStepMs)(1 + score·speedPerPoint) /
   speedDivisor + speedOffset` (÷10, +5), capped at `maxSpeedFor` (500 at the
   242k-tile reference, log-scaled). `speedFor` / `stepIntervalMs`.
-- **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
+- **Score = tiles you control** (`scoreTiles`, default on): the number of
+  distinct tiles any line of yours is on, any status. The engine keeps it
+  live in `hold` — every change to `occupancy` goes through `occAdd` /
+  `occDel`, which count per (player, tile); `takePath` moves the counts to
+  the new owner — and each public call (`tick`, `tap`, `setRule`,
+  `swapPattern`, `removePlayer`) ends with `flushScores`: one `score` event
+  per player whose count changed. `addScore` is a no-op and circuits pay no
+  `bonus` (0 in the event) in this mode; `path.points` is still kept but
+  means nothing. `tests/score.test.ts` checks score = tiles for every
+  player after every tick of busy games, client included. Speed still runs
+  on score, so games are slower than under points (tiles are far fewer
+  than bonus-inflated points) — `speedPerPoint` wants retuning. Tests that
+  pin the points scoring set `scoreTiles: false`.
+- **Zero-sum** (points scoring). `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit —
   nor on a tile your own line is on (see below). A rival's line owns its
@@ -320,7 +333,8 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   as a budget. It finds the new rule's circuits through those tiles (loops,
   and strands running edge to edge) and prices each at what it scores
   closed: `pointsPerTile` × length + `circuitBonus` at `comboStart`,
-  captures not included. It buys them longest first, skipping any that cost
+  captures not included — with `scoreTiles`, just its distinct tiles, and
+  the plan's `outcome` is the tiles of everything bought taken together. It buys them longest first, skipping any that cost
   more than what is left. Then the *stretch*: the cheapest circuit it
   skipped comes too if what is left covers its held tiles (`seeds` ×
   `pointsPerTile`), and the plan's `outcome` counts its full price; so a

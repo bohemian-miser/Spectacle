@@ -374,7 +374,8 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
           </span>
         </div>
         <div className="hud-line">
-          combo ×{(me?.combo ?? 1).toFixed(1)} · {speed} tiles/s · #{rank || '–'}
+          {store.knobs?.scoreTiles ? '' : `combo ×${(me?.combo ?? 1).toFixed(1)} · `}
+          {speed} tiles/s · #{rank || '–'}
         </div>
         {status && <div className="hud-line hud-status">{status}</div>}
         <div className="hud-line hud-rule">
@@ -433,7 +434,8 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
       {showHelp && (
         <div className="hud hud-help">
           <b>Tap a tile</b> to start a line along your rule. It grows on its own, faster as you score.
-          Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
+          {store.knobs?.scoreTiles ? 'Your score is the tiles your lines are on.' : 'Close a loop for a combo bonus.'} Cross
+          someone's line to cut it — they can cut yours.
           {gameMode === 'normal'
             ? " Loop round someone's line to turn it into yours — and gain a head."
             : " Loop round someone's line to take its pattern."}
