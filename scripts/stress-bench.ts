@@ -15,6 +15,7 @@ import type { GameEvent } from '../shared/game/protocol';
 import { mulberry32 } from '../shared/game/rng';
 import { randomCleanRule } from '../shared/game/rule';
 import { chordTableFor } from '../shared/game/strand';
+import { packEvents } from '../shared/game/wire';
 import { Store } from '../client/src/store';
 import { Renderer } from '../client/src/render';
 
@@ -77,7 +78,7 @@ store.handle({ t: 'events', ev: first } as never);
 type Stat = { sum: number; max: number; n: number };
 const stat = (): Stat => ({ sum: 0, max: 0, n: 0 });
 const add = (s: Stat, v: number) => ((s.sum += v), (s.max = Math.max(s.max, v)), s.n++);
-let S = { tick: stat(), taps: stat(), json: stat(), store: stat(), tints: stat(), overlay: stat(), bytes: stat(), snapshot: stat() };
+let S = { tick: stat(), taps: stat(), json: stat(), store: stat(), tints: stat(), overlay: stat(), bytes: stat(), packedBytes: stat(), snapshot: stat() };
 let ok = 0, refused = 0;
 /** Wire bytes by event kind, since the last report. */
 const mix = new Map<string, number>();
@@ -106,7 +107,9 @@ for (let t = 1; t <= ticks; t++) {
   }
   ev.push(...e.tick(knobs.tickMs));
   add(S.tick, performance.now() - a);
-  for (const x of ev) mix.set(x.t, (mix.get(x.t) ?? 0) + JSON.stringify(x).length);
+  const packed = packEvents(field, ev, (o, i) => e.players.get(o)?.patterns[i]?.table);
+  for (const x of packed) mix.set(x.t, (mix.get(x.t) ?? 0) + JSON.stringify(x).length);
+  add(S.packedBytes, JSON.stringify({ t: 'events', ev: packed }).length);
   if (!client) add(S.bytes, JSON.stringify({ t: 'events', ev }).length);
   else {
     a = performance.now();
@@ -149,11 +152,11 @@ for (let t = 1; t <= ticks; t++) {
     console.log(
       `${(now / 1000).toFixed(0)}s paths ${paths} steps ${steps} growing ${heads} taps ok/refused ${ok}/${refused} score ${ids.map((id) => e.players.get(id)!.score).join('/')}\n` +
         `  avg/max ms: tick ${f(S.tick)} tap ${f(S.taps)} json ${f(S.json)} store ${f(S.store)} tints ${f(S.tints)} overlay ${f(S.overlay)}\n` +
-        `  wire ${((S.bytes.sum / S.bytes.n) * (1000 / knobs.tickMs) / 1024).toFixed(0)} KB/s (${[...mix].sort((x, y) => y[1] - x[1]).slice(0, 4).map(([k, v]) => `${k} ${((100 * v) / all).toFixed(0)}%`).join(', ')})` +
+        `  wire ${((S.bytes.sum / S.bytes.n) * (1000 / knobs.tickMs) / 1024).toFixed(0)} KB/s plain, ${((S.packedBytes.sum / S.packedBytes.n) * (1000 / knobs.tickMs) / 1024).toFixed(0)} KB/s packed (${[...mix].sort((x, y) => y[1] - x[1]).slice(0, 4).map(([k, v]) => `${k} ${((100 * v) / all).toFixed(0)}%`).join(', ')})` +
         ` | welcome plain ${(snap.length / 1024).toFixed(0)} KB in ${S.snapshot.max.toFixed(0)} ms (a joiner applies it in ${joinPlain.toFixed(0)} ms),` +
         ` packed ${(packed.length / 1024).toFixed(0)} KB in ${build.toFixed(0)} ms (a joiner applies it in ${join.toFixed(0)} ms)`,
     );
-    S = { ...S, tick: stat(), taps: stat(), json: stat(), store: stat(), tints: stat(), overlay: stat(), bytes: stat() };
+    S = { ...S, tick: stat(), taps: stat(), json: stat(), store: stat(), tints: stat(), overlay: stat(), bytes: stat(), packedBytes: stat() };
     ok = refused = 0;
     mix.clear();
   }

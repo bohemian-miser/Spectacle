@@ -6,7 +6,8 @@
 
 import { buildField, tileCenter, type Field } from '../../shared/game/field';
 import { headLimit, type Knobs } from '../../shared/game/knobs';
-import { unpackPaths } from '../../shared/game/wire';
+import { chordTableFor, type ChordTable } from '../../shared/game/strand';
+import { nextStep, unpackPaths, unpackStep } from '../../shared/game/wire';
 import type { Pt } from '../../shared/tiles';
 import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomSummary, ServerMessage } from '../../shared/game/protocol';
 
@@ -24,6 +25,8 @@ export interface ClientPath {
   spawned?: boolean;
   /** Growing from its start too: a second head. */
   back?: boolean;
+  /** Its rule's chords, fixed when it began: a `grow` event's steps are worked out with them. */
+  table?: ChordTable;
 }
 
 export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active' | 'converted'> {
@@ -182,6 +185,12 @@ export class Store {
     return [...this.paths.values()].filter((p) => p.owner === this.you);
   }
 
+  /** The chords of `owner`'s pattern `pattern` — what a line of it is drawn with. */
+  private tableFor(owner: string, pattern: number): ChordTable | undefined {
+    const rule = this.players.get(owner)?.patterns[pattern]?.rule;
+    return rule && this.field ? chordTableFor(this.field, rule) : undefined;
+  }
+
   /** Refusals before this time (ms) go unshown: a drag taps every tile it crosses. */
   quietRefusalsUntil = 0;
 
@@ -273,6 +282,7 @@ export class Store {
         for (const p of msg.players) this.players.set(p.id, clientPlayer(p));
         for (const pw of msg.packed ? unpackPaths(this.field, msg.packed) : msg.paths) {
           const path: ClientPath = { id: pw.id, owner: pw.owner, status: pw.status, steps: [...pw.steps], pattern: pw.pattern ?? 0 };
+          path.table = this.tableFor(path.owner, path.pattern);
           if (pw.region) path.region = pw.region;
           if (pw.spawned) path.spawned = true;
           if (pw.back) path.back = true;
@@ -430,11 +440,36 @@ export class Store {
         if (!path) {
           path = { id: ev.path, owner: ev.owner, status: 'growing', steps: [], pattern: ev.pattern ?? 0 };
           if (ev.spawned) path.spawned = true;
+          path.table = this.tableFor(path.owner, path.pattern);
           this.paths.set(path.id, path);
         }
         path.steps.push(ev.step);
         this.occupy(ev.step.tile, path);
         this.switched.get(ev.owner)?.add(ev.step.tile);
+        this.geometryVersion++;
+        return;
+      }
+      case 'begin': {
+        const table = this.tableFor(ev.owner, ev.pattern ?? 0);
+        if (!table || !this.field) return;
+        const path: ClientPath = { id: ev.path, owner: ev.owner, status: 'growing', steps: [], pattern: ev.pattern ?? 0, table };
+        if (ev.spawned) path.spawned = true;
+        this.paths.set(path.id, path);
+        const step = unpackStep(this.field, table, ev.first);
+        path.steps.push(step);
+        this.occupy(step.tile, path);
+        this.geometryVersion++;
+        return;
+      }
+      case 'grow': {
+        const path = this.paths.get(ev.path);
+        if (!path?.table || !this.field || path.steps.length === 0) return;
+        for (let k = 0; k < ev.n; k++) {
+          const step = nextStep(this.field, path.table, path.steps[path.steps.length - 1], path.id);
+          if (!step) break;
+          path.steps.push(step);
+          this.occupy(step.tile, path);
+        }
         this.geometryVersion++;
         return;
       }
@@ -456,7 +491,7 @@ export class Store {
           for (const r of ev.runs) {
             const steps: PathStepWire[] = [];
             for (let i = r.start; i < r.end; i++) steps.push(path.steps[i % n]);
-            const run: ClientPath = { id: r.id, owner: path.owner, status: r.status, steps, pattern: path.pattern };
+            const run: ClientPath = { id: r.id, owner: path.owner, status: r.status, steps, pattern: path.pattern, table: path.table };
             if (path.spawned) run.spawned = true;
             this.paths.set(run.id, run);
             for (const s of steps) this.occupy(s.tile, run);

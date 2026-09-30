@@ -1267,6 +1267,7 @@ export class Engine {
       step: s,
     };
     if (path.steps.length === 0) {
+      e.first = true;
       if (path.pattern !== 0) e.pattern = path.pattern;
       if (path.spawned) e.spawned = true;
     }
