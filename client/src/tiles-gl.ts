@@ -272,6 +272,8 @@ export function createGlTiles(
   let tintsDirty = false;
   let arrows = true;
   const tinted: number[] = [];
+  /** Slots already in `tinted`. */
+  const listed = new Uint8Array(field.count);
 
   return {
     kind: 'webgl',
@@ -296,6 +298,7 @@ export function createGlTiles(
         tints[s * 4 + 3] = 0;
       }
       tinted.length = 0;
+      listed.fill(0);
       tintsDirty = true;
     },
     setTint(tile, r, g, b, a) {
@@ -304,7 +307,11 @@ export function createGlTiles(
       tints[s * 4 + 1] = g;
       tints[s * 4 + 2] = b;
       tints[s * 4 + 3] = a;
-      tinted.push(s);
+      // Tints now change a tile at a time: list each slot once, not per call.
+      if (!listed[s]) {
+        listed[s] = 1;
+        tinted.push(s);
+      }
       tintsDirty = true;
     },
     draw(cam: Camera, width: number, height: number, dpr: number) {

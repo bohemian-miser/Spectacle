@@ -112,6 +112,16 @@ export class Store {
   version = 0;
   /** Bumped whenever geometry changed (paths), for the renderer's dirty flag. */
   geometryVersion = 0;
+  /**
+   * Bumped when any tile's tint may have changed without its tile being
+   * touched (players came or went, patterns changed, a new board): the
+   * renderer re-tints everything. Otherwise it re-tints the touched tiles.
+   */
+  tintsVersion = 0;
+  /** Bumped when the closed lines changed — one closed, opened, went or changed hands: the washes. */
+  closedVersion = 0;
+  /** Each watcher's tiles touched since it last looked (see `watchTiles`). */
+  private readonly tileSinks = new Set<Set<number>>();
   private nextToast = 1;
   private readonly listeners = new Set<Listener>();
 
@@ -123,6 +133,37 @@ export class Store {
   private emit(): void {
     this.version++;
     for (const fn of this.listeners) fn();
+  }
+
+  /**
+   * A set the store adds every tile to whose lines changed; the watcher
+   * empties it as it catches up. A busy board changes a few hundred tiles a
+   * tick out of a hundred thousand drawn on, so the tints follow these.
+   */
+  watchTiles(): Set<number> {
+    const sink = new Set<number>();
+    this.tileSinks.add(sink);
+    return sink;
+  }
+
+  unwatchTiles(sink: Set<number>): void {
+    this.tileSinks.delete(sink);
+  }
+
+  private touch(tile: number): void {
+    for (const sink of this.tileSinks) sink.add(tile);
+  }
+
+  /** Every tile of `path` may look different (its owner, pattern or status changed). */
+  private touchPath(path: ClientPath): void {
+    for (const s of path.steps) this.touch(s.tile);
+    if (path.status === 'closed') this.closedVersion++;
+  }
+
+  /** Everything may look different. */
+  private touchAll(): void {
+    this.tintsVersion++;
+    this.closedVersion++;
   }
 
   get me(): ClientPlayer | undefined {
@@ -193,6 +234,7 @@ export class Store {
     this.resume = null;
     this.lastError = null;
     this.geometryVersion++;
+    this.touchAll();
     this.emit();
   }
 
@@ -237,6 +279,7 @@ export class Store {
           for (const s of path.steps) this.occupy(s.tile, path);
         }
         this.geometryVersion++;
+        this.touchAll();
         this.emit();
         return;
       }
@@ -298,10 +341,13 @@ export class Store {
       this.occupancy.set(tile, set);
     }
     set.add(path);
+    this.touch(tile);
   }
 
   private unoccupy(path: ClientPath): void {
+    if (path.status === 'closed') this.closedVersion++;
     for (const s of path.steps) {
+      this.touch(s.tile);
       const set = this.occupancy.get(s.tile);
       if (set) {
         set.delete(path);
@@ -314,9 +360,11 @@ export class Store {
     switch (ev.t) {
       case 'join':
         this.players.set(ev.player.id, clientPlayer(ev.player));
+        this.touchAll();
         return;
       case 'leave':
         this.players.delete(ev.id);
+        this.touchAll();
         return;
       case 'rule': {
         const p = this.players.get(ev.id);
@@ -329,11 +377,13 @@ export class Store {
           p.converted = 0;
           this.switched.set(ev.id, new Set());
         }
+        this.touchAll();
         return;
       }
       case 'capture': {
         const p = this.players.get(ev.id);
         if (p) p.patterns = [...p.patterns, ev.pattern];
+        this.touchAll();
         if (ev.id === this.you) this.toast(`Took ${ev.pattern.fromName || 'someone'}'s pattern`, 'good');
         else if (ev.pattern.from === this.you) this.toast(`${p?.name ?? 'Someone'} took your pattern`, 'bad');
         this.geometryVersion++;
@@ -351,6 +401,7 @@ export class Store {
         if (p && ev.index > 0 && ev.index < p.patterns.length) {
           p.patterns = p.patterns.map((q, i) => (i === ev.index ? ev.pattern : q));
         }
+        this.touchAll();
         if (ev.id === this.you) this.toast('Pattern swapped — its lines are gone', 'info');
         this.geometryVersion++;
         return;
@@ -360,6 +411,7 @@ export class Store {
         if (path) {
           path.owner = ev.owner;
           path.pattern = ev.pattern;
+          this.touchPath(path);
         }
         if (ev.owner === this.you) this.toast(`Took ${this.players.get(ev.from)?.name ?? 'someone'}'s lines`, 'good');
         else if (ev.from === this.you) this.toast(`${this.players.get(ev.owner)?.name ?? 'Someone'} took your lines`, 'bad');
@@ -387,7 +439,10 @@ export class Store {
       }
       case 'status': {
         const path = this.paths.get(ev.path);
-        if (path) path.status = ev.status;
+        if (path) {
+          if ((path.status === 'closed') !== (ev.status === 'closed')) this.touchPath(path);
+          path.status = ev.status;
+        }
         this.geometryVersion++;
         return;
       }
@@ -421,6 +476,7 @@ export class Store {
           const turned = path.steps.map((q) => ({ tile: q.tile, chord: q.chord, a: q.b, b: q.a })).reverse();
           path.steps.length = 0;
           path.steps.push(...turned);
+          if (path.status === 'closed') this.touchPath(path);
           path.status = 'growing';
         }
         this.geometryVersion++;
@@ -459,6 +515,7 @@ export class Store {
         if (path) {
           path.status = 'closed';
           if (ev.region) path.region = ev.region;
+          this.touchPath(path);
         }
         if (ev.owner === this.you) this.toast(`${ev.region ? 'Claimed' : 'Circuit'}${ev.bonus ? ` +${ev.bonus}` : ' closed'}`, 'good');
         this.geometryVersion++;

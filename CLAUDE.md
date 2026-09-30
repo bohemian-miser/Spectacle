@@ -94,6 +94,10 @@ scripts/lag-bench.ts  Where a busy frame goes: engine, wire, store, tints,
                   overlay, per tick (FLIP=1 for a flip storm). Node counts JS
                   only; lag-bench-browser.ts runs it in Chromium with a real
                   canvas, so raster time counts too.
+scripts/stress-bench.ts  `npm run bench:stress`: two humans painting all game
+                  with every head and six patterns — what fills a board far
+                  faster than bots do. Engine tick/tap, wire, store, tints and
+                  overlay per minute as it fills (CLIENT=0: engine only).
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
                   heartbeats (who is in which room), traffic, instance-count
@@ -422,6 +426,35 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   head dot — hundreds pulsed at once. Tints rebuild at most every
   `TINT_MIN_MS`. Anything new drawn per path goes into `drawLines`, not the
   per-frame part.
+
+- **Two painters out-load a room of bots.** `npm run bench:stress` (two
+  players, paint all game, six patterns each) reaches ~25k lines, ~150k steps
+  and ~10k flip pieces waiting their turn in five minutes at hex level 6.
+  What that exposed, and the rule each fix now depends on:
+  - *Engine.* A closed circuit looks up rival lines by tile (`linesInBox`,
+    falling back to a scan for huge circuits), not by walking every line on
+    the board — flip pieces close circuits by the dozen, and that walk was
+    two thirds of the tick. Burning lines are listed per player
+    (`Player.burning`, added wherever `burn` is set, swept lazily), not
+    filtered out of `paths` each burn round. `insideRivalCircuit` keeps each
+    circuit's polygon and box (`shapeOf`). Anything new that runs per circuit
+    or per tick must not walk every path.
+  - *Tints are incremental.* The store adds each tile whose lines changed to
+    every `watchTiles()` set (occupy/unoccupy, and `touchPath` when a line's
+    owner, pattern or closed-ness changes), bumps `closedVersion` when a
+    closed line appears, goes or changes hands, and `tintsVersion` when
+    anything else could change every tint (players, patterns, a new board).
+    `syncTints` re-tints only the touched tiles and re-composes washes only
+    under the circuits that changed (`cover`: tile → circuits round it).
+    **Anything new that changes a tile's tint must touch it in the store**, or
+    the board goes stale; `tests/tints.test.ts` replays bot games and checks
+    the incremental tints against a full rebuild every 50 ticks.
+  - *Lines layer.* `trace` emits one point per step (consecutive steps share
+    an end) and skips points under `TRACE_MIN_PX` from the last drawn.
+  - *Still open:* the wire (~600 KB/s per client at that load, 78% `step`
+    events with full-precision coordinates; ~20 MB `welcome` on reconnect),
+    and the board filling at all — `maxLivePaths`/`maxCompletedCircuits`
+    and `flipPieceHeads` are the owner's knobs for that.
 
 - **Software WebGL.** This sandbox and CI runners have no GPU; WebGL runs on
   SwiftShader and 242k instances take seconds per frame. `tiles-gl.ts`
