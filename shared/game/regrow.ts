@@ -124,11 +124,13 @@ export function planRegrow(
     } else skipped.push(q);
   }
   const spent = budget - left;
-  const outcome = spent;
+  // Scoring by tiles, circuits that share a tile hold it once between them.
+  const union = (qs: readonly RegrowCircuit[]): number => new Set(qs.flatMap((q) => q.steps.map((s) => s.tile))).size;
+  const outcome = knobs.scoreTiles ? union(kept) : spent;
   let cheapest = -1;
   for (let i = 0; i < skipped.length; i++) if (cheapest < 0 || skipped[i].price < skipped[cheapest].price) cheapest = i;
   const over = cheapest >= 0 ? skipped[cheapest] : undefined;
-  const held = over ? over.seeds.length * knobs.pointsPerTile : 0;
+  const held = !over ? 0 : knobs.scoreTiles ? new Set(over.seeds.map((k) => Math.floor(k / 64))).size : over.seeds.length * knobs.pointsPerTile;
   if (!over || held > left) return { budget, kept, skipped, spent, outcome };
   return {
     budget,
@@ -136,7 +138,7 @@ export function planRegrow(
     skipped: skipped.filter((q) => q !== over),
     stretch: over,
     spent: spent + held,
-    outcome: outcome + over.price,
+    outcome: knobs.scoreTiles ? union([...kept, over]) : outcome + over.price,
   };
 }
 
@@ -186,7 +188,7 @@ function walkCandidate(
       return { walked, found: { ...priced(knobs, steps, area), region } };
     }
   }
-  return { walked, found: { steps, length: steps.length, area: 0, price: steps.length * knobs.pointsPerTile, closed: false } };
+  return { walked, found: { steps, length: steps.length, area: 0, price: linePrice(knobs, steps), closed: false } };
 }
 
 interface Walk {
@@ -228,5 +230,10 @@ function walk(
 
 function priced(knobs: Knobs, steps: readonly WalkStep[], area: number): Omit<RegrowCircuit, 'seeds' | 'region'> & { closed: true } {
   const length = steps.length;
-  return { steps, length, area, price: length * knobs.pointsPerTile + circuitBonus(knobs, length, area, knobs.comboStart), closed: true };
+  return { steps, length, area, price: linePrice(knobs, steps) + (knobs.scoreTiles ? 0 : circuitBonus(knobs, length, area, knobs.comboStart)), closed: true };
+}
+
+/** What a run of steps scores by its tiles: each tile once when scoring by tiles, else a point a step. */
+function linePrice(knobs: Knobs, steps: readonly WalkStep[]): number {
+  return knobs.scoreTiles ? new Set(steps.map((s) => s.tile)).size : steps.length * knobs.pointsPerTile;
 }

@@ -38,7 +38,7 @@ function tapChord(e: Engine, id: string, tile: number, chord: number, table = TA
 }
 
 function engine(knobs: Partial<Knobs> = {}): Engine {
-  const e = new Engine(FIELD, { ...DEFAULT_KNOBS, ...knobs }, mulberry32(7));
+  const e = new Engine(FIELD, { ...DEFAULT_KNOBS, scoreTiles: false, ...knobs }, mulberry32(7));
   e.addPlayer('a', 'Ann', FASS);
   return e;
 }
@@ -150,7 +150,7 @@ describe('a tap on your own line of another pattern', () => {
 
 describe('tapping your own lines, replayed into a client', () => {
   it('ends with exactly the engine’s lines', () => {
-    const knobs = { ...DEFAULT_KNOBS, maxHeads: 3 };
+    const knobs = { ...DEFAULT_KNOBS, scoreTiles: false, maxHeads: 3 };
     const e = new Engine(FIELD, knobs, mulberry32(11));
     const rng = mulberry32(12);
     const bots = new Bots(e, mulberry32(13), 0.1);

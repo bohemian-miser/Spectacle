@@ -26,6 +26,12 @@ export interface Knobs {
   tickMs: number;
 
   // --- scoring -------------------------------------------------------------
+  /**
+   * Your score is the number of tiles your lines are on — growing, stuck or
+   * closed, each tile once — and nothing else: circuits pay no bonus. Off:
+   * the older points scoring below (tiles, circuit bonuses, combo).
+   */
+  scoreTiles: boolean;
   /** Points for every tile a path grows into (including the tapped one). */
   pointsPerTile: number;
   /** Flat bonus for closing a circuit, before the combo multiplier. */
@@ -157,6 +163,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   mode: 'conquest',
   tickMs: 50,
 
+  scoreTiles: true,
   pointsPerTile: 1,
   circuitBase: 10,
   circuitLengthWeight: 1,

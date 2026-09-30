@@ -38,8 +38,9 @@ line and you both die.
 |---|---|
 | 🧬 **Design a rule** | Switch edge classes on and drag dot to dot to pair them up inside each tile type. The preview shows the loops and loose ends your rule makes. |
 | 👆 **Tap a tile** | Your line starts there and grows by itself, one tile per step, following your rule. Press-and-hold then drag to paint starts across an area. |
-| ⭕ **Close circuits** | A line that comes back to where it began is a circuit: points for length and enclosed area, and your combo climbs. Run edge to edge and you claim the smaller side of the field. |
-| ⚔️ **Cut and be cut** | Lines that cross both die, taking their points with them — scoring is zero-sum. You can't start on a rival's line; you have to grow into it. |
+| 🟩 **Hold tiles** | Your score is the number of tiles your lines are on. |
+| ⭕ **Close circuits** | A line that comes back to where it began is a circuit. Run edge to edge and you claim the smaller side of the field. Close one round a rival's line and it's yours (below). |
+| ⚔️ **Cut and be cut** | Lines that cross both die, and their tiles are no longer anyone's. You can't start on a rival's line; you have to grow into it. |
 | 🏴 **Capture** | Close a circuit round a rival's line and it's yours. In **Normal** mode it turns into your own pattern on their tiles; in **Conquest (beta)** you take their pattern itself, a new way to draw. Either way, each new kind of line you capture is another head growing at once. |
 | 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. Nobody will tell you which. |
 
@@ -102,15 +103,20 @@ line and you both die.
 3. **It grows.** One tile per step; the step interval shrinks with your score
    (in tiles per second, `(1000 / baseStepMs) × (1 + score × speedPerPoint) / speedDivisor + speedOffset`
    — 5.5 tiles/s at score 0 — capped at `maxSpeed` = 500 tiles/s on a 242k-tile field, scaled by the
-   log of the field's tile count). Each tile
-   entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
-   points it earned, and when the line goes (cut, abandoned, capped) so do its
-   points — your score is what you hold on the board. `stealFraction` hands a
-   share of a cut line's points to the cutter (default 0).
-4. **Circuits.** If the line arrives back at its first chord it closes. You get
+   log of the field's tile count). **Your score is the number of tiles your
+   lines are on** — growing, stuck or closed, each tile once however many of
+   your lines cross it (`scoreTiles`, default on). It is what you hold on the
+   board: a tile counts while a line of yours is on it, and stops counting
+   when that line goes (cut, taken, flipped away).
+   With `KNOB_SCORE_TILES=0` the older points scoring comes back: each tile
+   entered scores `pointsPerTile`, every line carries the points it earned and
+   they go with it, and `stealFraction` hands a share of a cut line's points
+   to the cutter (default 0).
+4. **Circuits.** If the line arrives back at its first chord it closes and
+   stays on the board. It scores nothing beyond its tiles, but it is how you
+   capture (below). In points scoring it pays
    `combo × (circuitBase + lengthWeight × length + areaWeight × enclosedArea)`,
-   and your combo multiplier steps up for the next one. Closed circuits stay on
-   the board.
+   and your combo multiplier steps up for the next one.
 5. **Tails.** No continuation (an odd tile, a junction under `junctionPolicy:
    'stop'`, or the edge of the field) leaves the line stuck. You have one head
    at a time (`maxHeads`, default 1): a tap while your line is still growing is
@@ -188,7 +194,8 @@ line and you both die.
 8. **New rule** keeps what it can of what you built. Your lines and
    captured patterns go, and your score is spent on the new rule's circuits
    through the tiles those lines held: longest first, each costing what it
-   scores once closed, until the next one costs more than what is left.
+   scores once closed (its tiles; in points scoring, its tiles plus bonus),
+   until the next one costs more than what is left.
    Then one stretch: the cheapest circuit that was too dear comes too, if
    what is left covers just the tiles of it you already hold. The circuits
    you get start again on the tiles you already held and grow the rest of

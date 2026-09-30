@@ -296,7 +296,8 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
   const growing = mine.filter((p) => p.status === 'growing');
   const stuck = mine.filter((p) => p.status === 'stuck').length;
   const closed = mine.filter((p) => p.status === 'closed').length;
-  const tiles = mine.reduce((n, p) => n + p.steps.length, 0);
+  // The tiles your lines are on, each once — what the score counts, with `scoreTiles`.
+  const tiles = new Set(mine.flatMap((p) => p.steps.map((s) => s.tile))).size;
   const parts: string[] = [];
   if (growing.length) parts.push(`${growing.length} growing`);
   if (stuck) parts.push(`${stuck} stuck`);
@@ -374,7 +375,8 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
           </span>
         </div>
         <div className="hud-line">
-          combo ×{(me?.combo ?? 1).toFixed(1)} · {speed} tiles/s · #{rank || '–'}
+          {store.knobs?.scoreTiles ? '' : `combo ×${(me?.combo ?? 1).toFixed(1)} · `}
+          {speed} tiles/s · #{rank || '–'}
         </div>
         {status && <div className="hud-line hud-status">{status}</div>}
         <div className="hud-line hud-rule">
@@ -433,7 +435,8 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
       {showHelp && (
         <div className="hud hud-help">
           <b>Tap a tile</b> to start a line along your rule. It grows on its own, faster as you score.
-          Close a loop for a combo bonus. Cross someone's line to cut it — they can cut yours.
+          {store.knobs?.scoreTiles ? 'Your score is the tiles your lines are on.' : 'Close a loop for a combo bonus.'} Cross
+          someone's line to cut it — they can cut yours.
           {gameMode === 'normal'
             ? " Loop round someone's line to turn it into yours — and gain a head."
             : " Loop round someone's line to take its pattern."}

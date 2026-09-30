@@ -78,7 +78,7 @@ describe('the field edge', () => {
   });
 
   it('tapping the start of a line that ran off the edge turns it round; edge to edge claims the smaller side', () => {
-    const e = new Engine(FIELD, { ...DEFAULT_KNOBS }, mulberry32(2));
+    const e = new Engine(FIELD, { ...DEFAULT_KNOBS, scoreTiles: false }, mulberry32(2));
     e.addPlayer('a', 'Ann', FASS);
     const { tile, chord } = edgeToEdge();
     tapChord(e, 'a', tile, chord);
@@ -135,10 +135,11 @@ describe('the field edge', () => {
     expect(e.players.get('a')!.paths).toEqual([lineB]);
     run(e, () => lineB.status !== 'growing');
     expect(lineB.status).toBe('stuck');
-    // B took A's steps once: no chord twice, and every tile scored once.
+    // B took A's steps once: no chord twice, and every tile scored once (the
+    // score is the tiles held; a tile the line crosses twice counts once).
     const keys = lineB.steps.map((q) => `${q.tile}:${q.chord}`);
     expect(new Set(keys).size).toBe(keys.length);
-    expect(e.players.get('a')!.score).toBe(lineB.steps.length * DEFAULT_KNOBS.pointsPerTile);
+    expect(e.players.get('a')!.score).toBe(new Set(lineB.steps.map((q) => q.tile)).size);
 
     // Turned round, it runs to the other edge and claims.
     const turn = tapChord(e, 'a', lineB.steps[0].tile, lineB.steps[0].chord);

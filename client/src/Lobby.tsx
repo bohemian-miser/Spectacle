@@ -275,9 +275,11 @@ export function Lobby(props: LobbyProps): JSX.Element {
         {inArena && (
           <span className="muted">
             {store.knobs?.regrowOnRule
-              ? 'A new rule spends your score on its circuits through the tiles you hold, longest first; they grow back from there'
+              ? store.knobs.scoreTiles
+                ? 'A new rule redraws as many of your tiles as it can: its circuits through them, longest first, grow back from there'
+                : 'A new rule spends your score on its circuits through the tiles you hold, longest first; they grow back from there'
               : `Restarting wipes your lines${store.knobs?.resetScoreOnRule ? ' and score' : ''}`}
-            {slots.length > 0 ? '; swapping a pattern wipes only its lines, and the points they earned' : ''}.
+            {slots.length > 0 ? `; swapping a pattern wipes only its lines${store.knobs?.scoreTiles ? '' : ', and the points they earned'}` : ''}.
           </span>
         )}
       </footer>
