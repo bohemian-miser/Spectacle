@@ -59,6 +59,9 @@ const FADE_MS = 650;
 const SPARK_MS = 480;
 /** A rule change's motes: gathering to the tiles that carry on, then fading into them. */
 const COALESCE_MS = 1100;
+/** …and the pulse of the end state it bought: in as the motes gather, out as the lines take over. */
+const GHOST_FROM_MS = 150;
+const GHOST_MS = 1900;
 const SPARKS = 7;
 
 /** Least time between two rebuilds of the tile tints while the board is busy (ms). */
@@ -101,6 +104,8 @@ interface LabelAnchor {
 
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
+  /** A switch's end-state paths, built once (`drawGhost`). */
+  private readonly ghostPaths = new WeakMap<Coalesce, { line: Path2D; fill: Path2D }>();
   private ctx: CanvasRenderingContext2D;
   private tiles: TileLayer | null = null;
   private width = 1;
@@ -893,7 +898,7 @@ export class Renderer {
       for (const b of store.bursts) if (inView(b.at.x, b.at.y)) this.drawBurst(b, now, toScreen);
     }
     if (store.coalesce.length > 0) {
-      store.coalesce = store.coalesce.filter((c) => now - c.born < COALESCE_MS);
+      store.coalesce = store.coalesce.filter((c) => now - c.born < Math.max(COALESCE_MS, c.ghost.length ? GHOST_MS : 0));
       for (const c of store.coalesce) this.drawCoalesce(c, now, toScreen, inView);
     }
     this.drawNames(toScreen);
@@ -907,6 +912,7 @@ export class Renderer {
    */
   private drawCoalesce(c: Coalesce, now: number, toScreen: (x: number, y: number) => [number, number], inView: (x: number, y: number) => boolean): void {
     const ctx = this.ctx;
+    if (c.ghost.length > 0) this.drawGhost(c, now);
     const u = Math.min(1, (now - c.born) / COALESCE_MS);
     const move = Math.min(1, u / 0.75);
     const e = move < 0.5 ? 4 * move * move * move : 1 - (-2 * move + 2) ** 3 / 2; // ease in-out
@@ -933,6 +939,54 @@ export class Renderer {
     ctx.globalAlpha = 0.4 * fade;
     ctx.fill(core);
     ctx.globalAlpha = 1;
+  }
+
+  /**
+   * The end state a rule change bought — every circuit and line the new rule
+   * will regrow into, whole — as one soft pulse: it swells while the motes
+   * gather and fades as the real lines take over. Its paths are built once
+   * per switch in board units and only transformed each frame.
+   */
+  private drawGhost(c: Coalesce, now: number): void {
+    const v = (now - c.born - GHOST_FROM_MS) / (GHOST_MS - GHOST_FROM_MS);
+    if (v <= 0 || v >= 1) return;
+    const pulse = Math.sin(Math.PI * v) ** 2;
+    let g = this.ghostPaths.get(c);
+    if (!g) {
+      const line = new Path2D();
+      const fill = new Path2D();
+      for (const q of c.ghost) {
+        const loop = q.kind === 1;
+        const pts = loop ? q.pts.slice(0, -1) : q.pts;
+        pts.forEach((p, k) => (k ? line.lineTo(p.x, p.y) : line.moveTo(p.x, p.y)));
+        if (loop) {
+          line.closePath();
+          pts.forEach((p, k) => (k ? fill.lineTo(p.x, p.y) : fill.moveTo(p.x, p.y)));
+          fill.closePath();
+        }
+      }
+      this.ghostPaths.set(c, (g = { line, fill }));
+    }
+    const ctx = this.ctx;
+    const k = this.camera.scale * this.dpr;
+    ctx.save();
+    ctx.setTransform(k, 0, 0, k, (this.width / 2 - this.camera.x * this.camera.scale) * this.dpr, (this.height / 2 - this.camera.y * this.camera.scale) * this.dpr);
+    const ink = strandColor(this.board, this.teams ? this.teamColor(c.mine) : c.color);
+    const w = Math.max(2.5 * this.dpr, 0.16 * k) / k;
+    ctx.globalAlpha = 0.12 * pulse;
+    ctx.fillStyle = ink;
+    ctx.fill(g.fill);
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+    ctx.globalAlpha = 0.5 * pulse;
+    ctx.strokeStyle = this.board.haloCss;
+    ctx.lineWidth = w * 2.2;
+    ctx.stroke(g.line);
+    ctx.globalAlpha = 0.75 * pulse;
+    ctx.strokeStyle = ink;
+    ctx.lineWidth = w;
+    ctx.stroke(g.line);
+    ctx.restore();
   }
 
   /**

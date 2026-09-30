@@ -549,6 +549,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   fade in place; a stretch takes them all), and `flow` assigns them nearest
   pairs first, so a tile that carries on keeps its own. Capped at
   `MAX_MOTES` per switch; no `absorb` (regrow off): an even split.
+  Alongside, the end state it bought pulses once (`drawGhost`, ~0.15–1.9 s):
+  the `rule` event's `outline` (`[packed first step, length, kind, …]` per
+  bought circuit or line) is walked out on the client with the new rule
+  (`walkOutline`) into `Coalesce.ghost`, drawn as one `Path2D` per switch in
+  board units under a camera transform, so nothing is rebuilt per frame.
   `Renderer.drawCoalesce` plays them for `COALESCE_MS` — two `Path2D`
   fills per switch, only while one is playing. A cut (`by`) or a swap
   (no `rule`) makes none. The arena keeps its camera across the rule

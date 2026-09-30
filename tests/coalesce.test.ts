@@ -93,6 +93,30 @@ describe('a rule change coalesces', () => {
     expect(b.to.map((q) => (q ? key(q) : null))).toEqual(a.to.map((q) => (q ? key(q) : null)));
   });
 
+  it('shows the end state the plan bought: every circuit and line, whole', () => {
+    const knobs: Knobs = { ...DEFAULT_KNOBS, maxHeads: 0 };
+    const plain = setup(knobs);
+    const packed = setup(knobs);
+    const a = plain.e.players.get('a')!;
+    const held = new Set(a.paths.flatMap((q) => q.steps.map((s) => s.tile)));
+    const rule = randomCleanRule('hex', mulberry32(11));
+    const plan = planRegrow(HEX, chordTableFor(HEX, rule), held, a.score, knobs);
+    const bought = [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])];
+    expect(bought.length).toBeGreaterThan(1);
+    plain.store.handle({ t: 'events', ev: plain.e.setRule('a', rule) });
+    const ev2 = packed.e.setRule('a', rule);
+    packed.store.handle({ t: 'events', ev: packEvents(HEX, ev2, (o, p) => packed.e.players.get(o)?.patterns[p]?.table) });
+    const pt = (q: { x: number; y: number }) => key(q);
+    const want = bought.map((q) => ({ pts: [...q.steps.map((s) => s.a), q.steps[q.steps.length - 1].b].map(pt), kind: q.closed ? (q.region ? 2 : 1) : 0 }));
+    for (const store of [plain.store, packed.store]) {
+      expect(store.coalesce).toHaveLength(1);
+      const got = store.coalesce[0].ghost.map((g) => ({ pts: g.pts.map(pt), kind: g.kind }));
+      expect(got).toEqual(want);
+    }
+    // Loops close on themselves: the walk comes back to where it began.
+    for (const g of plain.store.coalesce[0].ghost.filter((q) => q.kind === 1)) expect(pt(g.pts[g.pts.length - 1])).toBe(pt(g.pts[0]));
+  });
+
   it('motesPerTile splits in proportion, rounds to whole motes, and drops what was lost', () => {
     expect(motesPerTile([0.5, 0.25, 0.25], 8)).toEqual([4, 2, 2]);
     // Only 60% bought: 6 of 10 motes land, 3:1:2.

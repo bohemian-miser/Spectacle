@@ -6,7 +6,8 @@
 
 import { buildField, tileCenter, type Field } from '../../shared/game/field';
 import { headLimit, type Knobs } from '../../shared/game/knobs';
-import { chordTableFor, type ChordTable } from '../../shared/game/strand';
+import { chordTableFor, stepForward, type ChordTable } from '../../shared/game/strand';
+import type { PlayerRule } from '../../shared/game/rule';
 import { nextStep, unpackPaths, unpackStep } from '../../shared/game/wire';
 import type { Pt } from '../../shared/tiles';
 import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomSummary, ServerMessage } from '../../shared/game/protocol';
@@ -76,6 +77,17 @@ export interface Coalesce {
   readonly born: number;
   readonly from: readonly Pt[];
   readonly to: readonly (Pt | null)[];
+  /**
+   * What the switch bought, whole: each circuit or line the new rule will
+   * regrow into (`kind` 1 a loop, 2 an edge-to-edge claim, 0 a line that
+   * stops short), for a brief pulse of the end state.
+   */
+  readonly ghost: readonly Ghost[];
+}
+
+export interface Ghost {
+  readonly pts: readonly Pt[];
+  readonly kind: number;
 }
 
 /** At most this many motes per switch (a huge territory is sampled evenly). */
@@ -97,6 +109,25 @@ export function motesPerTile(share: readonly number[], n: number): number[] {
   const order = exact.map((x, i) => [x - Math.floor(x), i] as const).sort((a, b) => b[0] - a[0]);
   for (let k = 0; left > 0 && k < order.length; k++, left--) cap[order[k][1]]++;
   return cap;
+}
+
+/** The `rule` event's `outline`, walked out with the new rule into the points of each circuit or line. */
+export function walkOutline(field: Field, rule: PlayerRule, outline: readonly number[]): Ghost[] {
+  const table = chordTableFor(field, rule);
+  const out: Ghost[] = [];
+  for (let k = 0; k + 2 < outline.length; k += 3) {
+    let cur = unpackStep(field, table, outline[k]);
+    const pts: Pt[] = [cur.a];
+    for (let n = 1; n < outline[k + 1]; n++) {
+      const next = stepForward(field, table, cur);
+      if (next.kind !== 'step') break;
+      pts.push(next.step.a);
+      cur = next.step;
+    }
+    pts.push(cur.b);
+    out.push({ pts, kind: outline[k + 2] });
+  }
+  return out;
 }
 
 /**
@@ -169,6 +200,8 @@ export class Store {
   private readonly switched = new Map<string, Set<number>>();
   /** …and how much energy each of those tiles takes in (the `rule` event's `absorb`). */
   private readonly absorb = new Map<string, Map<number, number>>();
+  /** …and the end state it grows towards (the `rule` event's `outline`, walked out). */
+  private readonly ghosts = new Map<string, Ghost[]>();
   connected = false;
   version = 0;
   /** Bumped whenever geometry changed (paths), for the renderer's dirty flag. */
@@ -355,6 +388,7 @@ export class Store {
         this.batchWipes.clear();
         this.switched.clear();
         this.absorb.clear();
+        this.ghosts.clear();
         for (const ev of msg.ev) this.apply(ev);
         this.coalesceSwitches();
         this.emit();
@@ -380,9 +414,10 @@ export class Store {
     const field = this.field;
     if (!field || this.switched.size === 0) return;
     for (const [id, targets] of this.switched) {
-      const sources = this.batchWipes.get(id);
+      const sources = this.batchWipes.get(id) ?? new Set<number>();
       const p = this.players.get(id);
-      if (!sources || sources.size === 0 || !p) continue;
+      const ghost = this.ghosts.get(id) ?? [];
+      if (!p || (sources.size === 0 && ghost.length === 0)) continue;
       let src = [...sources];
       if (src.length > MAX_MOTES) {
         const stride = src.length / MAX_MOTES;
@@ -395,7 +430,7 @@ export class Store {
       const cap = motesPerTile(share, src.length);
       const from = src.map((t) => tileCenter(field, t));
       const to = flow(from, dst.map((t) => tileCenter(field, t)), cap);
-      this.coalesce.push({ owner: id, color: p.color, mine: id === this.you, born: performance.now(), from, to });
+      this.coalesce.push({ owner: id, color: p.color, mine: id === this.you, born: performance.now(), from, to, ghost });
     }
   }
 
@@ -441,6 +476,7 @@ export class Store {
           p.active = 0;
           p.converted = 0;
           this.switched.set(ev.id, new Set());
+          if (ev.outline && this.field) this.ghosts.set(ev.id, walkOutline(this.field, ev.rule, ev.outline));
           if (ev.absorb) {
             const w = new Map<number, number>();
             for (let k = 0; k + 1 < ev.absorb.length; k += 2) w.set(ev.absorb[k], ev.absorb[k + 1]);

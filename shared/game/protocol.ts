@@ -121,6 +121,13 @@ export type GameEvent =
        * takes in (what its circuits cost, split over their held tiles).
        */
       readonly absorb?: readonly number[];
+      /**
+       * What the regrow bought, whole — the end state it grows towards:
+       * `[first, length, kind, …]` per circuit or line, `first` a packed step
+       * (`packStep`, the new rule's chords), walked on `length` steps; `kind`
+       * 1 a loop, 2 an edge-to-edge claim, 0 a line that stops short.
+       */
+      readonly outline?: readonly number[];
     }
   /**
    * A path grew by one step (the first step creates it and says so with
