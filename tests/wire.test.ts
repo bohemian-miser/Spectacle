@@ -8,7 +8,7 @@ import type { GameEvent } from '../shared/game/protocol';
 import { mulberry32 } from '../shared/game/rng';
 import { randomCleanRule } from '../shared/game/rule';
 import { chordTableFor } from '../shared/game/strand';
-import { unpackPaths } from '../shared/game/wire';
+import { packEvents, unpackPaths } from '../shared/game/wire';
 
 /** A busy board: bots holding a few patterns each, so flips, splits, circuits and claims. */
 function busy(family: 'hex' | 'spectre', level: number) {
@@ -74,5 +74,64 @@ describe('packed welcome', () => {
       [...s.paths.values()].map((q) => `${q.id} ${q.owner} ${q.status} ${q.pattern} ${q.steps.map((st) => `${st.tile}.${st.chord}@${st.a.x},${st.a.y}>${st.b.x},${st.b.y}`).join(' ')}`);
     expect(lines(b)).toEqual(lines(a));
     expect([...b.occupancy.keys()].sort((x, y) => x - y)).toEqual([...a.occupancy.keys()].sort((x, y) => x - y));
+  });
+
+  it.each([
+    ['hex', 4, 'conquest'],
+    ['hex', 4, 'normal'],
+    ['spectre', 3, 'conquest'],
+  ] as const)('%s %s: a client joining mid-game and fed begin/grow events keeps exactly the engine’s lines', (family, level, mode) => {
+    const spec = { family, level, rootTile: 'Delta' } as const;
+    const field = buildField(spec);
+    const knobs = { ...DEFAULT_KNOBS, mode, maxHeads: 0 };
+    const e = new Engine(field, knobs, mulberry32(31));
+    const rng = mulberry32(32);
+    const bots = new Bots(e, mulberry32(33), 0.1);
+    bots.add(4, 0);
+    for (const p of e.players.values()) {
+      for (let k = 0; k < 2; k++) {
+        const rule = randomCleanRule(family, rng);
+        p.patterns.push({ rule, table: chordTableFor(field, rule), color: p.color });
+      }
+    }
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const store = new Store();
+    const kinds = new Map<string, number>();
+    let plainBytes = 0;
+    let packedBytes = 0;
+    let now = 0;
+    for (let t = 1; t <= 2500; t++) {
+      now += knobs.tickMs;
+      // As the server does: the tick, then the bots, then packed for the wire.
+      const ev: GameEvent[] = e.tick(knobs.tickMs);
+      bots.update(now, ev);
+      if (t === 500) {
+        // Join mid-game, from a packed welcome.
+        const snap = JSON.parse(JSON.stringify(e.packedSnapshot()));
+        store.handle({ t: 'welcome', you: 'viewer', token: '', field: spec, knobs, players: snap.players, paths: [], packed: snap.packed });
+        continue;
+      }
+      if (t < 500) continue;
+      const wire = packEvents(field, ev, (owner, pattern) => e.players.get(owner)?.patterns[pattern]?.table);
+      for (const x of wire) kinds.set(x.t, (kinds.get(x.t) ?? 0) + 1);
+      plainBytes += JSON.stringify(ev).length;
+      packedBytes += JSON.stringify(wire).length;
+      store.handle(JSON.parse(JSON.stringify({ t: 'events', ev: wire })));
+    }
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
+    expect(kinds.get('begin')).toBeGreaterThan(0);
+    expect(kinds.get('grow')).toBeGreaterThan(0);
+    expect(kinds.get('step') ?? 0).toBe(0);
+    expect(packedBytes).toBeLessThan(plainBytes / 2);
+
+    const key = (q: { owner: string; status: string; steps: readonly { tile: number; chord: number; a: { x: number; y: number }; b: { x: number; y: number } }[] }) =>
+      `${q.owner} ${q.status} ${q.steps.map((s) => `${s.tile}.${s.chord}@${s.a.x},${s.a.y}>${s.b.x},${s.b.y}`).join(' ')}`;
+    const engine = new Map<number, string>();
+    for (const p of e.players.values()) for (const q of p.paths) engine.set(q.id, key(q));
+    expect(store.paths.size).toBe(engine.size);
+    for (const q of store.paths.values()) expect(key(q), `path ${q.id}`).toBe(engine.get(q.id));
+    // Scores too, though only each tick's last one per player travels.
+    for (const p of e.players.values()) expect(store.players.get(p.id)?.score, p.id).toBe(p.score);
   });
 });

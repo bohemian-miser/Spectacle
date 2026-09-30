@@ -60,6 +60,7 @@ import type { ClientMessage, GameEvent, RoomSummary, ServerMessage } from '../sh
 import { PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
+import { packEvents } from '../shared/game/wire';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
 import { botTotal, Bots, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions } from '../shared/game/bots';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
@@ -295,6 +296,8 @@ interface Client {
   allowance: number;
   /** The player's name once joined, for the log. */
   name: string;
+  /** Joined with `packed`: gets the packed welcome and `begin`/`grow` for steps (`wire.ts`). */
+  packed: boolean;
 }
 
 /**
@@ -369,7 +372,14 @@ class Room {
     }
     if (ev.length === 0) return;
     for (const e of ev) if (e.t === 'circuit') patternStats.circuit(e.owner);
-    const payload = JSON.stringify({ t: 'events', ev } satisfies ServerMessage);
+    // Clients that joined with `packed` get steps as `begin`/`grow` (a
+    // fraction of the bytes); older ones the plain events. Each is built once.
+    let plain: string | null = null;
+    let packed: string | null = null;
+    const payloadFor = (c: Client): string =>
+      c.packed
+        ? (packed ??= JSON.stringify({ t: 'events', ev: packEvents(field, ev, (owner, pattern) => this.engine.players.get(owner)?.patterns[pattern]?.table) } satisfies ServerMessage))
+        : (plain ??= JSON.stringify({ t: 'events', ev } satisfies ServerMessage));
     for (const c of this.clients.values()) {
       if (!c.joined || c.ws.readyState !== c.ws.OPEN) continue;
       if (c.ws.bufferedAmount > MAX_BUFFERED + c.allowance) {
@@ -378,7 +388,7 @@ class Room {
         c.ws.close(4001, 'too far behind');
         continue;
       }
-      c.ws.send(payload);
+      c.ws.send(payloadFor(c));
     }
   }
 }
@@ -557,7 +567,7 @@ function welcome(client: Client, room: Room, packed: boolean): void {
 }
 
 wss.on('connection', (ws) => {
-  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, room: null, allowance: 0, name: '' };
+  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, room: null, allowance: 0, name: '', packed: false };
   send(ws, {
     t: 'hello',
     field: spec,
@@ -588,7 +598,8 @@ wss.on('connection', (ws) => {
           client.joined = true;
           client.room = resumed;
           resumed.clients.set(client.id, client);
-          welcome(client, resumed, msg.packed === true);
+          client.packed = msg.packed === true;
+          welcome(client, resumed, client.packed);
           return;
         }
         // A brand new player, not a returning one (those went through
@@ -616,7 +627,8 @@ wss.on('connection', (ws) => {
         client.room = target;
         target.clients.set(client.id, client);
         playerRoom.set(client.id, target);
-        welcome(client, target, msg.packed === true);
+        client.packed = msg.packed === true;
+        welcome(client, target, client.packed);
         // Everyone else learns about the newcomer now; the newcomer already
         // has themselves in the snapshot.
         const payload = JSON.stringify({ t: 'events', ev } satisfies ServerMessage);

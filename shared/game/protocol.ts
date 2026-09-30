@@ -87,7 +87,10 @@ export type ClientMessage =
        * a new one of `mode` by that name. Matchmaking never sends anyone else in.
        */
       readonly room?: string;
-      /** This client reads `welcome.packed`; without it (older clients) the lines come as plain `paths`. */
+      /**
+       * This client reads `welcome.packed` and the `begin`/`grow` events;
+       * without it (older clients) the lines come as plain `paths` and `step`s.
+       */
       readonly packed?: true;
     }
   | { readonly t: 'tap'; readonly tile: number; readonly x: number; readonly y: number }
@@ -108,17 +111,33 @@ export type GameEvent =
   /** A new rule is a restart: paths gone, captured patterns gone, own pattern active. */
   | { readonly t: 'rule'; readonly id: string; readonly rule: PlayerRule; readonly score: number; readonly combo: number }
   /**
-   * A path grew by one step (the first step creates it; it carries `pattern`
-   * when that is not 0, and `spawned` when a flip made it).
+   * A path grew by one step (the first step creates it and says so with
+   * `first`; it carries `pattern` when that is not 0, and `spawned` when a
+   * flip made it).
    */
   | {
       readonly t: 'step';
       readonly path: number;
       readonly owner: string;
       readonly step: PathStepWire;
+      readonly first?: true;
       readonly pattern?: number;
       readonly spawned?: true;
     }
+  /**
+   * On the wire only (`packEvents`, to a client that joined with `packed`):
+   * a path's first step, packed as in `wire.ts`. The engine sends `step`.
+   */
+  | {
+      readonly t: 'begin';
+      readonly path: number;
+      readonly owner: string;
+      readonly first: number;
+      readonly pattern?: number;
+      readonly spawned?: true;
+    }
+  /** On the wire only: `path` grew `n` steps, each its rule's next from the head — the client works them out. */
+  | { readonly t: 'grow'; readonly path: number; readonly n: number }
   /** `id` closed a circuit round a rival's line and took its pattern (appended to their patterns). */
   | { readonly t: 'capture'; readonly id: string; readonly pattern: PatternPublic }
   /**
