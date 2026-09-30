@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { tileAt } from '../../shared/game/field';
+import { fieldKey, tileAt } from '../../shared/game/field';
 import { MODE_LABELS, speedFor } from '../../shared/game/knobs';
 import { describeRule } from '../../shared/game/rule';
 import type { GameConnection } from './net';
@@ -91,7 +91,11 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
     r.resize();
     if (store.field) {
       r.setField(store.field);
-      r.fitToField();
+      // Back from the rule screen (a new rule, a swap): the same view as before,
+      // so a rule change plays out where you were looking.
+      const kept = store.lastCamera;
+      if (kept && kept.field === fieldKey(store.field.spec)) Object.assign(r.camera, kept.camera);
+      else r.fitToField();
     }
     r.start();
     const onResize = (): void => r.resize();
@@ -105,6 +109,7 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
     canvas.addEventListener('wheel', wheel, { passive: false });
     const prune = setInterval(() => store.pruneToasts(), 1000);
     return () => {
+      if (store.field) store.lastCamera = { field: fieldKey(store.field.spec), camera: { ...r.camera } };
       r.stop();
       window.removeEventListener('resize', onResize);
       canvas.removeEventListener('wheel', wheel);
