@@ -1,45 +1,47 @@
 /**
- * The compact form of a board snapshot (`welcome.packed`). A step on the wire
- * is always a whole chord of its tile — `a` and `b` are `worldChord(tile,
- * chord)` one way round or the other — so it needs no coordinates: the
- * client has the field and every rule, and works them out again exactly
- * (the same floats the engine has). Each step is one integer,
- * `(tile − previous tile) · 128 + chord · 2 + end`, where `end` says which
- * end of the chord is `a`; neighbouring tiles along a line are mostly near in
- * index, so the deltas stay short. On a busy board this is ~8× smaller than
- * the plain snapshot (a 7.5 MB welcome became 0.9 MB).
+ * The compact form of a board snapshot (`welcome.packed`). Every line on the
+ * board is a stretch of one strand of its rule: it was grown a step at a time
+ * by `stepForward`, and joins, splits and folds only ever keep unbroken
+ * stretches of such steps. A clean rule pairs every chord end with exactly one
+ * other, so a strand never branches. A line is therefore fully described by
+ * its first step and its length; the client, which has the field and every
+ * rule, grows the rest again itself. A closed loop needs no length at all: it
+ * runs until it comes back to its first step. On a busy board this took a
+ * 22 MB welcome (90% of it step coordinates, ~129 bytes a step) to well under
+ * a megabyte.
+ *
+ * A step is packed as `tile · 128 + chord · 2 + end`, where `end` says which
+ * end of the chord is the step's `a`; `a` and `b` come back as the exact
+ * floats `worldChord` gives the engine.
  */
 
 import type { Pt } from '../tiles';
 import type { Field } from './field';
 import type { PathStatus, PathStepWire, PathWire } from './protocol';
 import { ruleKey, type PlayerRule } from './rule';
-import { chordTableFor, worldChord, type ChordTable } from './strand';
-
-/** A line in the packed snapshot. */
-export interface PackedPathWire {
-  readonly id: number;
-  readonly owner: string;
-  readonly status: PathStatus;
-  /** Its rule: an index into `PackedPaths.rules`. */
-  readonly rule: number;
-  /** Its steps, one number each (see the file's comment). */
-  readonly s: readonly number[];
-  /** An edge-to-edge claim's region as x, y, x, y, … (to 0.001). */
-  readonly region?: readonly number[];
-  readonly pattern?: number;
-  readonly spawned?: true;
-  readonly back?: true;
-}
+import { chordTableFor, stepForward, worldChord, type ChordTable } from './strand';
 
 export interface PackedPaths {
   /** Every rule a line on the board is drawn with. */
   readonly rules: readonly PlayerRule[];
-  readonly paths: readonly PackedPathWire[];
+  /** Every player who owns a line. */
+  readonly owners: readonly string[];
+  /**
+   * One array per line: `[id, owner, flags, rule, first, n]` — `owner` and
+   * `rule` index the tables above, `flags` is status (0 growing, 1 stuck,
+   * 2 closed) + 4 · spawned + 8 · back + 16 · pattern, `first` its first
+   * step, `n` its length (left off a closed loop, which runs until it is
+   * back at `first`).
+   */
+  readonly paths: readonly (readonly number[])[];
+  /** Edge-to-edge claims' regions by line id, as x, y, x, y, … (to 0.001). */
+  readonly regions: Readonly<Record<string, readonly number[]>>;
 }
 
-/** Room for every chord index a tile can have (its low bits are chord · 2 + end). */
+/** Room for every chord index a tile can have (the low bits are chord · 2 + end). */
 const LOW = 128;
+
+const STATUS: readonly PathStatus[] = ['growing', 'stuck', 'closed'];
 
 const round = (v: number): number => Math.round(v * 1000) / 1000;
 
@@ -50,46 +52,67 @@ export function packPaths(
 ): PackedPaths {
   const rules: PlayerRule[] = [];
   const ruleIndex = new Map<string, number>();
-  const out: PackedPathWire[] = [];
+  const owners: string[] = [];
+  const ownerIndex = new Map<string, number>();
+  const out: number[][] = [];
+  const regions: Record<string, number[]> = {};
   for (const { wire, rule, table } of paths) {
+    if (wire.steps.length === 0) continue;
     const key = ruleKey(rule);
     let r = ruleIndex.get(key);
     if (r === undefined) {
       r = rules.push(rule) - 1;
       ruleIndex.set(key, r);
     }
-    const s: number[] = [];
-    let last = 0;
-    for (const st of wire.steps) {
-      const seg = worldChord(field, table, st.tile, st.chord);
-      const end = seg[0].x === st.a.x && seg[0].y === st.a.y ? 0 : 1;
-      s.push((st.tile - last) * LOW + st.chord * 2 + end);
-      last = st.tile;
+    let o = ownerIndex.get(wire.owner);
+    if (o === undefined) {
+      o = owners.push(wire.owner) - 1;
+      ownerIndex.set(wire.owner, o);
     }
-    const { steps: _steps, region, ...rest } = wire;
-    const packed: { -readonly [K in keyof PackedPathWire]: PackedPathWire[K] } = { ...rest, rule: r, s };
-    if (region) packed.region = region.flatMap((q) => [round(q.x), round(q.y)]);
-    out.push(packed);
+    const s = wire.steps[0];
+    const seg = worldChord(field, table, s.tile, s.chord);
+    const end = seg[0].x === s.a.x && seg[0].y === s.a.y ? 0 : 1;
+    const flags = STATUS.indexOf(wire.status) + (wire.spawned ? 4 : 0) + (wire.back ? 8 : 0) + 16 * (wire.pattern ?? 0);
+    const line = [wire.id, o, flags, r, s.tile * LOW + s.chord * 2 + end];
+    if (wire.status !== 'closed' || wire.region) line.push(wire.steps.length);
+    out.push(line);
+    if (wire.region) regions[wire.id] = wire.region.flatMap((q) => [round(q.x), round(q.y)]);
   }
-  return { rules, paths: out };
+  return { rules, owners, paths: out, regions };
 }
 
-/** The plain paths back from a packed snapshot. */
+/**
+ * The plain paths back from a packed snapshot, each grown again from its
+ * first step. A strand that branches or ends before its length is a broken
+ * invariant (see the file's comment): it is reported, and the line is kept
+ * as far as it got.
+ */
 export function unpackPaths(field: Field, packed: PackedPaths): PathWire[] {
   const tables = packed.rules.map((rule) => chordTableFor(field, rule));
-  return packed.paths.map(({ rule, s, region, ...rest }) => {
+  return packed.paths.map(([id, owner, flags, rule, first, n]) => {
     const table = tables[rule];
-    const steps: PathStepWire[] = [];
-    let tile = 0;
-    for (const v of s) {
-      const low = ((v % LOW) + LOW) % LOW;
-      tile += (v - low) / LOW;
-      const chord = low >> 1;
-      const seg = worldChord(field, table, tile, chord);
-      const end = low & 1;
-      steps.push({ tile, chord, a: seg[end], b: seg[1 - end] });
+    const tile = Math.floor(first / LOW);
+    const chord = (first % LOW) >> 1;
+    const end = first & 1;
+    const seg = worldChord(field, table, tile, chord);
+    const steps: PathStepWire[] = [{ tile, chord, a: seg[end], b: seg[1 - end] }];
+    // A loop can't be longer than every chord on the board; the cap only guards a broken invariant.
+    const want = n ?? Infinity;
+    for (let guard = field.count * 8; steps.length < want && guard > 0; guard--) {
+      const out = stepForward(field, table, steps[steps.length - 1]);
+      if (out.kind !== 'step') {
+        console.error(`line ${id}: its strand ${out.kind === 'junction' ? 'branches' : 'ends'} after ${steps.length} of ${n ?? 'its loop'} steps`);
+        break;
+      }
+      if (n === undefined && out.step.tile === tile && out.step.chord === chord) break;
+      steps.push(out.step);
     }
-    const wire: { -readonly [K in keyof PathWire]: PathWire[K] } = { ...rest, steps };
+    const wire: { -readonly [K in keyof PathWire]: PathWire[K] } = { id, owner: packed.owners[owner], status: STATUS[flags & 3], steps };
+    const pattern = flags >> 4;
+    if (pattern !== 0) wire.pattern = pattern;
+    if (flags & 4) wire.spawned = true;
+    if (flags & 8) wire.back = true;
+    const region = packed.regions[id];
     if (region) {
       const pts: Pt[] = [];
       for (let i = 0; i + 1 < region.length; i += 2) pts.push({ x: region[i], y: region[i + 1] });

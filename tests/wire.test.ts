@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { Store } from '../client/src/store';
 import { Bots } from '../shared/game/bots';
 import { Engine } from '../shared/game/engine';
@@ -39,16 +39,21 @@ describe('packed welcome', () => {
   it.each([
     ['hex', 4],
     ['spectre', 3],
-  ] as const)('%s: unpacks to exactly the plain snapshot, and the store ends up the same', (family, level) => {
+  ] as const)('%s: every line grows back from its first step to exactly the plain snapshot, and the store ends up the same', (family, level) => {
     const { spec, field, knobs, e } = busy(family, level);
     const plain = JSON.parse(JSON.stringify(e.snapshot()));
     const packed = JSON.parse(JSON.stringify(e.packedSnapshot()));
     expect(plain.paths.length).toBeGreaterThan(20);
-    expect(JSON.stringify(packed).length).toBeLessThan(JSON.stringify(plain).length / 3);
+    // The lines themselves: a first step and a length each, where they were every step's coordinates.
+    expect(JSON.stringify(packed.packed.paths).length).toBeLessThan(JSON.stringify(plain.paths).length / 15);
 
     // Edge-to-edge claims too, whose regions travel as rounded numbers.
     expect(plain.paths.some((p: { region?: unknown }) => p.region)).toBe(true);
+    // Every line regrows from its first step: no strand branches or ends early.
+    const errors = vi.spyOn(console, 'error').mockImplementation(() => {});
     const back = unpackPaths(field, packed.packed);
+    expect(errors).not.toHaveBeenCalled();
+    errors.mockRestore();
     expect(back.length).toBe(plain.paths.length);
     back.forEach((q, i) => {
       const p = plain.paths[i];
