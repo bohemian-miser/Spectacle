@@ -185,8 +185,16 @@ line and you both die.
    of line you capture adds another head, up to 12 (`headPerCapture`,
    `maxHeadsTotal`; `KNOB_HEAD_PER_CAPTURE=0` turns it off)
    (`captureOnEnclose`, `maxCapturedPatterns`, default 11).
-8. **New rule** = restart: your lines and captured patterns go, and (by
-   default) your score too. Once you hold a captured pattern, the rule
+8. **New rule** keeps what it can of what you built. Your lines and
+   captured patterns go, and your score is spent on the new rule's circuits
+   through the tiles those lines held: longest first, each costing what it
+   scores once closed, until the next one costs more than what is left.
+   The circuits you can afford start again on the tiles you already held
+   and grow the rest of the way, earning their points back as they go. If
+   nobody gets in the way, you end up with the score you spent. A circuit
+   that is cut on the way is lost like any line; one that closes round a
+   rival's lines captures them as usual. Whatever the budget can't buy is
+   lost (`regrowOnRule`; off, a new rule starts from nothing). Once you hold a captured pattern, the rule
    screen also offers **Swap for …**: the rule you just built takes that
    pattern's slot (and its head, and its colour), and every line drawn with
    the old pattern goes — with the points it had earned. Your own rule, its
@@ -311,7 +319,7 @@ in solo with the lobby's picker (or `/?solo&bots=bridge+farmer`):
 | Kind | What it does |
 |---|---|
 | **Wanderer** | a random clean rule, random taps, now and then right beside a rival's line — the easy one |
-| **Rotator** | a wanderer that starts over with a new rule every ~5 minutes (`BOT_ROTATE_MS`, ±25%) |
+| **Rotator** | a wanderer that switches to a new rule every ~5 minutes (`BOT_ROTATE_MS`, ±25%) |
 | **Hunter** | picks on the leader: looks ~40 steps ahead from the tiles round their lines and taps where its line would hit theirs soonest |
 | **Farmer** | a rule that reliably closes small loops, a quiet corner of the board, and only taps where both ways round close without touching anyone |
 | **Bridge** | a rule that draws long thin lines; plans one through the busiest stretch of board and keeps tapping its middle — rebuilding what gets cut, cutting what's in the way, and turning a half that ran off the edge round so it can finish as an edge-to-edge claim |

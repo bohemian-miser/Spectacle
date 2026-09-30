@@ -65,6 +65,7 @@ import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, type Field } from './field';
 import { headLimit, stepIntervalMs, type Knobs } from './knobs';
+import { circuitBonus, planRegrow } from './regrow';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
@@ -104,6 +105,11 @@ export interface Path {
   spawned?: boolean;
   /** When its head stops, it turns round once and grows out of its other end (a flip's pieces). */
   twoWay?: boolean;
+  /**
+   * A circuit bought on a rule change (`regrowOnRule`) growing back: it was
+   * priced at `comboStart`, so it closes at that and doesn't feed the streak.
+   */
+  regrow?: boolean;
   /**
    * Its start grows too (a tap on the line while it grew, with a head to
    * spare): a second head, taking a head of its owner's. It advances in
@@ -252,14 +258,23 @@ export class Engine {
     return ev;
   }
 
-  /** New rule = restart: paths gone, score optionally reset. */
+  /**
+   * New rule: the old lines go, and with them their points. With
+   * `regrowOnRule` those points first buy the new rule's circuits through the
+   * tiles the old lines held (`planRegrow`, longest first), which are laid on
+   * those tiles and grow on from there to close, earning the points back.
+   */
   setRule(id: string, rule: PlayerRule): GameEvent[] {
     const p = this.players.get(id);
     if (!p) return [];
     const ev: GameEvent[] = [];
+    const table = chordTableFor(this.field, rule);
+    const tiles = new Set<number>();
+    for (const path of p.paths) for (const s of path.steps) tiles.add(s.tile);
+    const plan = this.knobs.regrowOnRule && tiles.size > 0 ? planRegrow(this.field, table, tiles, p.score, this.knobs) : null;
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
     p.rule = rule;
-    p.table = chordTableFor(this.field, rule);
+    p.table = table;
     p.patterns.length = 0;
     p.patterns.push({ rule, table: p.table, color: p.color });
     p.active = 0;
@@ -267,6 +282,11 @@ export class Engine {
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     ev.push({ t: 'rule', id, rule, score: p.score, combo: p.combo });
+    if (plan && plan.kept.length > 0) {
+      const only = new Set(plan.kept.flatMap((q) => q.seeds));
+      const strain: Strain = { rule, table, pattern: 0, wave: this.nextWave++ };
+      this.sprout(p, strain, [...new Set([...only].map((k) => Math.floor(k / 64)))], ev, { only, regrow: true });
+    }
     return ev;
   }
 
@@ -1031,6 +1051,7 @@ export class Engine {
           pattern: path.pattern,
           spawned: path.spawned,
           twoWay: path.twoWay,
+          regrow: path.regrow,
           wave: path.wave,
         };
         owner?.paths.push(q);
@@ -1102,16 +1123,25 @@ export class Engine {
    * no line is on or meets, strung into runs along the strand. Each run
    * becomes a line of `p`'s (same pattern and wave as `path`) that grows
    * outward from both ends (a run that already closes is a circuit on the
-   * spot). Placing them scores nothing — the tiles were already paid for.
-   * Returns the lines it made.
+   * spot). Placing them scores nothing — the tiles were already paid for —
+   * except when `regrow`: then the old lines' points are gone and the pieces
+   * earn theirs back, a tile each from the start. `only` limits the chords
+   * laid to those keys (`tile * 64 + chord`). Returns the lines it made.
    */
-  private sprout(p: Player, path: Strain, tiles: readonly number[], ev: GameEvent[]): Path[] {
+  private sprout(
+    p: Player,
+    path: Strain,
+    tiles: readonly number[],
+    ev: GameEvent[],
+    opts: { only?: ReadonlySet<number>; regrow?: boolean } = {},
+  ): Path[] {
     const { field } = this;
     const table = path.table;
     const key = (t: number, c: number): number => t * 64 + c;
     const free = new Set<number>();
     for (const tile of tiles) {
       tileChords(field, table, tile).forEach((_, c) => {
+        if (opts.only && !opts.only.has(key(tile, c))) return;
         if (!this.sproutBlocked(p, path.rule, tile, worldChord(field, table, tile, c))) free.add(key(tile, c));
       });
     }
@@ -1166,6 +1196,7 @@ export class Engine {
         twoWay: !closed,
         wave: path.wave,
       };
+      if (opts.regrow) piece.regrow = true;
       p.paths.push(piece);
       this.pathsById.set(piece.id, piece);
       made.push(piece);
@@ -1178,6 +1209,10 @@ export class Engine {
           this.occupancy.set(q.tile, occ);
         }
         occ.add(piece);
+      }
+      if (opts.regrow) {
+        piece.points += steps.length * this.knobs.pointsPerTile;
+        this.addScore(p, steps.length * this.knobs.pointsPerTile, ev);
       }
       if (closed) this.closeCircuit(p, piece, ev);
       else p.unsettled.push(piece);
@@ -1293,10 +1328,8 @@ export class Engine {
     const length = path.steps.length;
     const polygon = region ?? path.steps.map((s) => s.a);
     const area = polygonArea(polygon) / this.field.tileArea;
-    const combo = p.combo;
-    const bonus = Math.round(
-      combo * (k.circuitBase + k.circuitLengthWeight * length + k.circuitAreaWeight * area),
-    );
+    const combo = path.regrow ? k.comboStart : p.combo;
+    const bonus = circuitBonus(k, length, area, combo);
     this.setBack(path, false, ev);
     path.status = 'closed';
     path.progress = 0;
@@ -1306,7 +1339,8 @@ export class Engine {
         ? { t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo, region }
         : { t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo },
     );
-    p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
+    if (!path.regrow) p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
+    path.regrow = undefined;
     path.points += bonus;
     this.addScore(p, bonus, ev);
     this.captureEnclosed(p, polygon, ev);

@@ -23,6 +23,7 @@ shared/tiles/     Spectre's web/src/core vendored VERBATIM (geom, families,
 shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   field.ts        One finite substitution patch (flatten order = tile index).
                   Vertex-neighbour CSR, hit grid, pointInPolygon, polygonArea.
+  regrow.ts       planRegrow: what a new rule's budget buys (see "settled").
   rule.ts         PlayerRule = (subset, matching index per leaf type).
                   validateRule (rejects crossing/out-of-range), defaultRule
                   (selection 15), fassRule (tests only — see "settled"), random
@@ -314,6 +315,23 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `swap` event replaces the pattern in place — same index, same colour, same
   head — so path indices stay valid. Slot 0 never swaps; that is `setRule`.
   A rule held in another slot is refused.
+- **A new rule regrows, it doesn't restart** (`regrowOnRule`, default on).
+  `setRule` hands `planRegrow` the tiles the old lines held and the score
+  as a budget. It finds the new rule's circuits through those tiles (loops,
+  and strands running edge to edge) and prices each at what it scores
+  closed: `pointsPerTile` × length + `circuitBonus` at `comboStart`,
+  captures not included. It buys them longest first, skipping any that cost
+  more than what is left. The old lines are wiped (points leave), then
+  `sprout` (with `only` and `regrow`) lays the bought circuits' chords on
+  the held tiles alone, each scoring a tile's points. From there they grow
+  as flip pieces, and `regrow` paths close at `comboStart` without feeding
+  the streak. So an untouched board ends at exactly `plan.spent` ≤ the old
+  score (`tests/regrow.test.ts`), and a regrown circuit captures as normal
+  — the one way to come out ahead. A cut piece's circuit can still close:
+  the other pieces of it grow through the gap. `circuitBonus` snaps the
+  area to 1e-6: areas come in quarters, sums land on .5, and float noise
+  from a different loop start rounded the bonus the other way. A plan at
+  hex 5 with ~1.7k held tiles takes up to ~200 ms, on the message handler.
 - **Nothing in a message or a tick may throw the process down.** One Node
   process holds every room, so `guard()` logs an exception (every 10 s at
   most per source) instead. The welcome snapshot doesn't count towards

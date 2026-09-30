@@ -141,6 +141,13 @@ export interface Knobs {
   maxLivePaths: number;
   /** Choosing a new rule wipes your paths; does it also reset the score? */
   resetScoreOnRule: boolean;
+  /**
+   * A new rule keeps what you built, as far as it can: the old lines' points
+   * buy the new rule's circuits through the tiles they held (longest first,
+   * each at what it scores closed), which start on those tiles and grow on to
+   * close — on an untouched board, back to the score you paid.
+   */
+  regrowOnRule: boolean;
   maxPlayers: number;
   maxNameLength: number;
 }
@@ -188,6 +195,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   maxCompletedCircuits: 0,
   maxLivePaths: 0,
   resetScoreOnRule: true,
+  regrowOnRule: true,
   maxPlayers: 200,
   maxNameLength: 16,
 });

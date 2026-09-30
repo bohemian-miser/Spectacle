@@ -274,7 +274,9 @@ export function Lobby(props: LobbyProps): JSX.Element {
         {drafting.length > 0 && <span className="tag tag-bad">finish pairing {drafting.join(', ')} first</span>}
         {inArena && (
           <span className="muted">
-            Restarting wipes your lines{store.knobs?.resetScoreOnRule ? ' and score' : ''}
+            {store.knobs?.regrowOnRule
+              ? 'A new rule spends your score on its circuits through the tiles you hold, longest first; they grow back from there'
+              : `Restarting wipes your lines${store.knobs?.resetScoreOnRule ? ' and score' : ''}`}
             {slots.length > 0 ? '; swapping a pattern wipes only its lines, and the points they earned' : ''}.
           </span>
         )}
