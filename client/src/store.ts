@@ -4,7 +4,7 @@
  * a version counter so React HUD components can subscribe cheaply.
  */
 
-import { buildField, type Field } from '../../shared/game/field';
+import { buildField, tileCenter, type Field } from '../../shared/game/field';
 import { headLimit, type Knobs } from '../../shared/game/knobs';
 import type { Pt } from '../../shared/tiles';
 import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomSummary, ServerMessage } from '../../shared/game/protocol';
@@ -60,6 +60,23 @@ export interface Burst {
   readonly born: number;
 }
 
+/**
+ * A player switched rule: every tile their old lines were on sends a mote to
+ * the nearest tile the new rule's lines start on (`to`; null: nothing
+ * survived, it fades where it is). The renderer plays and prunes them.
+ */
+export interface Coalesce {
+  readonly owner: string;
+  readonly color: string;
+  readonly mine: boolean;
+  readonly born: number;
+  readonly from: readonly Pt[];
+  readonly to: readonly (Pt | null)[];
+}
+
+/** At most this many motes per switch (a huge territory is sampled evenly). */
+const MAX_MOTES = 1500;
+
 export type Listener = () => void;
 
 export class Store {
@@ -84,6 +101,13 @@ export class Store {
   /** Collision after-effects, in `performance.now()` time; the renderer prunes them. */
   dying: Dying[] = [];
   bursts: Burst[] = [];
+  coalesce: Coalesce[] = [];
+  /** The arena's camera when it was last left for the rule screen (`fieldKey` of its field). */
+  lastCamera: { field: string; camera: { x: number; y: number; scale: number } } | null = null;
+  /** Within one batch of events: tiles of lines wiped without a cutter, per owner… */
+  private readonly batchWipes = new Map<string, Set<number>>();
+  /** …and, for each player whose rule changed, the tiles their new lines start on. */
+  private readonly switched = new Map<string, Set<number>>();
   connected = false;
   version = 0;
   /** Bumped whenever geometry changed (paths), for the renderer's dirty flag. */
@@ -192,6 +216,9 @@ export class Store {
         this.occupancy.clear();
         this.dying = [];
         this.bursts = [];
+        this.coalesce = [];
+        // A new session (or a resume) starts from the whole field, not a view kept from before.
+        if (msg.you !== this.you) this.lastCamera = null;
         this.you = msg.you;
         this.resume = { id: msg.you, token: msg.token };
         this.room = msg.room ?? '';
@@ -214,7 +241,10 @@ export class Store {
         return;
       }
       case 'events':
+        this.batchWipes.clear();
+        this.switched.clear();
         for (const ev of msg.ev) this.apply(ev);
+        this.coalesceSwitches();
         this.emit();
         return;
       case 'error':
@@ -223,6 +253,41 @@ export class Store {
         return;
       case 'pong':
         return;
+    }
+  }
+
+  /**
+   * A rule change arrives as one batch: the old lines' wipes, the `rule`, then
+   * the steps of whatever regrows on the tiles they held. Each old tile sends
+   * a mote to the nearest new one — the tiles' energy gathering into what
+   * carries on.
+   */
+  private coalesceSwitches(): void {
+    const field = this.field;
+    if (!field || this.switched.size === 0) return;
+    const center = (t: number): Pt => tileCenter(field, t);
+    for (const [id, targets] of this.switched) {
+      const sources = this.batchWipes.get(id);
+      const p = this.players.get(id);
+      if (!sources || sources.size === 0 || !p) continue;
+      let src = [...sources];
+      if (src.length > MAX_MOTES) {
+        const stride = src.length / MAX_MOTES;
+        src = Array.from({ length: MAX_MOTES }, (_, k) => src[Math.floor(k * stride)]);
+      }
+      const dst = [...targets].map(center);
+      const from = src.map(center);
+      const to = src.map((t, k) => {
+        if (targets.has(t)) return from[k];
+        let best: Pt | null = null;
+        let bestD = Infinity;
+        for (const q of dst) {
+          const d = (q.x - from[k].x) ** 2 + (q.y - from[k].y) ** 2;
+          if (d < bestD) [best, bestD] = [q, d];
+        }
+        return best;
+      });
+      this.coalesce.push({ owner: id, color: p.color, mine: id === this.you, born: performance.now(), from, to });
     }
   }
 
@@ -262,6 +327,7 @@ export class Store {
           p.patterns = [{ rule: ev.rule, color: p.color }];
           p.active = 0;
           p.converted = 0;
+          this.switched.set(ev.id, new Set());
         }
         return;
       }
@@ -315,6 +381,7 @@ export class Store {
         }
         path.steps.push(ev.step);
         this.occupy(ev.step.tile, path);
+        this.switched.get(ev.owner)?.add(ev.step.tile);
         this.geometryVersion++;
         return;
       }
@@ -371,6 +438,11 @@ export class Store {
           }
         }
         if (path) {
+          if (ev.by === undefined) {
+            let tiles = this.batchWipes.get(path.owner);
+            if (!tiles) this.batchWipes.set(path.owner, (tiles = new Set()));
+            for (const s of path.steps) tiles.add(s.tile);
+          }
           this.paths.delete(ev.path);
           this.unoccupy(path);
         }
