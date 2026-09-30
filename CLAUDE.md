@@ -321,13 +321,18 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   and strands running edge to edge) and prices each at what it scores
   closed: `pointsPerTile` × length + `circuitBonus` at `comboStart`,
   captures not included. It buys them longest first, skipping any that cost
-  more than what is left. The old lines are wiped (points leave), then
+  more than what is left. Then the *stretch*: the cheapest circuit it
+  skipped comes too if what is left covers its held tiles (`seeds` ×
+  `pointsPerTile`), and the plan's `outcome` counts its full price; so a
+  few tiles on one huge circuit get it, if it grows round uncut. Strands
+  are walked whole (the stretch may be the biggest there is), capped at
+  `WALK_CAP` steps all told. The old lines are wiped (points leave), then
   `sprout` (with `only` and `regrow`) lays the bought circuits' chords on
   the held tiles alone, each scoring a tile's points. From there they grow
   as flip pieces, and `regrow` paths close at `comboStart` without feeding
-  the streak. So an untouched board ends at exactly `plan.spent` ≤ the old
-  score (`tests/regrow.test.ts`), and a regrown circuit captures as normal
-  — the one way to come out ahead. A cut piece's circuit can still close:
+  the streak. So an untouched board ends at exactly `plan.outcome`: at most
+  the old score, plus the stretch's price beyond its held tiles
+  (`tests/regrow.test.ts`). A regrown circuit also captures as normal. A cut piece's circuit can still close:
   the other pieces of it grow through the gap. `circuitBonus` snaps the
   area to 1e-6: areas come in quarters, sums land on .5, and float noise
   from a different loop start rounded the bonus the other way. A plan at

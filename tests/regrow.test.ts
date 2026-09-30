@@ -73,19 +73,23 @@ describe('regrowOnRule', () => {
       const plan = planRegrow(c.field, chordTableFor(c.field, rule), heldTiles(e, 'a'), before, KNOBS);
       expect(plan.kept.length).toBeGreaterThan(0);
 
+      const bought = [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])];
+      expect(plan.outcome).toBe(bought.reduce((n, q) => n + q.price, 0));
+
       e.setRule('a', rule);
       // Only the circuits' tiles you already held are yours straight away.
-      expect(a.score).toBeLessThan(plan.spent);
+      expect(a.score).toBeLessThan(plan.outcome);
       const { max } = settle(e, 'a');
 
-      expect(a.score).toBe(plan.spent);
-      expect(a.score).toBeLessThanOrEqual(before);
-      // Nothing along the way scored past what the old lines were worth.
-      expect(max).toBeLessThanOrEqual(before);
+      expect(a.score).toBe(plan.outcome);
+      expect(max).toBe(plan.outcome);
+      // Past the old score only by what the stretch circuit is worth beyond its held tiles.
+      if (plan.stretch) expect(plan.outcome - before).toBeLessThanOrEqual(plan.stretch.price - plan.stretch.seeds.length);
+      else expect(a.score).toBeLessThanOrEqual(before);
       // Every bought circuit closed, and nothing else is left.
       expect(a.paths.every((q) => q.status === 'closed')).toBe(true);
-      expect(a.paths).toHaveLength(plan.kept.length);
-      expect(a.paths.map((q) => q.steps.length).sort((x, y) => x - y)).toEqual(plan.kept.map((q) => q.length).sort((x, y) => x - y));
+      expect(a.paths).toHaveLength(bought.length);
+      expect(a.paths.map((q) => q.steps.length).sort((x, y) => x - y)).toEqual(bought.map((q) => q.length).sort((x, y) => x - y));
       // Zero-sum bookkeeping: the score is exactly what the lines carry.
       expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
       // Bought circuits close at the starting combo and don't feed the streak.
@@ -94,13 +98,14 @@ describe('regrowOnRule', () => {
   }
 
   // A few tiles, and the new rule's longest circuit through them would close
-  // off a third of the board: far more than the score. It is skipped, and the
-  // budget goes to the next circuits down that it does cover.
+  // off a third of the board: far more than the score. Other, cheaper
+  // circuits run through the tiles too, so it isn't even the stretch: it is
+  // skipped, and the budget goes to the circuits it does cover.
   for (const c of [
     { name: 'hex', field: HEX, rule: () => nthRule('hex', 10) },
     { name: 'spectre', field: SPECTRE, rule: () => nthRule('spectre', 22) },
   ]) {
-    it(`skips a circuit it can't afford at all and buys the next ones down (${c.name})`, () => {
+    it(`skips a giant it can't afford when cheaper circuits are there (${c.name})`, () => {
       const { e } = territory(c.field, 1, KNOBS, 3, 97);
       const a = e.players.get('a')!;
       const before = a.score;
@@ -112,10 +117,11 @@ describe('regrowOnRule', () => {
       expect(longest.price).toBeGreaterThan(before);
       expect(longest.area).toBeGreaterThan(c.field.count / 3);
       const plan = planRegrow(c.field, table, tiles, before, KNOBS);
+      const bought = [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])];
       expect(plan.kept.length).toBeGreaterThan(0);
-      expect(plan.kept.every((q) => q.length < longest.length)).toBe(true);
+      expect(bought.every((q) => q.length < longest.length)).toBe(true);
       // What was bought has to grow out of the held tiles to close.
-      expect(plan.kept.some((q) => q.steps.some((s) => !tiles.has(s.tile)))).toBe(true);
+      expect(bought.some((q) => q.steps.some((s) => !tiles.has(s.tile)))).toBe(true);
 
       e.setRule('a', rule);
       settle(e, 'a');
@@ -123,12 +129,53 @@ describe('regrowOnRule', () => {
       const big = new Set(longest.steps.map(chord));
       expect(a.paths.some((q) => q.steps.some((s) => big.has(chord(s))))).toBe(false);
       expect(a.paths.every((q) => q.status === 'closed')).toBe(true);
-      expect(a.paths).toHaveLength(plan.kept.length);
-      expect(a.score).toBe(plan.spent);
+      expect(a.paths).toHaveLength(bought.length);
+      expect(a.score).toBe(plan.outcome);
       expect(a.score).toBeGreaterThan(0);
-      expect(a.score).toBeLessThanOrEqual(before);
     });
   }
+
+  it('a few tiles on one giant circuit get the giant, for just the tiles they hold', () => {
+    // One short line (3 tiles, 16 points). Under the new rule those tiles lie
+    // on a single loop round 37% of the board, worth 679 closed: nothing is
+    // affordable, but its 4 held chords cost 4 points, so it is the stretch.
+    const { e } = territory(HEX, 1, KNOBS, 1, 97);
+    const a = e.players.get('a')!;
+    const before = a.score;
+    const tiles = heldTiles(e, 'a');
+    const rule = nthRule('hex', 22);
+    const plan = planRegrow(HEX, chordTableFor(HEX, rule), tiles, before, KNOBS);
+    expect(plan.kept).toHaveLength(0);
+    const giant = plan.stretch!;
+    expect(giant).toBeDefined();
+    expect(giant.price).toBeGreaterThan(10 * before);
+    expect(giant.area).toBeGreaterThan(HEX.count / 3);
+    expect(giant.seeds.length * KNOBS.pointsPerTile).toBeLessThanOrEqual(before);
+    expect(plan.spent).toBe(giant.seeds.length * KNOBS.pointsPerTile);
+    expect(plan.outcome).toBe(giant.price);
+
+    e.setRule('a', rule);
+    // Straight away: just the held chords, a point each.
+    expect(a.score).toBe(giant.seeds.length * KNOBS.pointsPerTile);
+    settle(e, 'a');
+    // Nobody in the way: it grows all the way round and closes.
+    expect(a.paths).toHaveLength(1);
+    expect(a.paths[0].status).toBe('closed');
+    expect(a.paths[0].steps).toHaveLength(giant.length);
+    expect(a.score).toBe(giant.price);
+  });
+
+  it('no stretch when the budget left cannot cover the held tiles of the cheapest too-dear circuit', () => {
+    const { e } = territory(HEX, 1, KNOBS, 1, 97);
+    const tiles = heldTiles(e, 'a');
+    const table = chordTableFor(HEX, nthRule('hex', 22));
+    const held = planRegrow(HEX, table, tiles, 1e9, KNOBS).kept[0].seeds.length * KNOBS.pointsPerTile;
+    expect(planRegrow(HEX, table, tiles, held, KNOBS).stretch).toBeDefined();
+    const short = planRegrow(HEX, table, tiles, held - 1, KNOBS);
+    expect(short.stretch).toBeUndefined();
+    expect(short.kept).toHaveLength(0);
+    expect(short.outcome).toBe(0);
+  });
 
   it('lays the new rule only on tiles the old lines held, and only the circuits it could afford', () => {
     const { e } = territory(SPECTRE, 3);
@@ -136,7 +183,7 @@ describe('regrowOnRule', () => {
     const rule = nthRule('spectre', 3);
     const plan = planRegrow(SPECTRE, chordTableFor(SPECTRE, rule), tiles, e.players.get('a')!.score, KNOBS);
     expect(plan.skipped.length).toBeGreaterThan(0);
-    const seeds = new Set(plan.kept.flatMap((q) => q.seeds));
+    const seeds = new Set([...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => q.seeds));
     const ev = e.setRule('a', rule);
     const steps = ev.filter((x) => x.t === 'step');
     expect(steps.length).toBeGreaterThan(0);
@@ -161,11 +208,11 @@ describe('regrowOnRule', () => {
     expect(all.length).toBeGreaterThan(3);
     for (const budget of [0, all[all.length - 1].price, Math.floor(full.spent / 3), full.spent - 1, full.spent]) {
       const plan = planRegrow(SPECTRE, table, tiles, budget, KNOBS);
-      expect(plan.spent).toBe(plan.kept.reduce((n, q) => n + q.price, 0));
+      const held = plan.stretch ? plan.stretch.seeds.length * KNOBS.pointsPerTile : 0;
+      expect(plan.spent).toBe(plan.kept.reduce((n, q) => n + q.price, 0) + held);
       expect(plan.spent).toBeLessThanOrEqual(budget);
       // Replay the greedy walk over every circuit there is, longest first:
-      // each is bought exactly when what is left covers it. (A small budget
-      // doesn't even walk strands too long to afford, so they aren't listed.)
+      // each is bought exactly when what is left covers it.
       let left = budget;
       const kept = new Set(plan.kept.map((q) => q.seeds[0]));
       for (const q of all) {
@@ -175,8 +222,19 @@ describe('regrowOnRule', () => {
         } else expect(q.price).toBeGreaterThan(left);
       }
       expect(plan.kept.length).toBe(kept.size);
+      // The stretch: the cheapest of the rest, when what is left covers its held tiles.
+      const rest = all.filter((q) => !kept.has(q.seeds[0]));
+      const cheapest = rest.reduce<(typeof rest)[number] | undefined>((m, q) => (!m || q.price < m.price ? q : m), undefined);
+      if (cheapest && cheapest.seeds.length * KNOBS.pointsPerTile <= left) {
+        expect(plan.stretch?.seeds[0]).toBe(cheapest.seeds[0]);
+        expect(plan.outcome).toBe(budget - left + cheapest.price);
+      } else {
+        expect(plan.stretch).toBeUndefined();
+        expect(plan.outcome).toBe(plan.spent);
+      }
     }
     expect(planRegrow(SPECTRE, table, tiles, full.spent, KNOBS).skipped).toHaveLength(0);
+    expect(planRegrow(SPECTRE, table, tiles, full.spent, KNOBS).stretch).toBeUndefined();
     expect(planRegrow(SPECTRE, table, tiles, 0, KNOBS).kept).toHaveLength(0);
   });
 
@@ -206,7 +264,7 @@ describe('regrowOnRule', () => {
     const closed = a.paths.filter((q) => q.status === 'closed');
     expect(closed.some((q) => q.steps.some((s) => s.tile === out.tile))).toBe(false);
     expect(closed.length).toBe(plan.kept.length - 1);
-    expect(a.score).toBe(plan.spent - target!.price);
+    expect(a.score).toBe(plan.outcome - target!.price);
     expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
   });
 
@@ -255,7 +313,7 @@ describe('regrowOnRule', () => {
     expect(ev.some((x) => x.t === 'take' && x.owner === 'a' && x.from === 'b')).toBe(true);
     expect(b.paths).toHaveLength(0);
     // Ann holds what she bought plus Bea's loop and the points it carried.
-    expect(a.score).toBeGreaterThan(plan.spent);
+    expect(a.score).toBeGreaterThan(plan.outcome);
     expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
   });
 

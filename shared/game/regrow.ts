@@ -3,12 +3,17 @@
  * the new rule's circuits through the tiles you already hold are what it
  * buys. Each costs what it would score closed — a point per tile plus the
  * circuit bonus at `comboStart` — and they are bought longest first, skipping
- * any the budget left can't cover. What can't be afforded is lost with the
- * rest of the old lines.
+ * any the budget left can't cover. Then one stretch: the cheapest circuit
+ * that was too dear comes too, if what is left still covers the tiles of it
+ * you hold (a point each, what they score the moment they're laid). So a
+ * few tiles on one huge circuit get that circuit — to grow it out and close
+ * it, if nobody cuts it first. What is left after that is lost with the old
+ * lines.
  *
  * Only the tiles you held change hands: the engine lays the bought circuits'
  * chords there and lets them grow the rest of the way, scoring as they go, so
- * on a board nobody touches you end with exactly what you paid. A circuit that
+ * on a board nobody touches you end with exactly `outcome`: what you paid,
+ * plus whatever the stretch circuit is worth beyond its tiles. A circuit that
  * gets cut on the way is lost like any other line; one that closes round a
  * rival's lines captures them as usual — a bonus the price doesn't include.
  *
@@ -39,10 +44,14 @@ export interface RegrowPlan {
   readonly budget: number;
   /** Bought, longest first. */
   readonly kept: readonly RegrowCircuit[];
-  /** Found but not affordable when their turn came. */
+  /** Found but not affordable when their turn came (the stretch not among them). */
   readonly skipped: readonly RegrowCircuit[];
-  /** Sum of the kept circuits' prices: the score they come to once all closed. */
+  /** The cheapest circuit too dear to buy, taken for just its held tiles' points. */
+  readonly stretch?: RegrowCircuit;
+  /** Budget used: the kept circuits' prices, plus the stretch's held tiles. */
   readonly spent: number;
+  /** The score it all comes to once closed, on a board nobody touches. */
+  readonly outcome: number;
 }
 
 /**
@@ -61,9 +70,8 @@ const WALK_CAP = 400_000;
 
 export function planRegrow(field: Field, table: ChordTable, tiles: ReadonlySet<number>, budget: number, knobs: Knobs): RegrowPlan {
   const key = (t: number, c: number): number => t * 64 + c;
-  // Nothing longer than this can be afforded: every tile costs a point at least.
-  const perTile = knobs.pointsPerTile + knobs.circuitLengthWeight * knobs.comboStart;
-  const limit = perTile > 0 ? Math.floor(budget / perTile) + 1 : 1_000_000;
+  // Every strand is walked whole, however long — the stretch may be the
+  // biggest circuit there is — but all of them together stay under WALK_CAP.
   const seen = new Set<number>();
   const found: RegrowCircuit[] = [];
   let walked = 0;
@@ -72,7 +80,7 @@ export function planRegrow(field: Field, table: ChordTable, tiles: ReadonlySet<n
     const chords = tileChords(field, table, tile);
     for (let c = 0; c < chords.length; c++) {
       if (seen.has(key(tile, c)) || walked >= WALK_CAP) continue;
-      const circuit = walkCircuit(field, table, tile, c, limit, knobs);
+      const circuit = walkCircuit(field, table, tile, c, WALK_CAP - walked, knobs);
       walked += circuit.walked.length;
       for (const s of circuit.walked) seen.add(key(s.tile, s.chord));
       if (!circuit.found) continue;
@@ -91,7 +99,21 @@ export function planRegrow(field: Field, table: ChordTable, tiles: ReadonlySet<n
       left -= q.price;
     } else skipped.push(q);
   }
-  return { budget, kept, skipped, spent: budget - left };
+  const spent = budget - left;
+  const outcome = spent;
+  let cheapest = -1;
+  for (let i = 0; i < skipped.length; i++) if (cheapest < 0 || skipped[i].price < skipped[cheapest].price) cheapest = i;
+  const over = cheapest >= 0 ? skipped[cheapest] : undefined;
+  const held = over ? over.seeds.length * knobs.pointsPerTile : 0;
+  if (!over || held > left) return { budget, kept, skipped, spent, outcome };
+  return {
+    budget,
+    kept,
+    skipped: skipped.filter((q) => q !== over),
+    stretch: over,
+    spent: spent + held,
+    outcome: outcome + over.price,
+  };
 }
 
 /**

@@ -189,9 +189,12 @@ line and you both die.
    captured patterns go, and your score is spent on the new rule's circuits
    through the tiles those lines held: longest first, each costing what it
    scores once closed, until the next one costs more than what is left.
-   The circuits you can afford start again on the tiles you already held
-   and grow the rest of the way, earning their points back as they go. If
-   nobody gets in the way, you end up with the score you spent. A circuit
+   Then one stretch: the cheapest circuit that was too dear comes too, if
+   what is left covers just the tiles of it you already hold. The circuits
+   you get start again on the tiles you already held and grow the rest of
+   the way, earning their points as they go. If nobody gets in the way, you
+   end up with the score you spent, plus whatever the stretch circuit is
+   worth beyond its tiles. A circuit
    that is cut on the way is lost like any line; one that closes round a
    rival's lines captures them as usual. Whatever the budget can't buy is
    lost (`regrowOnRule`; off, a new rule starts from nothing). Once you hold a captured pattern, the rule

@@ -261,8 +261,9 @@ export class Engine {
   /**
    * New rule: the old lines go, and with them their points. With
    * `regrowOnRule` those points first buy the new rule's circuits through the
-   * tiles the old lines held (`planRegrow`, longest first), which are laid on
-   * those tiles and grow on from there to close, earning the points back.
+   * tiles the old lines held (`planRegrow`: longest first, then the cheapest
+   * too-dear one for its held tiles), which are laid on those tiles and grow
+   * on from there to close, earning their points.
    */
   setRule(id: string, rule: PlayerRule): GameEvent[] {
     const p = this.players.get(id);
@@ -282,8 +283,8 @@ export class Engine {
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     ev.push({ t: 'rule', id, rule, score: p.score, combo: p.combo });
-    if (plan && plan.kept.length > 0) {
-      const only = new Set(plan.kept.flatMap((q) => q.seeds));
+    if (plan && (plan.kept.length > 0 || plan.stretch)) {
+      const only = new Set([...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => q.seeds));
       const strain: Strain = { rule, table, pattern: 0, wave: this.nextWave++ };
       this.sprout(p, strain, [...new Set([...only].map((k) => Math.floor(k / 64)))], ev, { only, regrow: true });
     }
