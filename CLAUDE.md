@@ -536,13 +536,24 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   keep the team hue and shade only by length (`circuitShade`); the circuit
   style's own hues are ignored while it is on. Go through `Renderer.colorOf`,
   not `store.pathColor`, for anything drawn per path.
-- **A rule change coalesces** (client only, no protocol): a switch arrives
-  as one batch — the old lines' `wipe`s (no `by`), the `rule`, then the
-  `step`s of what regrows on the held tiles. The store notes the wiped
-  tiles per owner (`batchWipes`) and, after a `rule`, the new steps' tiles
-  (`switched`); at the end of the batch (`coalesceSwitches`) every old tile
-  gets a mote aimed at the nearest new tile (itself if it carries on; null,
-  fade in place, if nothing regrows), capped at `MAX_MOTES` per switch.
+- **A rule change coalesces**: a switch arrives as one batch — the old
+  lines' `wipe`s (no `by`), the `rule`, then the `step`s of what regrows on
+  the held tiles. The store notes the wiped tiles per owner (`batchWipes`)
+  and, after a `rule`, the new steps' tiles (`switched`); at the end of the
+  batch (`coalesceSwitches`) every old tile's mote flows to the new tiles
+  *in proportion to the energy each takes in*: the `rule` event's `absorb`
+  (`[tile, share, …]`) gives each held tile the new rule starts on its
+  share of the budget — each bought circuit's price split over its held
+  tiles, over the budget. `motesPerTile` turns shares into whole motes
+  (they add up to what was bought: short of 1, the rest go nowhere and
+  fade in place; a stretch takes them all), and `flow` assigns them nearest
+  pairs first, so a tile that carries on keeps its own. Capped at
+  `MAX_MOTES` per switch; no `absorb` (regrow off): an even split.
+  Alongside, the end state it bought pulses once (`drawGhost`, ~0.15–1.9 s):
+  the `rule` event's `outline` (`[packed first step, length, kind, …]` per
+  bought circuit or line) is walked out on the client with the new rule
+  (`walkOutline`) into `Coalesce.ghost`, drawn as one `Path2D` per switch in
+  board units under a camera transform, so nothing is rebuilt per frame.
   `Renderer.drawCoalesce` plays them for `COALESCE_MS` — two `Path2D`
   fills per switch, only while one is playing. A cut (`by`) or a swap
   (no `rule`) makes none. The arena keeps its camera across the rule

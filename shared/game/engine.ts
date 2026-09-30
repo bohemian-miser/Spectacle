@@ -66,6 +66,7 @@ import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesInBox, type Box, type Field } from './field';
 import { headLimit, stepIntervalMs, type Knobs } from './knobs';
 import { circuitBonus, planRegrow } from './regrow';
+import { packStep } from './wire';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
@@ -304,7 +305,27 @@ export class Engine {
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     this.scoreDirty.delete(id);
-    ev.push({ t: 'rule', id, rule, score: p.score, combo: p.combo });
+    // Where the budget goes: each bought circuit's price, shared by the held
+    // tiles it starts again on — the switch animation sends the old tiles'
+    // motes there in proportion.
+    const absorb = new Map<number, number>();
+    for (const q of plan ? [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])] : []) {
+      const at = new Set(q.seeds.map((k) => Math.floor(k / 64)));
+      for (const t of at) absorb.set(t, (absorb.get(t) ?? 0) + q.price / at.size);
+    }
+    // Sent as fractions of the budget: they add up to what it bought (under 1
+    // when some was lost; past it with a stretch).
+    const budget = plan?.budget ?? 0;
+    const shares = budget > 0 ? [...absorb].flatMap(([t, w]) => [t, Number((w / budget).toPrecision(4))]) : [];
+    // …and what it bought, whole, for the animation to show before it regrows:
+    // each circuit or line as its first step and its length.
+    const outline = plan
+      ? [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => [packStep(this.field, table, q.steps[0]), q.steps.length, q.closed ? (q.region ? 2 : 1) : 0])
+      : [];
+    const rev: { -readonly [K in keyof Extract<GameEvent, { t: 'rule' }>]: Extract<GameEvent, { t: 'rule' }>[K] } = { t: 'rule', id, rule, score: p.score, combo: p.combo };
+    if (shares.length > 0) rev.absorb = shares;
+    if (outline.length > 0) rev.outline = outline;
+    ev.push(rev);
     if (plan && (plan.kept.length > 0 || plan.stretch)) {
       const only = new Set([...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => q.seeds));
       const strain: Strain = { rule, table, pattern: 0, wave: this.nextWave++ };

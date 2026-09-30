@@ -6,7 +6,8 @@
 
 import { buildField, tileCenter, type Field } from '../../shared/game/field';
 import { headLimit, type Knobs } from '../../shared/game/knobs';
-import { chordTableFor, type ChordTable } from '../../shared/game/strand';
+import { chordTableFor, stepForward, type ChordTable } from '../../shared/game/strand';
+import type { PlayerRule } from '../../shared/game/rule';
 import { nextStep, unpackPaths, unpackStep } from '../../shared/game/wire';
 import type { Pt } from '../../shared/tiles';
 import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomSummary, ServerMessage } from '../../shared/game/protocol';
@@ -76,10 +77,95 @@ export interface Coalesce {
   readonly born: number;
   readonly from: readonly Pt[];
   readonly to: readonly (Pt | null)[];
+  /**
+   * What the switch bought, whole: each circuit or line the new rule will
+   * regrow into (`kind` 1 a loop, 2 an edge-to-edge claim, 0 a line that
+   * stops short), for a brief pulse of the end state.
+   */
+  readonly ghost: readonly Ghost[];
+}
+
+export interface Ghost {
+  readonly pts: readonly Pt[];
+  readonly kind: number;
 }
 
 /** At most this many motes per switch (a huge territory is sampled evenly). */
 const MAX_MOTES = 1500;
+
+/**
+ * How many of `n` motes each target takes: `share` is each one's fraction of
+ * the budget the old tiles held. They add up to what the budget bought —
+ * short of 1 when some of it was lost, and those motes go nowhere; past 1
+ * (a stretch) every mote is taken. Largest remainders round it off.
+ */
+export function motesPerTile(share: readonly number[], n: number): number[] {
+  const total = share.reduce((a, b) => a + b, 0);
+  if (total <= 0 || n === 0) return share.map(() => 0);
+  const spent = Math.round(n * Math.min(1, total));
+  const exact = share.map((w) => (w / total) * spent);
+  const cap = exact.map(Math.floor);
+  let left = spent - cap.reduce((a, b) => a + b, 0);
+  const order = exact.map((x, i) => [x - Math.floor(x), i] as const).sort((a, b) => b[0] - a[0]);
+  for (let k = 0; left > 0 && k < order.length; k++, left--) cap[order[k][1]]++;
+  return cap;
+}
+
+/** The `rule` event's `outline`, walked out with the new rule into the points of each circuit or line. */
+export function walkOutline(field: Field, rule: PlayerRule, outline: readonly number[]): Ghost[] {
+  const table = chordTableFor(field, rule);
+  const out: Ghost[] = [];
+  for (let k = 0; k + 2 < outline.length; k += 3) {
+    let cur = unpackStep(field, table, outline[k]);
+    const pts: Pt[] = [cur.a];
+    for (let n = 1; n < outline[k + 1]; n++) {
+      const next = stepForward(field, table, cur);
+      if (next.kind !== 'step') break;
+      pts.push(next.step.a);
+      cur = next.step;
+    }
+    pts.push(cur.b);
+    out.push({ pts, kind: outline[k + 2] });
+  }
+  return out;
+}
+
+/**
+ * Send each mote (`from`) to a target with room left (`cap`), nearest pairs
+ * first — a greedy transport, so the flow looks local — and whatever finds no
+ * room nowhere (null).
+ */
+export function flow(from: readonly Pt[], to: readonly Pt[], cap: readonly number[]): (Pt | null)[] {
+  const room = [...cap];
+  const out: (Pt | null)[] = from.map(() => null);
+  const d = (i: number, j: number): number => (from[i].x - to[j].x) ** 2 + (from[i].y - to[j].y) ** 2;
+  // Each mote's nearest few targets, all the candidate pairs sorted by distance.
+  const K = Math.min(to.length, 8);
+  const pairs: [number, number, number][] = [];
+  for (let i = 0; i < from.length; i++) {
+    const near = to.map((_, j) => j).sort((a, b) => d(i, a) - d(i, b)).slice(0, K);
+    for (const j of near) pairs.push([d(i, j), i, j]);
+  }
+  pairs.sort((a, b) => a[0] - b[0]);
+  const done = new Set<number>();
+  for (const [, i, j] of pairs) {
+    if (done.has(i) || room[j] <= 0) continue;
+    out[i] = to[j];
+    room[j]--;
+    done.add(i);
+  }
+  // Motes whose nearest few filled up take the nearest target with room anywhere.
+  for (let i = 0; i < from.length; i++) {
+    if (done.has(i)) continue;
+    let best = -1;
+    for (let j = 0; j < to.length; j++) if (room[j] > 0 && (best < 0 || d(i, j) < d(i, best))) best = j;
+    if (best < 0) break;
+    out[i] = to[best];
+    room[best]--;
+    done.add(i);
+  }
+  return out;
+}
 
 export type Listener = () => void;
 
@@ -112,6 +198,10 @@ export class Store {
   private readonly batchWipes = new Map<string, Set<number>>();
   /** …and, for each player whose rule changed, the tiles their new lines start on. */
   private readonly switched = new Map<string, Set<number>>();
+  /** …and how much energy each of those tiles takes in (the `rule` event's `absorb`). */
+  private readonly absorb = new Map<string, Map<number, number>>();
+  /** …and the end state it grows towards (the `rule` event's `outline`, walked out). */
+  private readonly ghosts = new Map<string, Ghost[]>();
   connected = false;
   version = 0;
   /** Bumped whenever geometry changed (paths), for the renderer's dirty flag. */
@@ -297,6 +387,8 @@ export class Store {
       case 'events':
         this.batchWipes.clear();
         this.switched.clear();
+        this.absorb.clear();
+        this.ghosts.clear();
         for (const ev of msg.ev) this.apply(ev);
         this.coalesceSwitches();
         this.emit();
@@ -312,36 +404,33 @@ export class Store {
 
   /**
    * A rule change arrives as one batch: the old lines' wipes, the `rule`, then
-   * the steps of whatever regrows on the tiles they held. Each old tile sends
-   * a mote to the nearest new one — the tiles' energy gathering into what
-   * carries on.
+   * the steps of whatever regrows on the tiles they held. Each old tile's
+   * energy is a mote, and the motes flow to the tiles the new lines start on
+   * in proportion to what each takes in (`absorb`: the budget its circuits
+   * cost) — nearest first, each tile taking its share, a tile that carries
+   * on keeping its own. Energy the budget couldn't spend fades where it was.
    */
   private coalesceSwitches(): void {
     const field = this.field;
     if (!field || this.switched.size === 0) return;
-    const center = (t: number): Pt => tileCenter(field, t);
     for (const [id, targets] of this.switched) {
-      const sources = this.batchWipes.get(id);
+      const sources = this.batchWipes.get(id) ?? new Set<number>();
       const p = this.players.get(id);
-      if (!sources || sources.size === 0 || !p) continue;
+      const ghost = this.ghosts.get(id) ?? [];
+      if (!p || (sources.size === 0 && ghost.length === 0)) continue;
       let src = [...sources];
       if (src.length > MAX_MOTES) {
         const stride = src.length / MAX_MOTES;
         src = Array.from({ length: MAX_MOTES }, (_, k) => src[Math.floor(k * stride)]);
       }
-      const dst = [...targets].map(center);
-      const from = src.map(center);
-      const to = src.map((t, k) => {
-        if (targets.has(t)) return from[k];
-        let best: Pt | null = null;
-        let bestD = Infinity;
-        for (const q of dst) {
-          const d = (q.x - from[k].x) ** 2 + (q.y - from[k].y) ** 2;
-          if (d < bestD) [best, bestD] = [q, d];
-        }
-        return best;
-      });
-      this.coalesce.push({ owner: id, color: p.color, mine: id === this.you, born: performance.now(), from, to });
+      const weights = this.absorb.get(id);
+      const dst = [...targets];
+      // No shares (a server without them): an even split, all of it taken.
+      const share = dst.map((t) => (weights ? weights.get(t) ?? 0 : 1 / dst.length));
+      const cap = motesPerTile(share, src.length);
+      const from = src.map((t) => tileCenter(field, t));
+      const to = flow(from, dst.map((t) => tileCenter(field, t)), cap);
+      this.coalesce.push({ owner: id, color: p.color, mine: id === this.you, born: performance.now(), from, to, ghost });
     }
   }
 
@@ -387,6 +476,12 @@ export class Store {
           p.active = 0;
           p.converted = 0;
           this.switched.set(ev.id, new Set());
+          if (ev.outline && this.field) this.ghosts.set(ev.id, walkOutline(this.field, ev.rule, ev.outline));
+          if (ev.absorb) {
+            const w = new Map<number, number>();
+            for (let k = 0; k + 1 < ev.absorb.length; k += 2) w.set(ev.absorb[k], ev.absorb[k + 1]);
+            this.absorb.set(ev.id, w);
+          }
         }
         this.touchAll();
         return;
@@ -458,6 +553,7 @@ export class Store {
         const step = unpackStep(this.field, table, ev.first);
         path.steps.push(step);
         this.occupy(step.tile, path);
+        this.switched.get(ev.owner)?.add(step.tile);
         this.geometryVersion++;
         return;
       }
@@ -469,6 +565,7 @@ export class Store {
           if (!step) break;
           path.steps.push(step);
           this.occupy(step.tile, path);
+          this.switched.get(path.owner)?.add(step.tile);
         }
         this.geometryVersion++;
         return;
