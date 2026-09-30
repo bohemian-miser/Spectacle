@@ -109,6 +109,9 @@ describe('resume', () => {
     if (w2.t !== 'welcome') throw new Error();
     expect(w2.you).toBe(w1.you);
     expect(w2.players.map((p) => p.name)).toEqual(['Ann']);
+    // Until the client confirms it holds w2's token, w1's still works (the
+    // welcome could have been lost); after, it is dead.
+    b.send({ t: 'ack' });
     await awaitDrop(b);
 
     const c = new Client();
@@ -131,6 +134,46 @@ describe('resume', () => {
     if (w4.t !== 'welcome') throw new Error();
     expect(w4.you).not.toBe(w1.you);
     expect(w2.token).not.toBe(w1.token);
+    d.ws.close();
+  }, 20_000);
+
+  it('a resume whose welcome never arrived can resume again on the same ticket', async () => {
+    const a = new Client();
+    await a.open();
+    await a.until('hello');
+    a.send({ t: 'join', name: 'Gus', rule: fassRule('hex') });
+    const w1 = await a.until('welcome');
+    if (w1.t !== 'welcome') throw new Error();
+    await awaitDrop(a);
+
+    // The connection dies again right after the resume is sent: the server
+    // has handed out a new token, but the welcome carrying it is lost.
+    const b = new Client();
+    await b.open();
+    await b.until('hello');
+    b.send({ t: 'join', name: 'ignored', rule: fassRule('hex'), resume: { id: w1.you, token: w1.token } });
+    await fetch(`http://127.0.0.1:${PORT}/healthz`);
+    await awaitDrop(b);
+
+    // All the client has is still w1's token: it must still be Gus.
+    const c = new Client();
+    await c.open();
+    await c.until('hello');
+    c.send({ t: 'join', name: 'Gus', rule: fassRule('hex'), resume: { id: w1.you, token: w1.token } });
+    const w3 = await c.until('welcome');
+    if (w3.t !== 'welcome') throw new Error();
+    expect(w3.you).toBe(w1.you);
+    expect(w3.players.filter((p) => p.name === 'Gus')).toHaveLength(1);
+    // Once the client says it has the new token, the old one is dead.
+    c.send({ t: 'ack' });
+    await awaitDrop(c);
+    const d = new Client();
+    await d.open();
+    await d.until('hello');
+    d.send({ t: 'join', name: 'Hal', rule: fassRule('hex'), resume: { id: w1.you, token: w1.token } });
+    const w4 = await d.until('welcome');
+    if (w4.t !== 'welcome') throw new Error();
+    expect(w4.you).not.toBe(w1.you);
     d.ws.close();
   }, 20_000);
 
