@@ -196,6 +196,8 @@ export type GameEvent =
    * end. Its start-end steps arrive as `reverse`, the step's events, `reverse`.
    */
   | { readonly t: 'back'; readonly path: number; readonly back: boolean }
+  /** A slow piece (a flip's or a regrow's) became a head: it now grows at its owner's speed. */
+  | { readonly t: 'promote'; readonly path: number }
   /** A path was cut (`by`, in a collision at `at`) or abandoned (`by` absent) and is gone. */
   | { readonly t: 'wipe'; readonly path: number; readonly owner: string; readonly by?: string; readonly at?: Pt }
   | {

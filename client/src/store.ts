@@ -597,6 +597,12 @@ export class Store {
         this.geometryVersion++;
         return;
       }
+      case 'promote': {
+        const path = this.paths.get(ev.path);
+        if (path) path.spawned = undefined;
+        this.geometryVersion++;
+        return;
+      }
       case 'back': {
         const path = this.paths.get(ev.path);
         if (path) path.back = ev.back || undefined;
