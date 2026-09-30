@@ -13,14 +13,14 @@ const HEX = buildField({ family: 'hex', level: 3, rootTile: 'Delta' });
 const SPECTRE = buildField({ family: 'spectre', level: 3, rootTile: 'Delta' });
 const KNOBS: Knobs = { ...DEFAULT_KNOBS, maxHeads: 0 };
 
-/** Ann alone on the board with ~40 lines of the default rule, all grown out. */
-function territory(field: Field, seed: number, knobs: Knobs = KNOBS): { e: Engine; ev: GameEvent[] } {
+/** Ann alone on the board with `taps` lines of the default rule (a tile every `stride`), all grown out. */
+function territory(field: Field, seed: number, knobs: Knobs = KNOBS, taps = 40, stride = 7): { e: Engine; ev: GameEvent[] } {
   const e = new Engine(field, knobs, mulberry32(seed));
   const ev: GameEvent[] = [];
   const rule = defaultRule(field.family);
   ev.push(...e.addPlayer('a', 'Ann', rule));
   const table = chordTableFor(field, rule);
-  for (let i = 0, n = 0; i < field.count && n < 40; i += 7) {
+  for (let i = 0, n = 0; i < field.count && n < taps; i += stride) {
     if (tileChords(field, table, i).length === 0 || e.pathsOn(i).length > 0) continue;
     const r = e.tap('a', i, tileCenter(field, i));
     ev.push(...r.events);
@@ -90,6 +90,43 @@ describe('regrowOnRule', () => {
       expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
       // Bought circuits close at the starting combo and don't feed the streak.
       expect(a.combo).toBe(KNOBS.comboStart);
+    });
+  }
+
+  // A few tiles, and the new rule's longest circuit through them would close
+  // off a third of the board: far more than the score. It is skipped, and the
+  // budget goes to the next circuits down that it does cover.
+  for (const c of [
+    { name: 'hex', field: HEX, rule: () => nthRule('hex', 10) },
+    { name: 'spectre', field: SPECTRE, rule: () => nthRule('spectre', 22) },
+  ]) {
+    it(`skips a circuit it can't afford at all and buys the next ones down (${c.name})`, () => {
+      const { e } = territory(c.field, 1, KNOBS, 3, 97);
+      const a = e.players.get('a')!;
+      const before = a.score;
+      const tiles = heldTiles(e, 'a');
+      expect(tiles.size).toBeLessThan(12);
+      const rule = c.rule();
+      const table = chordTableFor(c.field, rule);
+      const longest = planRegrow(c.field, table, tiles, 1e9, KNOBS).kept[0];
+      expect(longest.price).toBeGreaterThan(before);
+      expect(longest.area).toBeGreaterThan(c.field.count / 3);
+      const plan = planRegrow(c.field, table, tiles, before, KNOBS);
+      expect(plan.kept.length).toBeGreaterThan(0);
+      expect(plan.kept.every((q) => q.length < longest.length)).toBe(true);
+      // What was bought has to grow out of the held tiles to close.
+      expect(plan.kept.some((q) => q.steps.some((s) => !tiles.has(s.tile)))).toBe(true);
+
+      e.setRule('a', rule);
+      settle(e, 'a');
+      const chord = (s: { tile: number; chord: number }) => s.tile * 64 + s.chord;
+      const big = new Set(longest.steps.map(chord));
+      expect(a.paths.some((q) => q.steps.some((s) => big.has(chord(s))))).toBe(false);
+      expect(a.paths.every((q) => q.status === 'closed')).toBe(true);
+      expect(a.paths).toHaveLength(plan.kept.length);
+      expect(a.score).toBe(plan.spent);
+      expect(a.score).toBeGreaterThan(0);
+      expect(a.score).toBeLessThanOrEqual(before);
     });
   }
 
