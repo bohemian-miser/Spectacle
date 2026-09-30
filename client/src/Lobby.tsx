@@ -274,8 +274,12 @@ export function Lobby(props: LobbyProps): JSX.Element {
         {drafting.length > 0 && <span className="tag tag-bad">finish pairing {drafting.join(', ')} first</span>}
         {inArena && (
           <span className="muted">
-            Restarting wipes your lines{store.knobs?.resetScoreOnRule ? ' and score' : ''}
-            {slots.length > 0 ? '; swapping a pattern wipes only its lines, and the points they earned' : ''}.
+            {store.knobs?.regrowOnRule
+              ? store.knobs.scoreTiles
+                ? 'A new rule redraws as many of your tiles as it can: its circuits through them, longest first, grow back from there'
+                : 'A new rule spends your score on its circuits through the tiles you hold, longest first; they grow back from there'
+              : `Restarting wipes your lines${store.knobs?.resetScoreOnRule ? ' and score' : ''}`}
+            {slots.length > 0 ? `; swapping a pattern wipes only its lines${store.knobs?.scoreTiles ? '' : ', and the points they earned'}` : ''}.
           </span>
         )}
       </footer>

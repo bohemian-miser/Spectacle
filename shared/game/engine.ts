@@ -65,6 +65,7 @@ import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesInBox, type Box, type Field } from './field';
 import { headLimit, stepIntervalMs, type Knobs } from './knobs';
+import { circuitBonus, planRegrow } from './regrow';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
@@ -105,6 +106,12 @@ export interface Path {
   spawned?: boolean;
   /** When its head stops, it turns round once and grows out of its other end (a flip's pieces). */
   twoWay?: boolean;
+  /**
+   * Bought on a rule change (`regrowOnRule`) and growing back: it was priced
+   * at `comboStart`, so it closes at that and doesn't feed the streak, and it
+   * stops short of an opponent's tile rather than cutting into it.
+   */
+  regrow?: boolean;
   /**
    * Its start grows too (a tap on the line while it grew, with a head to
    * spare): a second head, taking a head of its owner's. It advances in
@@ -205,6 +212,10 @@ export class Engine {
   private readonly pathsById = new Map<number, Path>();
   /** tile → paths that have a step on it. */
   private readonly occupancy = new Map<number, Set<Path>>();
+  /** player → tile → how many of their lines are on it (`hold`). */
+  private readonly heldTiles = new Map<string, Map<number, number>>();
+  /** Players whose tile count changed since the last `flushScores`. */
+  private readonly scoreDirty = new Set<string>();
   /** `shapeOf`'s answers. */
   private readonly shapes = new WeakMap<
     Path,
@@ -259,26 +270,47 @@ export class Engine {
     if (!p) return [];
     const ev: GameEvent[] = [];
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
+    this.flushScores(ev);
     this.players.delete(id);
+    this.heldTiles.delete(id);
     ev.push({ t: 'leave', id });
     return ev;
   }
 
-  /** New rule = restart: paths gone, score optionally reset. */
+  /**
+   * New rule: the old lines go, and with them their points. With
+   * `regrowOnRule` those points first buy the new rule's circuits through the
+   * tiles the old lines held (`planRegrow`: longest first, then the cheapest
+   * too-dear one for its held tiles), which are laid on those tiles and grow
+   * on from there to close, earning their points.
+   */
   setRule(id: string, rule: PlayerRule): GameEvent[] {
     const p = this.players.get(id);
     if (!p) return [];
     const ev: GameEvent[] = [];
+    const table = chordTableFor(this.field, rule);
+    const tiles = new Set<number>();
+    for (const path of p.paths) for (const s of path.steps) tiles.add(s.tile);
+    // A strand into a tile an opponent's line is on can't close: the plan stops there.
+    const blocked = (tile: number): boolean => this.rivalOn(tile, id);
+    const plan = this.knobs.regrowOnRule && tiles.size > 0 ? planRegrow(this.field, table, tiles, p.score, this.knobs, blocked) : null;
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
     p.rule = rule;
-    p.table = chordTableFor(this.field, rule);
+    p.table = table;
     p.patterns.length = 0;
     p.patterns.push({ rule, table: p.table, color: p.color });
     p.active = 0;
     p.converted.length = 0;
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
+    this.scoreDirty.delete(id);
     ev.push({ t: 'rule', id, rule, score: p.score, combo: p.combo });
+    if (plan && (plan.kept.length > 0 || plan.stretch)) {
+      const only = new Set([...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => q.seeds));
+      const strain: Strain = { rule, table, pattern: 0, wave: this.nextWave++ };
+      this.sprout(p, strain, [...new Set([...only].map((k) => Math.floor(k / 64)))], ev, { only, regrow: true });
+    }
+    this.flushScores(ev);
     return ev;
   }
 
@@ -325,6 +357,7 @@ export class Engine {
     if (p.patterns.some((q) => sameRule(q.rule, rule))) return { ok: false, reason: 'you already hold that pattern' };
     const ev: GameEvent[] = [];
     for (const path of p.paths.filter((q) => q.pattern === index)) this.dropPath(path, undefined, ev);
+    this.flushScores(ev);
     const pattern: Pattern = { rule, table: chordTableFor(this.field, rule), color: old.color };
     p.patterns[index] = pattern;
     ev.push({ t: 'swap', id, index, pattern: patternPublic(pattern) });
@@ -370,6 +403,12 @@ export class Engine {
   // --- taps ----------------------------------------------------------------
 
   tap(id: string, tile: number, at: Pt, ev: GameEvent[] = []): { result: TapResult; events: GameEvent[] } {
+    const out = this.tapOnce(id, tile, at, ev);
+    this.flushScores(out.events);
+    return out;
+  }
+
+  private tapOnce(id: string, tile: number, at: Pt, ev: GameEvent[]): { result: TapResult; events: GameEvent[] } {
     const p = this.players.get(id);
     if (!p) return { result: { ok: false, reason: 'not in the arena' }, events: ev };
     if (this.now < p.respawnAt) {
@@ -609,6 +648,7 @@ export class Engine {
       }
       this.settle(p, ev);
     }
+    this.flushScores(ev);
     return ev;
   }
 
@@ -759,6 +799,12 @@ export class Engine {
       this.stop(path, ev);
       return path;
     }
+    // Regrowing after a rule change, a line was priced up to an opponent's
+    // tile, not through it: it stops there instead of crashing into them.
+    if (path.regrow && this.rivalOn(s.tile, p.id)) {
+      this.stop(path, ev);
+      return path;
+    }
     const own = this.meetOwn(p, path, s);
     if (own === 'stop') {
       this.stop(path, ev);
@@ -821,6 +867,8 @@ export class Engine {
         return;
       }
     }
+    // Done regrowing: from here it is a line like any other.
+    path.regrow = undefined;
     this.setStatus(path, 'stuck', ev);
   }
 
@@ -878,24 +926,14 @@ export class Engine {
     const i = p.paths.indexOf(other);
     if (i >= 0) p.paths.splice(i, 1);
     this.pathsById.delete(other.id);
-    for (const q of other.steps) {
-      const occ = this.occupancy.get(q.tile);
-      if (!occ) continue;
-      occ.delete(other);
-      if (occ.size === 0) this.occupancy.delete(q.tile);
-    }
+    for (const q of other.steps) this.occDel(q.tile, other);
     other.status = 'stuck';
     other.progress = 0;
     ev.push({ t: 'wipe', path: other.id, owner: other.owner });
     for (const q of tail) {
       ev.push(this.stepEvent(p, path, q));
       path.steps.push(q);
-      let occ = this.occupancy.get(q.tile);
-      if (!occ) {
-        occ = new Set();
-        this.occupancy.set(q.tile, occ);
-      }
-      occ.add(path);
+      this.occAdd(q.tile, path);
     }
     path.points += other.points;
     return path;
@@ -920,9 +958,7 @@ export class Engine {
     for (let i = moved.length - 1; i >= 0; i--) {
       const q = moved[i];
       ev.push({ t: 'step', path: other.id, owner: p.id, step: { tile: q.tile, chord: q.chord, a: q.b, b: q.a } });
-      let occ = this.occupancy.get(q.tile);
-      if (!occ) this.occupancy.set(q.tile, (occ = new Set()));
-      occ.add(other);
+      this.occAdd(q.tile, other);
     }
     ev.push({ t: 'reverse', path: other.id });
     other.steps.length = 0;
@@ -952,12 +988,7 @@ export class Engine {
     }
     const stepEv = this.stepEvent(p, path, s);
     path.steps.push(s);
-    let occ = this.occupancy.get(s.tile);
-    if (!occ) {
-      occ = new Set();
-      this.occupancy.set(s.tile, occ);
-    }
-    occ.add(path);
+    this.occAdd(s.tile, path);
     ev.push(stepEv);
     path.points += this.knobs.pointsPerTile;
     this.addScore(p, this.knobs.pointsPerTile, ev);
@@ -1031,12 +1062,7 @@ export class Engine {
     }
     const old = path.steps.slice();
     const head = (r: { end: number }) => !closed && path.status === 'growing' && r.end === n;
-    for (const q of old) {
-      const occ = this.occupancy.get(q.tile);
-      if (!occ) continue;
-      occ.delete(path);
-      if (occ.size === 0) this.occupancy.delete(q.tile);
-    }
+    for (const q of old) this.occDel(q.tile, path);
     const owner = this.players.get(path.owner);
     const wire: { id: number; start: number; end: number; status: PathStatus }[] = [];
     const was = path.burn;
@@ -1059,6 +1085,7 @@ export class Engine {
           pattern: path.pattern,
           spawned: path.spawned,
           twoWay: path.twoWay,
+          regrow: path.regrow,
           wave: path.wave,
         };
         owner?.paths.push(q);
@@ -1071,11 +1098,7 @@ export class Engine {
         q.twoWay = false;
       }
       q.status = status;
-      for (const st of q.steps) {
-        let occ = this.occupancy.get(st.tile);
-        if (!occ) this.occupancy.set(st.tile, (occ = new Set()));
-        occ.add(q);
-      }
+      for (const st of q.steps) this.occAdd(st.tile, q);
       // An end burns when the gap is right behind it, or when it burned already.
       const start = loop || r.start > 0 || !!was?.start;
       const end = loop || r.end < n || !!was?.end;
@@ -1102,13 +1125,7 @@ export class Engine {
     path.steps.splice(run.end);
     path.steps.splice(0, run.start);
     path.region = undefined;
-    if (!path.steps.some((q) => q.tile === tile)) {
-      const occ = this.occupancy.get(tile);
-      if (occ) {
-        occ.delete(path);
-        if (occ.size === 0) this.occupancy.delete(tile);
-      }
-    }
+    if (!path.steps.some((q) => q.tile === tile)) this.occDel(tile, path);
     const status: PathStatus = growing ? 'growing' : 'stuck';
     if (!growing) {
       path.progress = 0;
@@ -1133,16 +1150,25 @@ export class Engine {
    * no line is on or meets, strung into runs along the strand. Each run
    * becomes a line of `p`'s (same pattern and wave as `path`) that grows
    * outward from both ends (a run that already closes is a circuit on the
-   * spot). Placing them scores nothing — the tiles were already paid for.
-   * Returns the lines it made.
+   * spot). Placing them scores nothing — the tiles were already paid for —
+   * except when `regrow`: then the old lines' points are gone and the pieces
+   * earn theirs back, a tile each from the start. `only` limits the chords
+   * laid to those keys (`tile * 64 + chord`). Returns the lines it made.
    */
-  private sprout(p: Player, path: Strain, tiles: readonly number[], ev: GameEvent[]): Path[] {
+  private sprout(
+    p: Player,
+    path: Strain,
+    tiles: readonly number[],
+    ev: GameEvent[],
+    opts: { only?: ReadonlySet<number>; regrow?: boolean } = {},
+  ): Path[] {
     const { field } = this;
     const table = path.table;
     const key = (t: number, c: number): number => t * 64 + c;
     const free = new Set<number>();
     for (const tile of tiles) {
       tileChords(field, table, tile).forEach((_, c) => {
+        if (opts.only && !opts.only.has(key(tile, c))) return;
         if (!this.sproutBlocked(p, path.rule, tile, worldChord(field, table, tile, c))) free.add(key(tile, c));
       });
     }
@@ -1197,18 +1223,18 @@ export class Engine {
         twoWay: !closed,
         wave: path.wave,
       };
+      if (opts.regrow) piece.regrow = true;
       p.paths.push(piece);
       this.pathsById.set(piece.id, piece);
       made.push(piece);
       for (const q of steps) {
         ev.push(this.stepEvent(p, piece, q));
         piece.steps.push(q);
-        let occ = this.occupancy.get(q.tile);
-        if (!occ) {
-          occ = new Set();
-          this.occupancy.set(q.tile, occ);
-        }
-        occ.add(piece);
+        this.occAdd(q.tile, piece);
+      }
+      if (opts.regrow) {
+        piece.points += steps.length * this.knobs.pointsPerTile;
+        this.addScore(p, steps.length * this.knobs.pointsPerTile, ev);
       }
       if (closed) this.closeCircuit(p, piece, ev);
       else p.unsettled.push(piece);
@@ -1279,6 +1305,64 @@ export class Engine {
     return hitOwner;
   }
 
+  /** Put `path` on `tile` (once, however many of its steps are there). */
+  private occAdd(tile: number, path: Path): void {
+    let occ = this.occupancy.get(tile);
+    if (!occ) this.occupancy.set(tile, (occ = new Set()));
+    if (occ.has(path)) return;
+    occ.add(path);
+    this.hold(path.owner, tile, 1);
+  }
+
+  /** Take `path` off `tile`. */
+  private occDel(tile: number, path: Path): void {
+    const occ = this.occupancy.get(tile);
+    if (!occ || !occ.delete(path)) return;
+    if (occ.size === 0) this.occupancy.delete(tile);
+    this.hold(path.owner, tile, -1);
+  }
+
+  /**
+   * How many of `owner`'s lines are on `tile`, by `d`. The tiles with any are
+   * what they control: with `scoreTiles` that count is their score, kept live
+   * here and sent as a `score` event when the engine call finishes (`flushScores`).
+   */
+  private hold(owner: string, tile: number, d: number): void {
+    let held = this.heldTiles.get(owner);
+    if (!held) this.heldTiles.set(owner, (held = new Map()));
+    const n = (held.get(tile) ?? 0) + d;
+    if (n > 0) held.set(tile, n);
+    else held.delete(tile);
+    if (!this.knobs.scoreTiles) return;
+    const p = this.players.get(owner);
+    if (p && p.score !== held.size) {
+      p.score = held.size;
+      this.scoreDirty.add(owner);
+    }
+  }
+
+  /** Tiles `id`'s lines are on: their score, with `scoreTiles`. */
+  tilesHeld(id: string): number {
+    return this.heldTiles.get(id)?.size ?? 0;
+  }
+
+  /** A `score` event for everyone whose tile count changed during this call. */
+  private flushScores(ev: GameEvent[]): void {
+    for (const id of this.scoreDirty) {
+      const p = this.players.get(id);
+      if (p) ev.push({ t: 'score', id, score: p.score, combo: p.combo });
+    }
+    this.scoreDirty.clear();
+  }
+
+  /** Is any line of someone other than `id` on `tile`? */
+  private rivalOn(tile: number, id: string): boolean {
+    const occ = this.occupancy.get(tile);
+    if (!occ) return false;
+    for (const q of occ) if (q.owner !== id) return true;
+    return false;
+  }
+
   /** Does the line's start sit on the field's edge, with nowhere to go behind it? */
   private startsAtEdge(path: Path): boolean {
     const s = path.steps[0];
@@ -1324,10 +1408,9 @@ export class Engine {
     const length = path.steps.length;
     const polygon = region ?? path.steps.map((s) => s.a);
     const area = polygonArea(polygon) / this.field.tileArea;
-    const combo = p.combo;
-    const bonus = Math.round(
-      combo * (k.circuitBase + k.circuitLengthWeight * length + k.circuitAreaWeight * area),
-    );
+    const combo = path.regrow ? k.comboStart : p.combo;
+    // Scoring by tiles, a circuit pays nothing of its own: its tiles are the score.
+    const bonus = k.scoreTiles ? 0 : circuitBonus(k, length, area, combo);
     this.setBack(path, false, ev);
     path.status = 'closed';
     path.progress = 0;
@@ -1337,7 +1420,8 @@ export class Engine {
         ? { t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo, region }
         : { t: 'circuit', path: path.id, owner: p.id, length, area, bonus, combo },
     );
-    p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
+    if (!path.regrow) p.combo = Math.min(k.comboMax, p.combo + k.comboStep);
+    path.regrow = undefined;
     path.points += bonus;
     this.addScore(p, bonus, ev);
     this.captureEnclosed(p, polygon, ev);
@@ -1466,7 +1550,10 @@ export class Engine {
     const i = from.paths.indexOf(path);
     if (i >= 0) from.paths.splice(i, 1);
     to.paths.push(path);
+    const tiles = new Set(path.steps.map((q) => q.tile));
+    for (const t of tiles) this.occDel(t, path);
     path.owner = to.id;
+    for (const t of tiles) this.occAdd(t, path);
     path.pattern = index;
     path.burn = undefined;
     ev.push({ t: 'take', path: path.id, from: from.id, owner: to.id, pattern: index });
@@ -1542,12 +1629,7 @@ export class Engine {
       if (i >= 0) p.paths.splice(i, 1);
     }
     this.pathsById.delete(path.id);
-    for (const s of path.steps) {
-      const occ = this.occupancy.get(s.tile);
-      if (!occ) continue;
-      occ.delete(path);
-      if (occ.size === 0) this.occupancy.delete(s.tile);
-    }
+    for (const s of path.steps) this.occDel(s.tile, path);
     ev.push(
       by === undefined
         ? { t: 'wipe', path: path.id, owner: path.owner }
@@ -1565,6 +1647,8 @@ export class Engine {
   }
 
   private addScore(p: Player, delta: number, ev: GameEvent[]): void {
+    // Scoring by tiles, the count moves with the lines themselves (`hold`).
+    if (this.knobs.scoreTiles) return;
     p.score = Math.max(0, p.score + delta);
     ev.push({ t: 'score', id: p.id, score: p.score, combo: p.combo });
   }

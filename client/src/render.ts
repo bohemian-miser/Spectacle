@@ -16,7 +16,7 @@ import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand'
 import { getSettings, type CircuitStyle, type Settings } from './settings';
 import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
 import type { Camera } from './camera';
-import type { Burst, ClientPath, ClientPlayer, Store } from './store';
+import type { Burst, ClientPath, ClientPlayer, Coalesce, Store } from './store';
 import type { PathStepWire } from '../../shared/game/protocol';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
@@ -57,6 +57,8 @@ const PATTERN_ALPHA = 0.35;
 /** How long a cut line takes to fade off the board, and a collision's sparks to die out (ms). */
 const FADE_MS = 650;
 const SPARK_MS = 480;
+/** A rule change's motes: gathering to the tiles that carry on, then fading into them. */
+const COALESCE_MS = 1100;
 const SPARKS = 7;
 
 /** Least time between two rebuilds of the tile tints while the board is busy (ms). */
@@ -890,7 +892,47 @@ export class Renderer {
       store.bursts = store.bursts.filter((b) => now - b.born < SPARK_MS);
       for (const b of store.bursts) if (inView(b.at.x, b.at.y)) this.drawBurst(b, now, toScreen);
     }
+    if (store.coalesce.length > 0) {
+      store.coalesce = store.coalesce.filter((c) => now - c.born < COALESCE_MS);
+      for (const c of store.coalesce) this.drawCoalesce(c, now, toScreen, inView);
+    }
     this.drawNames(toScreen);
+  }
+
+  /**
+   * A rule change: a faint mote on every tile the old lines held drifts to
+   * the nearest tile the new lines start on and melts into it, so the old
+   * territory's energy visibly gathers into what carries on. A mote with
+   * nowhere to go fades where it is. One fill per switch, only while it plays.
+   */
+  private drawCoalesce(c: Coalesce, now: number, toScreen: (x: number, y: number) => [number, number], inView: (x: number, y: number) => boolean): void {
+    const ctx = this.ctx;
+    const u = Math.min(1, (now - c.born) / COALESCE_MS);
+    const move = Math.min(1, u / 0.75);
+    const e = move < 0.5 ? 4 * move * move * move : 1 - (-2 * move + 2) ** 3 / 2; // ease in-out
+    const fade = u < 0.75 ? 1 : 1 - (u - 0.75) / 0.25;
+    const r = Math.max(1.5 * this.dpr, 0.2 * this.camera.scale * this.dpr);
+    const ink = strandColor(this.board, this.teams ? this.teamColor(c.mine) : c.color);
+    const glow = new Path2D();
+    const core = new Path2D();
+    for (let k = 0; k < c.from.length; k++) {
+      const a = c.from[k];
+      const b = c.to[k] ?? a;
+      const x = a.x + (b.x - a.x) * e;
+      const y = a.y + (b.y - a.y) * e;
+      if (!inView(x, y)) continue;
+      const [sx, sy] = toScreen(x, y);
+      glow.moveTo(sx + r * 2, sy);
+      glow.arc(sx, sy, r * 2, 0, Math.PI * 2);
+      core.moveTo(sx + r, sy);
+      core.arc(sx, sy, r, 0, Math.PI * 2);
+    }
+    ctx.fillStyle = ink;
+    ctx.globalAlpha = 0.12 * fade;
+    ctx.fill(glow);
+    ctx.globalAlpha = 0.4 * fade;
+    ctx.fill(core);
+    ctx.globalAlpha = 1;
   }
 
   /**

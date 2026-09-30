@@ -26,6 +26,12 @@ export interface Knobs {
   tickMs: number;
 
   // --- scoring -------------------------------------------------------------
+  /**
+   * Your score is the number of tiles your lines are on — growing, stuck or
+   * closed, each tile once — and nothing else: circuits pay no bonus. Off:
+   * the older points scoring below (tiles, circuit bonuses, combo).
+   */
+  scoreTiles: boolean;
   /** Points for every tile a path grows into (including the tapped one). */
   pointsPerTile: number;
   /** Flat bonus for closing a circuit, before the combo multiplier. */
@@ -141,6 +147,13 @@ export interface Knobs {
   maxLivePaths: number;
   /** Choosing a new rule wipes your paths; does it also reset the score? */
   resetScoreOnRule: boolean;
+  /**
+   * A new rule keeps what you built, as far as it can: the old lines' points
+   * buy the new rule's circuits through the tiles they held (longest first,
+   * each at what it scores closed), which start on those tiles and grow on to
+   * close — on an untouched board, back to the score you paid.
+   */
+  regrowOnRule: boolean;
   maxPlayers: number;
   maxNameLength: number;
 }
@@ -150,6 +163,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   mode: 'conquest',
   tickMs: 50,
 
+  scoreTiles: true,
   pointsPerTile: 1,
   circuitBase: 10,
   circuitLengthWeight: 1,
@@ -188,6 +202,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   maxCompletedCircuits: 0,
   maxLivePaths: 0,
   resetScoreOnRule: true,
+  regrowOnRule: true,
   maxPlayers: 200,
   maxNameLength: 16,
 });

@@ -38,8 +38,9 @@ line and you both die.
 |---|---|
 | 🧬 **Design a rule** | Switch edge classes on and drag dot to dot to pair them up inside each tile type. The preview shows the loops and loose ends your rule makes. |
 | 👆 **Tap a tile** | Your line starts there and grows by itself, one tile per step, following your rule. Press-and-hold then drag to paint starts across an area. |
-| ⭕ **Close circuits** | A line that comes back to where it began is a circuit: points for length and enclosed area, and your combo climbs. Run edge to edge and you claim the smaller side of the field. |
-| ⚔️ **Cut and be cut** | Lines that cross both die, taking their points with them — scoring is zero-sum. You can't start on a rival's line; you have to grow into it. |
+| 🟩 **Hold tiles** | Your score is the number of tiles your lines are on. |
+| ⭕ **Close circuits** | A line that comes back to where it began is a circuit. Run edge to edge and you claim the smaller side of the field. Close one round a rival's line and it's yours (below). |
+| ⚔️ **Cut and be cut** | Lines that cross both die, and their tiles are no longer anyone's. You can't start on a rival's line; you have to grow into it. |
 | 🏴 **Capture** | Close a circuit round a rival's line and it's yours. In **Normal** mode it turns into your own pattern on their tiles; in **Conquest (beta)** you take their pattern itself, a new way to draw. Either way, each new kind of line you capture is another head growing at once. |
 | 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. Nobody will tell you which. |
 
@@ -102,15 +103,20 @@ line and you both die.
 3. **It grows.** One tile per step; the step interval shrinks with your score
    (in tiles per second, `(1000 / baseStepMs) × (1 + score × speedPerPoint) / speedDivisor + speedOffset`
    — 5.5 tiles/s at score 0 — capped at `maxSpeed` = 500 tiles/s on a 242k-tile field, scaled by the
-   log of the field's tile count). Each tile
-   entered scores `pointsPerTile`. Scoring is zero-sum: every line carries the
-   points it earned, and when the line goes (cut, abandoned, capped) so do its
-   points — your score is what you hold on the board. `stealFraction` hands a
-   share of a cut line's points to the cutter (default 0).
-4. **Circuits.** If the line arrives back at its first chord it closes. You get
+   log of the field's tile count). **Your score is the number of tiles your
+   lines are on** — growing, stuck or closed, each tile once however many of
+   your lines cross it (`scoreTiles`, default on). It is what you hold on the
+   board: a tile counts while a line of yours is on it, and stops counting
+   when that line goes (cut, taken, flipped away).
+   With `KNOB_SCORE_TILES=0` the older points scoring comes back: each tile
+   entered scores `pointsPerTile`, every line carries the points it earned and
+   they go with it, and `stealFraction` hands a share of a cut line's points
+   to the cutter (default 0).
+4. **Circuits.** If the line arrives back at its first chord it closes and
+   stays on the board. It scores nothing beyond its tiles, but it is how you
+   capture (below). In points scoring it pays
    `combo × (circuitBase + lengthWeight × length + areaWeight × enclosedArea)`,
-   and your combo multiplier steps up for the next one. Closed circuits stay on
-   the board.
+   and your combo multiplier steps up for the next one.
 5. **Tails.** No continuation (an odd tile, a junction under `junctionPolicy:
    'stop'`, or the edge of the field) leaves the line stuck. You have one head
    at a time (`maxHeads`, default 1): a tap while your line is still growing is
@@ -185,8 +191,26 @@ line and you both die.
    of line you capture adds another head, up to 12 (`headPerCapture`,
    `maxHeadsTotal`; `KNOB_HEAD_PER_CAPTURE=0` turns it off)
    (`captureOnEnclose`, `maxCapturedPatterns`, default 11).
-8. **New rule** = restart: your lines and captured patterns go, and (by
-   default) your score too. Once you hold a captured pattern, the rule
+8. **New rule** keeps what it can of what you built. Your lines and
+   captured patterns go, and your score is spent on the new rule's circuits
+   through the tiles those lines held: longest first, each costing what it
+   scores once closed (its tiles; in points scoring, its tiles plus bonus),
+   until the next one costs more than what is left.
+   Then one stretch: the cheapest circuit that was too dear comes too, if
+   what is left covers just the tiles of it you already hold. The circuits
+   you get start again on the tiles you already held and grow the rest of
+   the way, earning their points as they go. If nobody gets in the way, you
+   end up with the score you spent, plus whatever the stretch circuit is
+   worth beyond its tiles. The plan goes by the board as it is: where the
+   new rule's line would run into someone else's line (or a dead end) it
+   can't close, so it is priced as a line up to there, a point a tile, and
+   when it regrows it stops there rather than crashing into them. Each
+   circuit or line is paid for once, however many of your tiles it runs
+   through. In effect you only gain tiles from a new rule by giving up
+   smaller circuits you could otherwise have kept. A circuit
+   that is cut on the way is lost like any line; one that closes round a
+   rival's lines captures them as usual. Whatever the budget can't buy is
+   lost (`regrowOnRule`; off, a new rule starts from nothing). Once you hold a captured pattern, the rule
    screen also offers **Swap for …**: the rule you just built takes that
    pattern's slot (and its head, and its colour), and every line drawn with
    the old pattern goes — with the points it had earned. Your own rule, its
@@ -311,7 +335,7 @@ in solo with the lobby's picker (or `/?solo&bots=bridge+farmer`):
 | Kind | What it does |
 |---|---|
 | **Wanderer** | a random clean rule, random taps, now and then right beside a rival's line — the easy one |
-| **Rotator** | a wanderer that starts over with a new rule every ~5 minutes (`BOT_ROTATE_MS`, ±25%) |
+| **Rotator** | a wanderer that switches to a new rule every ~5 minutes (`BOT_ROTATE_MS`, ±25%) |
 | **Hunter** | picks on the leader: looks ~40 steps ahead from the tiles round their lines and taps where its line would hit theirs soonest |
 | **Farmer** | a rule that reliably closes small loops, a quiet corner of the board, and only taps where both ways round close without touching anyone |
 | **Bridge** | a rule that draws long thin lines; plans one through the busiest stretch of board and keeps tapping its middle — rebuilding what gets cut, cutting what's in the way, and turning a half that ran off the edge round so it can finish as an edge-to-edge claim |

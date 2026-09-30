@@ -12,7 +12,8 @@ const FIELD = buildField({ family: 'spectre', level: 3, rootTile: 'Delta' });
 const SEL15 = ruleFromCombo('spectre', '15', '0000000000');
 
 function make(knobs: Partial<Knobs> = {}) {
-  return new Engine(FIELD, { ...DEFAULT_KNOBS, ...knobs }, mulberry32(42));
+  // These tests pin the points scoring (bonuses, combo, points moving with lines).
+  return new Engine(FIELD, { ...DEFAULT_KNOBS, scoreTiles: false, ...knobs }, mulberry32(42));
 }
 
 /** A tile whose sel-15 strand closes into a small loop. */
@@ -164,8 +165,8 @@ describe('engine', () => {
     }
   });
 
-  it('a new rule wipes paths and resets the score', () => {
-    const e = make();
+  it('a new rule wipes paths and resets the score (regrowOnRule off)', () => {
+    const e = make({ regrowOnRule: false });
     e.addPlayer('a', 'Ann', SEL15);
     const { tile } = loopTile();
     e.tap('a', tile, tileCenter(FIELD, tile));
@@ -296,7 +297,7 @@ describe('engine', () => {
   });
 
   it('a new rule loses every point the old lines held', () => {
-    const e = make({ resetScoreOnRule: false });
+    const e = make({ resetScoreOnRule: false, regrowOnRule: false });
     e.addPlayer('a', 'Ann', SEL15);
     const { tile } = loopTile();
     e.tap('a', tile, tileCenter(FIELD, tile));
@@ -566,7 +567,7 @@ describe('engine', () => {
       const a = e.players.get('a')!;
       expect(a.patterns).toHaveLength(2);
       const ev = e.setRule('a', SEL15);
-      expect(ev.at(-1)).toMatchObject({ t: 'rule', id: 'a' });
+      expect(ev.find((x) => x.t === 'rule')).toMatchObject({ t: 'rule', id: 'a' });
       expect(a.patterns.map((q) => q.rule)).toEqual([SEL15]);
       expect(a.active).toBe(0);
       expect(e.headLimit(a)).toBe(1);

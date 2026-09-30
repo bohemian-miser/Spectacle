@@ -23,6 +23,7 @@ shared/tiles/     Spectre's web/src/core vendored VERBATIM (geom, families,
 shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   field.ts        One finite substitution patch (flatten order = tile index).
                   Vertex-neighbour CSR, hit grid, pointInPolygon, polygonArea.
+  regrow.ts       planRegrow: what a new rule's budget buys (see "settled").
   rule.ts         PlayerRule = (subset, matching index per leaf type).
                   validateRule (rejects crossing/out-of-range), defaultRule
                   (selection 15), fassRule (tests only — see "settled"), random
@@ -219,7 +220,20 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Speed** in tiles/s: `(1000 / baseStepMs)(1 + score·speedPerPoint) /
   speedDivisor + speedOffset` (÷10, +5), capped at `maxSpeedFor` (500 at the
   242k-tile reference, log-scaled). `speedFor` / `stepIntervalMs`.
-- **Zero-sum.** `path.points` leaves with the path. `stealFraction` default 0.
+- **Score = tiles you control** (`scoreTiles`, default on): the number of
+  distinct tiles any line of yours is on, any status. The engine keeps it
+  live in `hold` — every change to `occupancy` goes through `occAdd` /
+  `occDel`, which count per (player, tile); `takePath` moves the counts to
+  the new owner — and each public call (`tick`, `tap`, `setRule`,
+  `swapPattern`, `removePlayer`) ends with `flushScores`: one `score` event
+  per player whose count changed. `addScore` is a no-op and circuits pay no
+  `bonus` (0 in the event) in this mode; `path.points` is still kept but
+  means nothing. `tests/score.test.ts` checks score = tiles for every
+  player after every tick of busy games, client included. Speed still runs
+  on score, so games are slower than under points (tiles are far fewer
+  than bonus-inflated points) — `speedPerPoint` wants retuning. Tests that
+  pin the points scoring set `scoreTiles: false`.
+- **Zero-sum** (points scoring). `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
 - **You can't start** on a rival's line or inside a rival's closed circuit —
   nor on a tile your own line is on (see below). A rival's line owns its
@@ -320,6 +334,45 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `swap` event replaces the pattern in place — same index, same colour, same
   head — so path indices stay valid. Slot 0 never swaps; that is `setRule`.
   A rule held in another slot is refused.
+- **A new rule regrows, it doesn't restart** (`regrowOnRule`, default on).
+  `setRule` hands `planRegrow` the tiles the old lines held and the score
+  as a budget. It finds the new rule's circuits through those tiles (loops,
+  and strands running edge to edge) and prices each at what it scores
+  closed: `pointsPerTile` × length + `circuitBonus` at `comboStart`,
+  captures not included — with `scoreTiles`, just its distinct tiles, and
+  the plan's `outcome` is the tiles of everything bought taken together. It buys them longest first, skipping any that cost
+  more than what is left. Then the *stretch*: the cheapest circuit it
+  skipped comes too if what is left covers its held tiles (`seeds` ×
+  `pointsPerTile`), and the plan's `outcome` counts its full price; so a
+  few tiles on one huge circuit get it, if it grows round uncut. Strands
+  are walked whole (the stretch may be the biggest there is), capped at
+  `WALK_CAP` steps all told, but a walk stops at the first tile an
+  opponent's line is on (`blocked`, whole tiles). Such a strand — or one
+  that ends in a tail — is a *line* (`closed: false`): the run from where
+  it stops one way to where it stops the other, priced `pointsPerTile` ×
+  length, no bonus. Regrowing, a `regrow` piece stops (`stop`, which turns
+  a two-way piece round) short of any opponent's tile rather than cutting
+  into it, so a bought line ends exactly where it was priced; a rival's
+  growing line hitting it still cuts it. `regrow` clears once a piece is
+  stuck. Each strand (run) is found and priced once, whatever number of
+  held tiles it passes. With capture off, a sweep of 50 switches against
+  frozen rivals (232 bought lines) ended exactly on `outcome` every time;
+  with capture on, only above it. Stopping at opponents also
+  keeps plans cheap on a live board — at hex 5 with one rival on ~3% of
+  the tiles, the worst plan fell from 88 ms to 2.6 ms; only a near-empty
+  board still walks the huge strands. The infinite-line rules are eligible
+  like any other (owner's call: finding one should pay). The old lines are wiped (points leave), then
+  `sprout` (with `only` and `regrow`) lays the bought circuits' chords on
+  the held tiles alone, each scoring a tile's points. From there they grow
+  as flip pieces, and `regrow` paths close at `comboStart` without feeding
+  the streak. So an untouched board ends at exactly `plan.outcome`: at most
+  the old score, plus the stretch's price beyond its held tiles
+  (`tests/regrow.test.ts`). A regrown circuit also captures as normal. A cut piece's circuit can still close:
+  the other pieces of it grow through the gap. `circuitBonus` snaps the
+  area to 1e-6: areas come in quarters, sums land on .5, and float noise
+  from a different loop start rounded the bonus the other way. A plan at
+  hex 5 with ~1.7k held tiles on an empty board takes up to ~200 ms, on
+  the message handler.
 - **Nothing in a message or a tick may throw the process down.** One Node
   process holds every room, so `guard()` logs an exception (every 10 s at
   most per source) instead. The welcome snapshot doesn't count towards
@@ -478,6 +531,19 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   keep the team hue and shade only by length (`circuitShade`); the circuit
   style's own hues are ignored while it is on. Go through `Renderer.colorOf`,
   not `store.pathColor`, for anything drawn per path.
+- **A rule change coalesces** (client only, no protocol): a switch arrives
+  as one batch — the old lines' `wipe`s (no `by`), the `rule`, then the
+  `step`s of what regrows on the held tiles. The store notes the wiped
+  tiles per owner (`batchWipes`) and, after a `rule`, the new steps' tiles
+  (`switched`); at the end of the batch (`coalesceSwitches`) every old tile
+  gets a mote aimed at the nearest new tile (itself if it carries on; null,
+  fade in place, if nothing regrows), capped at `MAX_MOTES` per switch.
+  `Renderer.drawCoalesce` plays them for `COALESCE_MS` — two `Path2D`
+  fills per switch, only while one is playing. A cut (`by`) or a swap
+  (no `rule`) makes none. The arena keeps its camera across the rule
+  screen (`store.lastCamera`, same field only; a new player id resets it),
+  so the switch plays out where you were looking — before, coming back
+  re-fitted the whole field. `tests/coalesce.test.ts`.
 - **Name labels** (`Renderer.drawNames`): each player's name floats in a
   pill over one of their tiles — at most one label per player on screen. A
   label sticks to its step while that step is on screen and still theirs;
