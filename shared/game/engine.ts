@@ -106,8 +106,9 @@ export interface Path {
   /** When its head stops, it turns round once and grows out of its other end (a flip's pieces). */
   twoWay?: boolean;
   /**
-   * A circuit bought on a rule change (`regrowOnRule`) growing back: it was
-   * priced at `comboStart`, so it closes at that and doesn't feed the streak.
+   * Bought on a rule change (`regrowOnRule`) and growing back: it was priced
+   * at `comboStart`, so it closes at that and doesn't feed the streak, and it
+   * stops short of an opponent's tile rather than cutting into it.
    */
   regrow?: boolean;
   /**
@@ -272,8 +273,8 @@ export class Engine {
     const table = chordTableFor(this.field, rule);
     const tiles = new Set<number>();
     for (const path of p.paths) for (const s of path.steps) tiles.add(s.tile);
-    // A strand through a tile an opponent's line is on can't close: the plan stops there.
-    const blocked = (tile: number): boolean => [...(this.occupancy.get(tile) ?? [])].some((q) => q.owner !== id);
+    // A strand into a tile an opponent's line is on can't close: the plan stops there.
+    const blocked = (tile: number): boolean => this.rivalOn(tile, id);
     const plan = this.knobs.regrowOnRule && tiles.size > 0 ? planRegrow(this.field, table, tiles, p.score, this.knobs, blocked) : null;
     for (const path of [...p.paths]) this.dropPath(path, undefined, ev);
     p.rule = rule;
@@ -754,6 +755,12 @@ export class Engine {
       this.stop(path, ev);
       return path;
     }
+    // Regrowing after a rule change, a line was priced up to an opponent's
+    // tile, not through it: it stops there instead of crashing into them.
+    if (path.regrow && this.rivalOn(s.tile, p.id)) {
+      this.stop(path, ev);
+      return path;
+    }
     const own = this.meetOwn(p, path, s);
     if (own === 'stop') {
       this.stop(path, ev);
@@ -816,6 +823,8 @@ export class Engine {
         return;
       }
     }
+    // Done regrowing: from here it is a line like any other.
+    path.regrow = undefined;
     this.setStatus(path, 'stuck', ev);
   }
 
@@ -1284,6 +1293,14 @@ export class Engine {
       }
     }
     return hitOwner;
+  }
+
+  /** Is any line of someone other than `id` on `tile`? */
+  private rivalOn(tile: number, id: string): boolean {
+    const occ = this.occupancy.get(tile);
+    if (!occ) return false;
+    for (const q of occ) if (q.owner !== id) return true;
+    return false;
   }
 
   /** Does the line's start sit on the field's edge, with nowhere to go behind it? */

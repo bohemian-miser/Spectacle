@@ -4,7 +4,7 @@ import { Engine } from '../shared/game/engine';
 import { buildField, pointInPolygon, tileCenter, type Field } from '../shared/game/field';
 import { DEFAULT_KNOBS, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
-import { planRegrow } from '../shared/game/regrow';
+import { circuitBonus, planRegrow } from '../shared/game/regrow';
 import { mulberry32 } from '../shared/game/rng';
 import { defaultRule, randomCleanRule, type PlayerRule } from '../shared/game/rule';
 import { chordTableFor, tileChords, walkStrand } from '../shared/game/strand';
@@ -258,22 +258,58 @@ describe('regrowOnRule', () => {
     return { e, a, rule, table, tiles, plan, target, out, mid };
   }
 
-  it('an opponent already on a circuit stops the plan there: it is not bought', () => {
-    const { e, a, rule, table, tiles, plan, target, out, mid } = lonePiece();
-    // Bea's line sits on a tile of it before Ann switches.
-    expect(e.tap('b', out.tile, mid).result.ok).toBe(true);
+  it('an opponent already on a circuit makes it a line up to them: priced by its tiles, regrown to there', () => {
+    const { e, a, rule, table, tiles, target, out, mid } = lonePiece();
+    // Bea's line sits on a tile of it before Ann switches, and stays put.
+    const tap = e.tap('b', out.tile, mid);
+    expect(tap.result.ok).toBe(true);
+    if (!tap.result.ok) return;
+    e.getPath(tap.result.path)!.status = 'stuck';
     const blocked = (t: number) => e.pathsOn(t).some((q) => q.owner === 'b');
     const now = planRegrow(HEX, table, tiles, a.score, KNOBS, blocked);
-    const key = (q: { seeds: readonly number[] }) => q.seeds[0];
-    expect([...now.kept, ...now.skipped, ...(now.stretch ? [now.stretch] : [])].map(key)).not.toContain(key(target));
-    // Every other circuit is still found; the budget it would have cost goes elsewhere or is lost.
-    expect(now.kept.length + now.skipped.length + (now.stretch ? 1 : 0)).toBe(plan.kept.length + plan.skipped.length + (plan.stretch ? 1 : 0) - 1);
+    const all = [...now.kept, ...now.skipped, ...(now.stretch ? [now.stretch] : [])];
+    const chord = (s: { tile: number; chord: number }) => s.tile * 64 + s.chord;
+    const line = all.find((q) => q.seeds.some((k) => target.seeds.includes(k)))!;
+    expect(line).toBeDefined();
+    // The same strand, cut open at Bea's tile: every chord but hers, priced by its tiles alone.
+    expect(line.closed).toBe(false);
+    expect(line.steps.some((s) => s.tile === out.tile)).toBe(false);
+    expect(new Set(line.steps.map(chord))).toEqual(new Set(target.steps.filter((s) => s.tile !== out.tile).map(chord)));
+    expect(line.price).toBe(line.length * KNOBS.pointsPerTile);
+    expect(now.kept).toContain(line);
+
     e.setRule('a', rule);
     settle(e, 'a');
-    const chord = (s: { tile: number; chord: number }) => s.tile * 64 + s.chord;
-    const lost = new Set(target.steps.map(chord));
-    expect(a.paths.some((q) => q.steps.some((s) => lost.has(chord(s))))).toBe(false);
+    // It grew right up to Bea on both sides and stopped: nobody was cut.
+    expect(e.players.get('b')!.paths).toHaveLength(1);
+    const drawn = a.paths.filter((q) => q.steps.some((s) => line.seeds.includes(chord(s))));
+    expect(drawn).toHaveLength(1);
+    expect(drawn[0].status).toBe('stuck');
+    expect(new Set(drawn[0].steps.map(chord))).toEqual(new Set(line.steps.map(chord)));
     expect(a.score).toBe(now.outcome);
+  });
+
+  it('prices a circuit once, however many held tiles it runs through', () => {
+    const { e } = territory(HEX, 1);
+    const tiles = heldTiles(e, 'a');
+    const plan = planRegrow(HEX, chordTableFor(HEX, nthRule('hex', 1)), tiles, 1e9, KNOBS);
+    const many = plan.kept.filter((q) => q.seeds.length >= 3);
+    expect(many.length).toBeGreaterThan(0);
+    const chord = (s: { tile: number; chord: number }) => s.tile * 64 + s.chord;
+    // No chord belongs to two entries: each strand is walked and priced once.
+    const owner = new Map<number, number>();
+    plan.kept.forEach((q, i) => {
+      for (const s of q.steps) {
+        expect(owner.has(chord(s))).toBe(false);
+        owner.set(chord(s), i);
+      }
+    });
+    for (const q of many) {
+      expect(q.seeds.every((k) => owner.get(k) === plan.kept.indexOf(q))).toBe(true);
+      const bonus = q.closed ? circuitBonus(KNOBS, q.length, q.area, KNOBS.comboStart) : 0;
+      expect(q.price).toBe(q.length * KNOBS.pointsPerTile + bonus);
+    }
+    expect(plan.outcome).toBe(plan.kept.reduce((n, q) => n + q.price, 0));
   });
 
   it('a circuit an opponent gets in the way of while it regrows is cut like any line, and its price is lost', () => {
@@ -301,10 +337,10 @@ describe('regrowOnRule', () => {
     // Bea draws a small loop inside a bought circuit still regrowing, clear of everything.
     const growing = new Set(a.paths.filter((q) => q.status === 'growing').flatMap((q) => q.steps.map((s) => s.tile * 64 + s.chord)));
     const loops = plan.kept
-      .filter((q) => !q.region && q.steps.some((s) => growing.has(s.tile * 64 + s.chord)))
+      .filter((q) => q.closed && !q.region && q.steps.some((s) => growing.has(s.tile * 64 + s.chord)))
       .sort((x, y) => y.area - x.area);
     // Clear of every bought circuit's tiles, and round none of them.
-    const bought = plan.kept.flatMap((q) => q.steps);
+    const bought = [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])].flatMap((q) => q.steps);
     const boughtTiles = new Set(bought.map((s) => s.tile));
     let bea: number | null = null;
     const rng = mulberry32(11);
@@ -325,7 +361,9 @@ describe('regrowOnRule', () => {
           if (!clear) continue;
           if (!e.players.has('b')) e.addPlayer('b', 'Bea', bRule);
           else e.setRule('b', bRule);
-          if (e.tap('b', i, tileCenter(HEX, i)).result.ok) bea = i;
+          // Tap chord 0 itself (the strand just walked), not the tile's nearest chord.
+          const s0 = w.steps[0];
+          if (e.tap('b', i, { x: (s0.a.x + s0.b.x) / 2, y: (s0.a.y + s0.b.y) / 2 }).result.ok) bea = i;
         }
         if (bea !== null) break;
       }

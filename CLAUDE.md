@@ -327,7 +327,17 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   few tiles on one huge circuit get it, if it grows round uncut. Strands
   are walked whole (the stretch may be the biggest there is), capped at
   `WALK_CAP` steps all told, but a walk stops at the first tile an
-  opponent's line is on (`blocked`): that strand is no circuit. That also
+  opponent's line is on (`blocked`, whole tiles). Such a strand — or one
+  that ends in a tail — is a *line* (`closed: false`): the run from where
+  it stops one way to where it stops the other, priced `pointsPerTile` ×
+  length, no bonus. Regrowing, a `regrow` piece stops (`stop`, which turns
+  a two-way piece round) short of any opponent's tile rather than cutting
+  into it, so a bought line ends exactly where it was priced; a rival's
+  growing line hitting it still cuts it. `regrow` clears once a piece is
+  stuck. Each strand (run) is found and priced once, whatever number of
+  held tiles it passes. With capture off, a sweep of 50 switches against
+  frozen rivals (232 bought lines) ended exactly on `outcome` every time;
+  with capture on, only above it. Stopping at opponents also
   keeps plans cheap on a live board — at hex 5 with one rival on ~3% of
   the tiles, the worst plan fell from 88 ms to 2.6 ms; only a near-empty
   board still walks the huge strands. The infinite-line rules are eligible

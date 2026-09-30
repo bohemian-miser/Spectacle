@@ -10,6 +10,11 @@
  * it, if nobody cuts it first. What is left after that is lost with the old
  * lines.
  *
+ * The budget already paid for the tiles you hold, and a bought circuit's held
+ * tiles score straight back when laid; so really the switch trades: tiles
+ * you gain beyond your own cost the smaller circuits you can then no longer
+ * afford.
+ *
  * Only the tiles you held change hands: the engine lays the bought circuits'
  * chords there and lets them grow the rest of the way, scoring as they go, so
  * on a board nobody touches you end with exactly `outcome`: what you paid,
@@ -17,9 +22,10 @@
  * gets cut on the way is lost like any other line; one that closes round a
  * rival's lines captures them as usual — a bonus the price doesn't include.
  *
- * Planned against the board as it stands: a strand that runs through a tile
- * an opponent's line is on (`blocked`) can't be completed, so it is no
- * circuit — the walk stops there, and it is neither bought nor stretched to.
+ * Planned against the board as it stands: a strand that runs into a tile an
+ * opponent's line is on (`blocked`) can't close, so it is a line from your
+ * tiles up to theirs, priced at its tiles alone — and when it regrows it
+ * stops there instead of crashing into them. A tail makes a line the same way.
  *
  * Pure: a function of the field, the new rule's table, the tiles, the budget
  * and which tiles are blocked.
@@ -30,16 +36,22 @@ import { boundaryRegion, onFieldBoundary, polygonArea, type Field } from './fiel
 import type { Knobs } from './knobs';
 import { startStep, stepForward, tileChords, type ChordTable, type WalkStep } from './strand';
 
-/** A circuit the new rule would draw through tiles you hold. */
+/**
+ * What the new rule would draw through tiles you hold: a circuit, or — where
+ * the strand runs into an opponent or a tail — a line that stops there.
+ * Each is found once, however many of your tiles it passes through.
+ */
 export interface RegrowCircuit {
-  /** The whole circuit, in walking order (a claim runs edge to edge). */
+  /** All of it, in walking order (a claim runs edge to edge). */
   readonly steps: readonly WalkStep[];
+  /** A circuit (loop or claim), priced closed; false for a line that stops short. */
+  readonly closed: boolean;
   /** Its region against the field's edge, when it is an edge-to-edge claim. */
   readonly region?: Pt[];
   readonly length: number;
-  /** Enclosed area in tiles (as `closeCircuit` counts it). */
+  /** Enclosed area in tiles (as `closeCircuit` counts it); 0 for a line. */
   readonly area: number;
-  /** What it scores once closed: tiles plus the bonus at `comboStart`. */
+  /** What it scores once drawn: its tiles, plus a circuit's bonus at `comboStart`. */
   readonly price: number;
   /** Its chords on tiles you hold (`tile * 64 + chord`): where it starts again. */
   readonly seeds: readonly number[];
@@ -92,7 +104,7 @@ export function planRegrow(
     const chords = tileChords(field, table, tile);
     for (let c = 0; c < chords.length; c++) {
       if (seen.has(key(tile, c)) || walked >= WALK_CAP) continue;
-      const circuit = walkCircuit(field, table, tile, c, WALK_CAP - walked, knobs, blocked);
+      const circuit = walkCandidate(field, table, tile, c, WALK_CAP - walked, knobs, blocked);
       walked += circuit.walked.length;
       for (const s of circuit.walked) seen.add(key(s.tile, s.chord));
       if (!circuit.found) continue;
@@ -129,11 +141,15 @@ export function planRegrow(
 }
 
 /**
- * The new rule's strand through chord `c` of `tile`, when it is a circuit: a
- * loop, or a line from the field's edge to the edge. `walked` is every chord
- * looked at, circuit or not, so no other seed walks the same strand again.
+ * The new rule's strand through chord `c` of `tile`, as far as it can be
+ * drawn on the board as it stands: a loop, or a line from the field's edge to
+ * the edge (both circuits, priced closed); or else a line, from wherever it
+ * stops one way to wherever it stops the other — an opponent's tile, a tail —
+ * priced by its tiles. `walked` is every chord looked at, so no other seed
+ * walks the same stretch again. Nothing when the seed's own tile is blocked,
+ * or the strand meets a junction or the walk cap.
  */
-function walkCircuit(
+function walkCandidate(
   field: Field,
   table: ChordTable,
   tile: number,
@@ -142,8 +158,8 @@ function walkCircuit(
   knobs: Knobs,
   blocked: (tile: number) => boolean,
 ): { walked: readonly WalkStep[]; found?: Omit<RegrowCircuit, 'seeds'> } {
+  if (blocked(tile)) return { walked: [startStep(field, table, tile, c, 1)] };
   const fwd = walk(field, table, tile, c, 1, limit, blocked);
-  if (fwd.stoppedAt === 'blocked') return { walked: fwd.steps };
   if (fwd.closed) {
     const steps = fwd.steps;
     const area = polygonArea(steps.map((s) => s.a)) / field.tileArea;
@@ -151,8 +167,8 @@ function walkCircuit(
   }
   const back = walk(field, table, tile, c, 0, limit, blocked);
   const walked = [...fwd.steps, ...back.steps.slice(1)];
-  if (fwd.stoppedAt !== 'dead' || back.stoppedAt !== 'dead') return { walked };
-  // Both ways dead: a claim when both ends are on the field's edge.
+  const ends = [fwd.stoppedAt, back.stoppedAt];
+  if (ends.includes('junction') || ends.includes('limit') || walked.length > limit) return { walked };
   const steps: WalkStep[] = [
     ...back.steps
       .slice(1)
@@ -160,14 +176,17 @@ function walkCircuit(
       .map((s) => ({ tile: s.tile, chord: s.chord, a: s.b, b: s.a })),
     ...fwd.steps,
   ];
-  if (steps.length > limit) return { walked };
   const first = steps[0];
   const last = steps[steps.length - 1];
-  if (!onFieldBoundary(field, first.tile, first.a) || !onFieldBoundary(field, last.tile, last.b)) return { walked };
-  const region = boundaryRegion(field, [...steps.map((s) => s.a), last.b]);
-  if (!region) return { walked };
-  const area = polygonArea(region) / field.tileArea;
-  return { walked, found: { ...priced(knobs, steps, area), region } };
+  // Both ways off the field's edge: a claim.
+  if (ends.every((x) => x === 'dead') && onFieldBoundary(field, first.tile, first.a) && onFieldBoundary(field, last.tile, last.b)) {
+    const region = boundaryRegion(field, [...steps.map((s) => s.a), last.b]);
+    if (region) {
+      const area = polygonArea(region) / field.tileArea;
+      return { walked, found: { ...priced(knobs, steps, area), region } };
+    }
+  }
+  return { walked, found: { steps, length: steps.length, area: 0, price: steps.length * knobs.pointsPerTile, closed: false } };
 }
 
 interface Walk {
@@ -207,7 +226,7 @@ function walk(
   }
 }
 
-function priced(knobs: Knobs, steps: readonly WalkStep[], area: number): Omit<RegrowCircuit, 'seeds' | 'region'> {
+function priced(knobs: Knobs, steps: readonly WalkStep[], area: number): Omit<RegrowCircuit, 'seeds' | 'region'> & { closed: true } {
   const length = steps.length;
-  return { steps, length, area, price: length * knobs.pointsPerTile + circuitBonus(knobs, length, area, knobs.comboStart) };
+  return { steps, length, area, price: length * knobs.pointsPerTile + circuitBonus(knobs, length, area, knobs.comboStart), closed: true };
 }
