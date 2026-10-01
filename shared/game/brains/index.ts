@@ -1,5 +1,6 @@
 /**
- * The bots' brains: how each kind of bot plays. This directory is what the
+ * The bots' brains: how each kind of bot plays — and the game's live
+ * numbers (`tuning.ts`). This directory is what the
  * server hot-loads — CI builds it into one module (`npm run brains -- build`)
  * whenever a push to main touches only `shared/game/brains/`, and running
  * servers swap it in within a minute or so, keeping the board and every bot
@@ -17,6 +18,8 @@
  *    `swapPattern`) — and reads whatever it likes. It must not change engine
  *    state any other way.
  *  - Keep each tick's work small: every room on the server waits for it.
+ *  - `tuning.ts` is the game's live numbers (every knob), shipped the same
+ *    way: retuning running games is a push here, not a deploy.
  *  - A new kind: add its class to `kinds.ts` (or a file of its own) and
  *    register it there (`BOT_KINDS`, `BOT_INFO`, `makeBot`); `mix.ts` puts
  *    it into live rooms.
@@ -27,8 +30,9 @@ import type { Field } from '../field';
 import { BOT_INFO, BOT_KINDS, botName, makeBot, type BotKind } from './kinds';
 import { LIVE_MIX } from './mix';
 import { fieldFrame, scoutFor } from './sense';
+import { BOT_TUNING, TUNING } from './tuning';
 
-export { BOT_INFO, BOT_KINDS, type BotKind };
+export { BOT_INFO, BOT_KINDS, BOT_TUNING, TUNING, type BotKind };
 
 /** Steps of scouting per `work` (2–4 µs each): a few ms a tick, for a few seconds. */
 const SCOUT_BUDGET = 2500;
@@ -41,6 +45,8 @@ export const brains: BrainSet = {
   kinds: BOT_KINDS,
   info: BOT_INFO,
   mix: LIVE_MIX,
+  tuning: TUNING,
+  botTuning: BOT_TUNING,
   name: (kind, nth) => (isKind(kind) ? botName(kind, nth) : `${kind} ${nth}`),
   make(kind: string, id: string, ctx: BotContext) {
     if (!isKind(kind)) throw new Error(`no such bot kind: ${kind}`);

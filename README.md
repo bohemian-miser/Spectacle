@@ -251,10 +251,13 @@ strands on top still carry. Light is the default; your choice is remembered in
 this browser, and `?theme=dark` / `?theme=light` forces one for a link or a
 screenshot.
 
-Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts);
-set any of them with `KNOB_<NAME>` environment variables
-(`KNOB_BASE_STEP_MS=250 KNOB_CROSSING_MODE=tile …`). Mechanics first, balance
-later.
+Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts).
+The values the game plays under are in
+[`shared/game/brains/tuning.ts`](shared/game/brains/tuning.ts): change one
+there and push, and running servers pick it up without a deploy (see
+"Bots without a deploy"). A server's `KNOB_<NAME>` environment variables
+(`KNOB_BASE_STEP_MS=250 KNOB_CROSSING_MODE=tile …`) win over that file.
+Mechanics first, balance later.
 
 ## Infrastructure
 
@@ -333,7 +336,7 @@ Server environment:
 | `ROOM_IDLE_MS` | `60000` | an extra room nobody is in (or holding for) closes after this long |
 | `MAX_INSTANCE_PLAYERS` | `400` | humans this **process** holds before it refuses new joins (`error.code: 'full'`) — see "Scaling for a surge" |
 | `SEED` | random | RNG seed |
-| `KNOB_*` | see knobs.ts | any gameplay knob |
+| `KNOB_*` | see knobs.ts | any gameplay knob; pins it over `brains/tuning.ts` on this server |
 
 `npm run bench:field` prints build time and size per level.
 
@@ -385,6 +388,14 @@ and picks up the latest build within seconds.
 - **Bots into live rooms:** set `LIVE_MIX` in `brains/mix.ts`, e.g.
   `{ normal: { wanderer: 1, hunter: 1 } }`. Rooms add or drop bots to match.
   This overrides `BOTS` for the modes it names.
+- **Retuning the game:** every gameplay knob's live value is in
+  `brains/tuning.ts` (`TUNING`; the bots' aggression and rotation time in
+  `BOT_TUNING`), e.g. `regrowDiscount: 0.99`. Change a number and push: running
+  rooms switch to it at once, and players' screens are sent the new values.
+  Two exceptions: `scoreTiles` reaches only rooms opened after the change,
+  and `mode`/`tickMs` aren't in the file at all. A server's `KNOB_*` env var
+  for a knob wins over the file. A knob that doesn't exist or has the wrong
+  type is ignored by servers and fails the workflow's check.
 - **What needs a deploy:** anything outside `brains/`. A build is only loaded
   by a server made from the same `shared/` source (a hash of everything
   under `shared/` but the brains), so it can never run against an engine it

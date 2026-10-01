@@ -64,7 +64,7 @@
 import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesInBox, type Box, type Field } from './field';
-import { headLimit, stepIntervalMs, type Knobs } from './knobs';
+import { headLimit, knobsChanged, stepIntervalMs, type Knobs } from './knobs';
 import { circuitBonus, planRegrow } from './regrow';
 import { packStep } from './wire';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
@@ -243,10 +243,21 @@ export class Engine {
 
   constructor(
     readonly field: Field,
-    readonly knobs: Knobs,
+    public knobs: Knobs,
     private readonly rng: Rng,
   ) {
     this.pickJunction = randomJunctionPicker(rng);
+  }
+
+  /**
+   * New knobs for a running game (live tuning). Everything reads `knobs` as
+   * it goes, so they take effect from the next call; the caller keeps the
+   * room's fixed ones (`retune`). True when anything changed.
+   */
+  setKnobs(next: Knobs): boolean {
+    const changed = knobsChanged(this.knobs, next).length > 0;
+    this.knobs = next;
+    return changed;
   }
 
   // --- players -------------------------------------------------------------

@@ -42,12 +42,15 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
                   kinds: wanderer, rotator, hunter, farmer, bridge),
                   sense.ts (rule scout, sliced per tick or `prepareBots` up
                   front; `probe` walks a would-be line against the live
-                  board), mix.ts (`LIVE_MIX`), index.ts (the `brains` set).
+                  board), mix.ts (`LIVE_MIX`), tuning.ts (`TUNING`: every
+                  knob's live value; `BOT_TUNING`), index.ts (the `brains` set).
   wire.ts         The packed wire: welcome lines as first step + length (a
                   loop: first step only), and events with steps as `begin` +
                   `grow` (packEvents); the client regrows them.
   color.ts        mixHsl — a captured pattern's colour.
-  knobs.ts        EVERY tunable, with KNOB_* env override (knobsFromEnv).
+  knobs.ts        EVERY tunable: `Knobs`, DEFAULT_KNOBS (the tests' baseline),
+                  KNOB_* env override (knobsFromEnv), and live tuning
+                  (`applyTuning`, `retune`, `ROOM_FIXED_KNOBS`).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
                   events (step/wipe/circuit/score/status/join/leave/rule/
                   capture/convert/take/swap/active/split/refused). Client → server adds
@@ -195,7 +198,17 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   `../bots`. `BrainSet.mix` (`brains/mix.ts`, `LIVE_MIX`) overrides `BOTS`
   per mode and live rooms reconcile to it. `Bots.onError` (set by the
   server) makes one brain's exception skip only that bot; 20 in a minute
-  revert to the built-in brains and blacklist that build. The bucket must
+  revert to the built-in brains and blacklist that build. **The game's
+  numbers ride along** (owner's call: tuning is a PR, not a deploy):
+  `brains/tuning.ts` holds every knob but `mode`/`tickMs` (`Tuning`; the
+  type makes a new knob add a line there) plus `BOT_TUNING`. Server and solo
+  run `DEFAULT_KNOBS` ← `TUNING` (`applyTuning`: unknown or ill-typed keys
+  ignored and logged; `npm run brains -- check` fails on them) ← `KNOB_*`
+  env. A swap retunes running rooms (`Engine.setKnobs`, keeping
+  `ROOM_FIXED_KNOBS` — `scoreTiles` would break `hold` mid-game), sends a
+  `knobs` event, and remakes the bots with the new options. Tests pin
+  `DEFAULT_KNOBS`, not `TUNING`, so a tuning push can't break them; the two
+  may drift. `tests/knobs.test.ts`, `tests/brains.test.ts`. The bucket must
   stay CI-write-only — a build runs in-process. An infinite loop is not
   caught. `tests/brains.test.ts` swaps a build into a spawned server.
 - **Two game modes** (`knobs.mode`, per room): **Normal** (default in the
