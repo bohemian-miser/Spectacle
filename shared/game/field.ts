@@ -305,6 +305,177 @@ export function tilesInsidePolygon(field: Field, poly: readonly Pt[]): number[] 
   return out;
 }
 
+/**
+ * Each tile's neighbour across each of its edges (edge k runs from polygon
+ * point k to k + 1), or -1 on the board's edge. Worked out a tile at a time,
+ * as a fill first reaches it. Vertex neighbours aren't enough to fill with: on
+ * the Spectre board tiles of both sides of a line can meet at one corner.
+ */
+interface EdgeNeighbours {
+  readonly per: number;
+  /** `per` slots a tile; -2 = not worked out yet. */
+  readonly nb: Int32Array;
+}
+const edgeCache = new WeakMap<Field, EdgeNeighbours>();
+
+function edgeNeighbours(field: Field): EdgeNeighbours {
+  let e = edgeCache.get(field);
+  if (!e) {
+    const per = Math.max(...field.leafTypes.map((t) => leafPts(field.family, t).length));
+    e = { per, nb: new Int32Array(field.count * per).fill(-2) };
+    edgeCache.set(field, e);
+  }
+  return e;
+}
+
+/** The tile across edge `k` of tile `i`, or -1 on the board's edge. */
+export function acrossEdge(field: Field, i: number, k: number): number {
+  const e = edgeNeighbours(field);
+  const o = i * e.per;
+  if (e.nb[o] === -2) {
+    const poly = tilePolygon(field, i);
+    const keys = poly.map((p) => vkey(p.x, p.y));
+    for (let j = 0; j < poly.length; j++) e.nb[o + j] = -1;
+    for (const n of tileNeighbours(field, i)) {
+      const nkeys = new Set(tilePolygon(field, n).map((p) => vkey(p.x, p.y)));
+      for (let j = 0; j < poly.length; j++) {
+        if (nkeys.has(keys[j]) && nkeys.has(keys[(j + 1) % poly.length])) e.nb[o + j] = n;
+      }
+    }
+  }
+  return e.nb[o + k];
+}
+
+/** Which tiles a fill has already reached (or may not enter): `mark[tile] === stamp`. */
+const fillMarks = new WeakMap<Field, { mark: Uint32Array; stamp: number }>();
+
+/**
+ * The tiles a closed line encloses, found by filling from the line inward:
+ * seeded with the tiles next to the line on its inside, spread across shared
+ * edges, stopped by the line's own tiles and the board's edge. Its cost is
+ * the size of the inside — testing every tile against the whole loop
+ * (`tilesInsidePolygon`) took seconds for a circuit round half the board.
+ *
+ * The inside is the side of the line its polygon (`region`, for an
+ * edge-to-edge claim, else the loop itself) lies on: the polygon's turning
+ * direction says whether that is left or right of travel. Within each tile
+ * the chord splits the tile's edges in two; the edges on the inside side
+ * give the seeds. The tiles come out in order of distance from the line,
+ * `rings[r]` being where ring r starts, so the fill can be shown spreading.
+ *
+ * Should a fill outgrow the polygon's area (it would leak through a gap — a
+ * bug), the old test answers instead.
+ */
+export function tilesEnclosed(
+  field: Field,
+  steps: readonly { readonly tile: number; readonly a: Pt; readonly b: Pt }[],
+  region?: readonly Pt[],
+): { tiles: number[]; rings: number[] } {
+  const poly = region ?? steps.map((s) => s.a);
+  if (poly.length < 3 || steps.length === 0) return { tiles: [], rings: [] };
+  const area = signedArea(poly);
+  const insideLeft = area > 0;
+  let marks = fillMarks.get(field);
+  if (!marks) fillMarks.set(field, (marks = { mark: new Uint32Array(field.count), stamp: 0 }));
+  const stamp = ++marks.stamp;
+  const mark = marks.mark;
+  for (const s of steps) mark[s.tile] = stamp;
+  const tiles: number[] = [];
+  // A loop can cross a tile more than once, so each tile's outline is split
+  // by all of its chords: sorted round the outline, every chord end starts a
+  // stretch on one side of its chord, and that stretch's edges seed if that
+  // side is the inside.
+  const byTile = new Map<number, { a: Pt; b: Pt }[]>();
+  for (const s of steps) {
+    const list = byTile.get(s.tile);
+    if (list) list.push(s);
+    else byTile.set(s.tile, [s]);
+  }
+  for (const [tile, chords] of byTile) {
+    const v = tilePolygon(field, tile);
+    const m = v.length;
+    const ends: { edge: number; at: number; inside: boolean }[] = [];
+    for (const c of chords) {
+      const ia = nearestEdge(v, c.a);
+      const ib = nearestEdge(v, c.b);
+      if (ia === ib) continue;
+      // The outline from a round to b and the chord bound one part of the
+      // tile; its turning says which side of a→b that part is on.
+      const arc: Pt[] = [c.a];
+      for (let k = (ia + 1) % m; k !== (ib + 1) % m; k = (k + 1) % m) arc.push(v[k]);
+      arc.push(c.b);
+      const arcInside = signedArea(arc) < 0 === insideLeft;
+      const along = (k: number, p: Pt): number => Math.hypot(p.x - v[k].x, p.y - v[k].y);
+      ends.push({ edge: ia, at: along(ia, c.a), inside: arcInside });
+      ends.push({ edge: ib, at: along(ib, c.b), inside: !arcInside });
+    }
+    if (ends.length === 0) continue;
+    ends.sort((x, y) => x.edge - y.edge || x.at - y.at);
+    const has = new Set(ends.map((e) => e.edge));
+    for (let k = 0; k < m; k++) {
+      if (has.has(k)) continue;
+      // The last chord end before this edge, going round the outline.
+      let before = ends[ends.length - 1];
+      for (const e of ends) if (e.edge < k) before = e;
+      if (!before.inside) continue;
+      const n = acrossEdge(field, tile, k);
+      if (n >= 0 && mark[n] !== stamp) {
+        mark[n] = stamp;
+        tiles.push(n);
+      }
+    }
+  }
+  // A little over the polygon's own area, in tiles: any more and it leaked.
+  const cap = Math.ceil((Math.abs(area) / field.tileArea) * 1.25) + 16;
+  const rings: number[] = [];
+  for (let start = 0; start < tiles.length; ) {
+    rings.push(start);
+    const end = tiles.length;
+    for (let q = start; q < end; q++) {
+      const t = tiles[q];
+      const per = tilePolygon(field, t).length;
+      for (let k = 0; k < per; k++) {
+        const n = acrossEdge(field, t, k);
+        if (n >= 0 && mark[n] !== stamp) {
+          mark[n] = stamp;
+          tiles.push(n);
+        }
+      }
+    }
+    if (tiles.length > cap) {
+      const old = new Set(steps.map((s) => s.tile));
+      return { tiles: tilesInsidePolygon(field, poly).filter((t) => !old.has(t)), rings: [0] };
+    }
+    start = end;
+  }
+  return { tiles, rings };
+}
+
+/** Shoelace area with its sign: positive when the points run anticlockwise. */
+function signedArea(pts: readonly Pt[]): number {
+  let s = 0;
+  for (let i = 0, n = pts.length; i < n; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % n];
+    s += a.x * b.y - b.x * a.y;
+  }
+  return s / 2;
+}
+
+/** The edge of polygon `v` that point `p` lies on (the nearest). */
+function nearestEdge(v: readonly Pt[], p: Pt): number {
+  let best = 0;
+  let bestD = Infinity;
+  for (let k = 0; k < v.length; k++) {
+    const d = pointSegDist2(p, v[k], v[(k + 1) % v.length]);
+    if (d < bestD) {
+      bestD = d;
+      best = k;
+    }
+  }
+  return best;
+}
+
 function pointSegDist2(p: Pt, a: Pt, b: Pt): number {
   const vx = b.x - a.x;
   const vy = b.y - a.y;
