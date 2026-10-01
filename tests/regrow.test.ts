@@ -12,7 +12,8 @@ import { chordTableFor, tileChords, walkStrand } from '../shared/game/strand';
 const HEX = buildField({ family: 'hex', level: 3, rootTile: 'Delta' });
 const SPECTRE = buildField({ family: 'spectre', level: 3, rootTile: 'Delta' });
 // Points scoring: prices are tiles plus circuit bonuses (tiles-mode tests are in score.test.ts).
-const KNOBS: Knobs = { ...DEFAULT_KNOBS, scoreTiles: false, maxHeads: 0 };
+// No discount: these pin cost = price (the discount's own tests set it).
+const KNOBS: Knobs = { ...DEFAULT_KNOBS, scoreTiles: false, maxHeads: 0, regrowDiscount: 1 };
 
 /** Ann alone on the board with `taps` lines of the default rule (a tile every `stride`), all grown out. */
 function territory(field: Field, seed: number, knobs: Knobs = KNOBS, taps = 40, stride = 7): { e: Engine; ev: GameEvent[] } {

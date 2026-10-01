@@ -154,6 +154,15 @@ export interface Knobs {
    * close — on an untouched board, back to the score you paid.
    */
   regrowOnRule: boolean;
+  /**
+   * What a tile you don't hold yet costs a regrow plan: `regrowDiscount ** d`,
+   * where `d` is how many steps of growth it is from your nearest held tile
+   * along the strand (held tiles cost full price). Below 1, far tiles are
+   * cheap — a circuit of any size costs at most its held tiles plus about
+   * `2 / (1 - regrowDiscount)` per gap between them — so a switch can buy
+   * circuits bigger than the score it spends. 1 = no discount.
+   */
+  regrowDiscount: number;
   maxPlayers: number;
   maxNameLength: number;
 }
@@ -203,6 +212,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   maxLivePaths: 0,
   resetScoreOnRule: true,
   regrowOnRule: true,
+  regrowDiscount: 0.99,
   maxPlayers: 200,
   maxNameLength: 16,
 });

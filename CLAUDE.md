@@ -114,6 +114,8 @@ scripts/brains.ts  `npm run brains -- build|check`: bundle brains/ (esbuild)
                   + manifest into dist-brains/; load it as a server would and
                   play it, alone and swapped in under live bots.
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
+scripts/regrow-shots.ts  A rule switch played out with and without
+                  `regrowDiscount`, as before/after PNGs (needs PW_EXE).
 scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
                   heartbeats (who is in which room), traffic, instance-count
                   metric, /healthz, recent joins/leaves, via gcloud's token
@@ -407,7 +409,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   as flip pieces, and `regrow` paths close at `comboStart` without feeding
   the streak. So an untouched board ends at exactly `plan.outcome`: at most
   the old score, plus the stretch's price beyond its held tiles
-  (`tests/regrow.test.ts`). A regrown circuit also captures as normal. A cut piece's circuit can still close:
+  (`tests/regrow.test.ts`). **Far tiles are discounted**
+  (`regrowDiscount`, 0.99; 1 = off): the budget pays a circuit's `cost`,
+  where a tile not held costs `0.99 ** d` (`d` = steps along the strand to
+  the nearest held tile; held tiles full price), while `price`/`outcome`
+  stay what it scores. A gap between held tiles thus costs at most ~200
+  however long, so a switch buys more than it spends (+30% at a ~100–270
+  tile budget in `scripts/regrow-shots.ts`'s examples) and `outcome` can
+  pass the old score without a stretch; `absorb` shares are costs. Tests
+  pinning cost = price set `regrowDiscount: 1`;
+  `tests/regrow-discount.test.ts`. A regrown circuit also captures as normal. A cut piece's circuit can still close:
   the other pieces of it grow through the gap. **The head limit carries
   over**: `setRule` clears `patterns` and `converted` but keeps the slots
   they gave in `Player.keptHeads` (counted like captured patterns in

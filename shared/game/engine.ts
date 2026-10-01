@@ -323,13 +323,13 @@ export class Engine {
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     this.scoreDirty.delete(id);
-    // Where the budget goes: each bought circuit's price, shared by the held
+    // Where the budget goes: each bought circuit's cost, shared by the held
     // tiles it starts again on — the switch animation sends the old tiles'
     // motes there in proportion.
     const absorb = new Map<number, number>();
     for (const q of plan ? [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])] : []) {
       const at = new Set(q.seeds.map((k) => Math.floor(k / 64)));
-      for (const t of at) absorb.set(t, (absorb.get(t) ?? 0) + q.price / at.size);
+      for (const t of at) absorb.set(t, (absorb.get(t) ?? 0) + q.cost / at.size);
     }
     // Sent as fractions of the budget: they add up to what it bought (under 1
     // when some was lost; past it with a stretch).

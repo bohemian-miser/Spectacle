@@ -195,19 +195,22 @@ line and you both die.
    captured patterns go, and your score is spent on the new rule's circuits
    through the tiles those lines held: longest first, each costing what it
    scores once closed (its tiles; in points scoring, its tiles plus bonus),
-   until the next one costs more than what is left.
+   until the next one costs more than what is left. Tiles you don't hold
+   yet come at a discount: one `d` steps of growth from your nearest held
+   tile costs 0.99<sup>d</sup> of a tile (`regrowDiscount`), so the far
+   reaches of a big circuit are nearly free.
    Then one stretch: the cheapest circuit that was too dear comes too, if
    what is left covers just the tiles of it you already hold. The circuits
    you get start again on the tiles you already held and grow the rest of
    the way, earning their points as they go. If nobody gets in the way, you
-   end up with the score you spent, plus whatever the stretch circuit is
-   worth beyond its tiles. The plan goes by the board as it is: where the
+   end up with everything you bought — more than the score you spent, by
+   whatever the discount saved, plus whatever the stretch circuit is worth
+   beyond its tiles. The plan goes by the board as it is: where the
    new rule's line would run into someone else's line (or a dead end) it
    can't close, so it is priced as a line up to there, a point a tile, and
    when it regrows it stops there rather than crashing into them. Each
    circuit or line is paid for once, however many of your tiles it runs
-   through. In effect you only gain tiles from a new rule by giving up
-   smaller circuits you could otherwise have kept. Your heads don't
+   through. Your heads don't
    restart: you keep as many heads as you had, captured patterns or not
    (and a capture on the new rule adds one more), and however many lines you had growing, that many of the regrowing
    pieces grow at your full speed; the rest share one head's worth. Tap a
