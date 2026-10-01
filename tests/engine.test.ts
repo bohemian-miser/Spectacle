@@ -493,9 +493,10 @@ describe('engine', () => {
         expect(a.paths.some((q) => q.spawned)).toBe(true);
         // Zero-sum: Ann's score is exactly what her lines carry.
         expect(a.score).toBe(a.paths.reduce((n, q) => n + q.points, 0));
-        // A new rule drops the head again.
+        // A new rule clears the converted kinds but keeps the head they gave.
         e.setRule('a', BIG);
-        expect(e.headLimit(a)).toBe(1);
+        expect(a.converted).toHaveLength(0);
+        expect(e.headLimit(a)).toBe(2);
       });
 
       it('the same kind of line again adds no second head', () => {
@@ -562,7 +563,7 @@ describe('engine', () => {
       expect(e.snapshot().paths.find((q) => q.id === loop.id)).toMatchObject({ owner: 'a', pattern: 1 });
     });
 
-    it('a new rule drops captured patterns and the extra head', () => {
+    it('a new rule drops captured patterns but keeps the extra head', () => {
       const { e } = enclose();
       const a = e.players.get('a')!;
       expect(a.patterns).toHaveLength(2);
@@ -570,7 +571,8 @@ describe('engine', () => {
       expect(ev.find((x) => x.t === 'rule')).toMatchObject({ t: 'rule', id: 'a' });
       expect(a.patterns.map((q) => q.rule)).toEqual([SEL15]);
       expect(a.active).toBe(0);
-      expect(e.headLimit(a)).toBe(1);
+      expect(e.headLimit(a)).toBe(2);
+      expect(ev.find((x) => x.t === 'rule')).toMatchObject({ kept: 1 });
     });
 
     it('a captured slot can be swapped for another rule: its lines and their points go', () => {

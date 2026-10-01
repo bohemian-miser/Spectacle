@@ -30,10 +30,12 @@ export interface ClientPath {
   table?: ChordTable;
 }
 
-export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active' | 'converted'> {
+export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active' | 'converted' | 'kept'> {
   rule: PlayerPublic['rule'];
   /** Normal mode: kinds of rival line converted (a head each). */
   converted: number;
+  /** Head slots kept from earlier rules (a head each, like a captured pattern). */
+  kept: number;
   score: number;
   combo: number;
   patterns: PatternPublic[];
@@ -292,7 +294,7 @@ export class Store {
     const k = this.knobs;
     const me = this.me;
     if (!k || !me) return { free: 0, total: 0 };
-    const total = headLimit(k, me.patterns.length + me.converted);
+    const total = headLimit(k, me.patterns.length + me.converted + me.kept);
     if (total === 0) return { free: Infinity, total };
     let growing = 0;
     for (const p of this.paths.values()) if (p.owner === this.you && p.status === 'growing' && !p.spawned) growing += p.back ? 2 : 1;
@@ -475,6 +477,7 @@ export class Store {
           p.patterns = [{ rule: ev.rule, color: p.color }];
           p.active = 0;
           p.converted = 0;
+          p.kept = ev.kept ?? 0;
           this.switched.set(ev.id, new Set());
           if (ev.outline && this.field) this.ghosts.set(ev.id, walkOutline(this.field, ev.rule, ev.outline));
           if (ev.absorb) {
@@ -676,6 +679,6 @@ export class Store {
 }
 
 function clientPlayer(p: PlayerPublic): ClientPlayer {
-  const { converted, ...rest } = p;
-  return { ...rest, patterns: [...p.patterns], converted: converted ?? 0 };
+  const { converted, kept, ...rest } = p;
+  return { ...rest, patterns: [...p.patterns], converted: converted ?? 0, kept: kept ?? 0 };
 }

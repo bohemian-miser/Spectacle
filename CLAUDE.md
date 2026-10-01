@@ -135,7 +135,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 ## Settled decisions (don't relitigate without the owner)
 
 - **No FASS preset, no hint.** The infinite-line rules (hex `128`, spectre
-  `1278`) are for players to discover. `fassRule()` exists for tests only; the
+  `1278`) are for players to discover. `fassRule()` exists for tests and the away switch (see "Resume window") only; the
   README must not name them. Default rule is selection `15`.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
@@ -370,7 +370,11 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the streak. So an untouched board ends at exactly `plan.outcome`: at most
   the old score, plus the stretch's price beyond its held tiles
   (`tests/regrow.test.ts`). A regrown circuit also captures as normal. A cut piece's circuit can still close:
-  the other pieces of it grow through the gap. **Heads don't restart**:
+  the other pieces of it grow through the gap. **The head limit carries
+  over**: `setRule` clears `patterns` and `converted` but keeps the slots
+  they gave in `Player.keptHeads` (counted like captured patterns in
+  `headLimit`, so a later capture adds on top; `kept` on `PlayerPublic` and
+  the `rule` event for the client's `heads()`). **Heads don't restart**:
   as many heads as were growing at the switch (`headsInUse`, capped by the
   new `headLimit`) are given straight to the regrowth pieces with the most
   left to grow (`promote`: `spawned` off, a `promote` event, so they grow
@@ -416,7 +420,21 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   player's last `score` in a batch goes — ~620 KB/s became ~215 KB/s on the
   stress board. Older clients (no `join.packed`) still get plain `paths` and
   `step`s.
-- **Resume window is 5 min** (`RESUME_GRACE_MS` default 300 000).
+- **Resume window is 10 min after your tiles last changed**
+  (`RESUME_GRACE_MS` default 600 000), not after the drop: `detach` notes
+  `Player.tileChanges` (bumped in `hold` whenever a tile joins or leaves
+  the set a player's lines are on) and `sweepAway`, once a loop pass,
+  restarts the clock whenever it moves — lines still growing (a room with
+  others in it ticks) keep an absent player in. A player away
+  `AWAY_RULE_MS` (10 min, -1 = never) is switched by the server to the
+  infinite-line rule — the owner's design: the game is for checking in
+  between meetings, and not checking in leaves you exposed. It goes
+  through `fassRule` and `setRule` (so it regrows) and is kept on resume;
+  the one place outside tests `fassRule` is used, and the README doesn't
+  mention it. Nothing stays on for idle players: once no socket is open,
+  Cloud Run retires the instance after ~15 min and the rooms go with it
+  (saving rooms to storage is open). `tests/resume.test.ts` has a second server
+  with short timers for this.
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
   and most players are in North America). Cloud Run (scale to zero) via CI is

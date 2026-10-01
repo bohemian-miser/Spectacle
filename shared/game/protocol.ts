@@ -64,6 +64,8 @@ export interface PlayerPublic {
   readonly active: number;
   /** Normal mode: kinds of rival line converted — a head each (absent = 0). */
   readonly converted?: number;
+  /** Head slots kept from earlier rules, counted like captured patterns (absent = 0). */
+  readonly kept?: number;
 }
 
 // --- client → server ---------------------------------------------------------
@@ -117,6 +119,8 @@ export type GameEvent =
       readonly rule: PlayerRule;
       readonly score: number;
       readonly combo: number;
+      /** Head slots kept through this and earlier switches (absent = 0): the head limit doesn't drop. */
+      readonly kept?: number;
       /**
        * A regrow's energy, for the switch animation: `[tile, share, …]` — each
        * held tile the new rule starts on, and the fraction of the budget it

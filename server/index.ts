@@ -25,7 +25,10 @@
  *                            ~10% of a core) and --memory=1Gi at FIELD_LEVEL=6
  *                            — raise it only alongside more CPU and memory.
  *   SEED          (random)   RNG seed
- *   RESUME_GRACE_MS (300000) how long a dropped player is kept for `join.resume`
+ *   RESUME_GRACE_MS (600000) a dropped player is kept for `join.resume` until
+ *                            this long after their tiles last changed
+ *   AWAY_RULE_MS  (600000)   a player dropped this long switches to the
+ *                            infinite-line rule while away (-1 = never)
  *   STATS_KEY     (unset)    serves /patterns?key=… (which rules people play, and their scores); unset = off
  *   STATS_FILE    (unset)    keep those pattern stats in this JSON file across restarts
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
@@ -57,7 +60,8 @@ import { Engine } from '../shared/game/engine';
 import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../shared/game/field';
 import { GAME_MODES, isGameMode, knobsForMode, knobsFromEnv, type GameMode, type Knobs } from '../shared/game/knobs';
 import type { ClientMessage, GameEvent, RoomSummary, ServerMessage } from '../shared/game/protocol';
-import { PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
+import { fassRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
+import { isInfiniteLineRule } from '../shared/game/bot-sense';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import { packEvents } from '../shared/game/wire';
@@ -483,11 +487,24 @@ let nextClient = 1;
  *   refresh often reconnects before the server has seen the old page go. The
  *   token proves ownership; the old socket is detached and closed.
  */
-const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 300_000);
+const RESUME_GRACE_MS = Number(process.env.RESUME_GRACE_MS ?? 600_000);
+const AWAY_RULE_MS = Number(process.env.AWAY_RULE_MS ?? 600_000);
 const tokenHashes = new Map<string, Buffer>(); // player id → sha256(token)
 /** Player id → sha256 of the token it resumed on, still good until the client `ack`s the new one. */
 const priorHashes = new Map<string, Buffer>();
-const detached = new Map<string, ReturnType<typeof setTimeout>>(); // player id → expiry
+/**
+ * Players held for a resume: when they dropped, and when their tiles last
+ * changed (`Player.tileChanges`, as last seen). They time out
+ * `RESUME_GRACE_MS` after the latter — their lines may go on growing (and
+ * being cut) while they are away, and that keeps them.
+ */
+interface Away {
+  readonly since: number;
+  changes: number;
+  movedAt: number;
+  switched: boolean;
+}
+const detached = new Map<string, Away>();
 
 function hashToken(token: string): Buffer {
   return createHash('sha256').update(token).digest();
@@ -508,18 +525,45 @@ function dropTokens(id: string): void {
 
 function detach(id: string): void {
   const room = playerRoom.get(id);
-  if (!room || !room.engine.players.has(id)) return;
-  clearTimeout(detached.get(id));
-  detached.set(
-    id,
-    setTimeout(() => {
+  const p = room?.engine.players.get(id);
+  if (!room || !p) return;
+  const now = Date.now();
+  detached.set(id, { since: now, changes: p.tileChanges, movedAt: now, switched: false });
+}
+
+/**
+ * Once a pass: a player away `AWAY_RULE_MS` switches to the infinite-line
+ * rule: the price of not checking in (a refresh or Cloud Run's hourly
+ * reconnect comes back well inside that); one whose tiles haven't changed
+ * for `RESUME_GRACE_MS` times out. Once nobody is connected at all, Cloud
+ * Run retires the instance after ~15 idle minutes (scale to zero).
+ */
+function sweepAway(now: number): void {
+  for (const [id, away] of detached) {
+    const room = playerRoom.get(id);
+    const p = room?.engine.players.get(id);
+    if (!room || !p) {
+      detached.delete(id);
+      continue;
+    }
+    if (!away.switched && AWAY_RULE_MS >= 0 && now - away.since >= AWAY_RULE_MS) {
+      away.switched = true;
+      if (!isInfiniteLineRule(p.rule)) {
+        room.pending.push(...room.engine.setRule(id, fassRule(p.rule.family)));
+        note('info', `${p.name} is away: on the infinite-line rule in ${room.id}`);
+      }
+    }
+    if (p.tileChanges !== away.changes) {
+      away.changes = p.tileChanges;
+      away.movedAt = now;
+    } else if (now - away.movedAt >= RESUME_GRACE_MS) {
       detached.delete(id);
       dropTokens(id);
       playerRoom.delete(id);
-      note('info', `${room.engine.players.get(id)?.name ?? id} timed out of ${room.id}`);
+      note('info', `${p.name} timed out of ${room.id}`);
       room.pending.push(...room.engine.removePlayer(id));
-    }, RESUME_GRACE_MS),
-  );
+    }
+  }
 }
 
 function tryResume(client: Client, resume: unknown): Room | null {
@@ -535,11 +579,7 @@ function tryResume(client: Client, resume: unknown): Room | null {
   // The welcome about to go out rotates the token; this one stays good until
   // the client acks that it has the new one.
   priorHashes.set(r.id, got);
-  const expiry = detached.get(r.id);
-  if (expiry !== undefined) {
-    clearTimeout(expiry);
-    detached.delete(r.id);
-  }
+  detached.delete(r.id);
   // Still attached elsewhere (the page before a refresh): cut that socket
   // loose first, so its close handler neither removes nor detaches us.
   const old = room.clients.get(r.id);
@@ -739,6 +779,7 @@ setInterval(() => {
   last = now;
   const t = performance.now();
   for (const room of rooms.values()) guard(`tick ${room.id}`, () => room.tick(now, dt));
+  guard('away', () => sweepAway(now));
   guard('reap', () => reapRooms(now));
   const took = performance.now() - t;
   tickStats.avgMs = tickStats.avgMs * 0.98 + took * 0.02;

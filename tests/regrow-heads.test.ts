@@ -191,3 +191,79 @@ describe('rule change: heads carry over, and a head takes over slow regrowth', (
     });
   }
 });
+
+describe('rule change: the head limit carries over', () => {
+  const knobs: Knobs = { ...DEFAULT_KNOBS };
+  const capture = (e: Engine, n: number) => {
+    const a = e.players.get('a')!;
+    for (let k = 0; k < n; k++) {
+      const rule = randomCleanRule('hex', mulberry32(100 + a.patterns.length + k));
+      a.patterns.push({ rule, table: chordTableFor(HEX, rule), color: a.color });
+    }
+  };
+
+  it('keeps the heads captured patterns gave, and adds to them after', () => {
+    const e = new Engine(HEX, knobs, mulberry32(1));
+    e.addPlayer('a', 'Ann', defaultRule('hex'));
+    const a = e.players.get('a')!;
+    expect(e.headLimit(a)).toBe(1);
+    capture(e, 3);
+    const before = e.headLimit(a);
+    expect(before).toBe(4);
+    const store = new Store();
+    store.handle({ t: 'welcome', you: 'a', token: '', field: SPEC, knobs, players: [e.publicOf(a)], paths: [] });
+    expect(store.heads().total).toBe(before);
+
+    store.handle({ t: 'events', ev: e.setRule('a', NEXT) });
+    expect(a.patterns.length).toBe(1);
+    expect(e.headLimit(a)).toBe(before);
+    expect(store.heads().total).toBe(before);
+    // A capture on the new rule still earns a head on top.
+    capture(e, 1);
+    expect(e.headLimit(a)).toBe(before + 1);
+    // …and a second switch keeps that too, as does a fresh join's view of it.
+    store.handle({ t: 'events', ev: e.setRule('a', defaultRule('hex')) });
+    expect(e.headLimit(a)).toBe(before + 1);
+    expect(store.heads().total).toBe(before + 1);
+    const late = new Store();
+    late.handle({ t: 'welcome', you: 'a', token: '', field: SPEC, knobs, players: [e.publicOf(a)], paths: [] });
+    expect(late.heads().total).toBe(before + 1);
+  });
+
+  it('lets you start that many lines on the new rule', () => {
+    const e = new Engine(HEX, knobs, mulberry32(1));
+    e.addPlayer('a', 'Ann', defaultRule('hex'));
+    capture(e, 2);
+    const limit = e.headLimit(e.players.get('a')!);
+    e.setRule('a', NEXT);
+    const table = chordTableFor(HEX, NEXT);
+    let ok = 0;
+    let refused = 0;
+    for (let i = 5; i < HEX.count && ok + refused < limit + 1; i += 13) {
+      if (tileChords(HEX, table, i).length === 0 || e.pathsOn(i).length > 0) continue;
+      if (e.tap('a', i, tileCenter(HEX, i)).result.ok) ok++;
+      else refused++;
+    }
+    expect(ok).toBe(limit);
+    expect(refused).toBe(1);
+  });
+});
+
+describe('tileChanges', () => {
+  it('moves while a line takes new tiles and stands still once it stops', () => {
+    const knobs: Knobs = { ...DEFAULT_KNOBS };
+    const e = new Engine(HEX, knobs, mulberry32(1));
+    e.addPlayer('a', 'Ann', defaultRule('hex'));
+    const a = e.players.get('a')!;
+    const table = chordTableFor(HEX, defaultRule('hex'));
+    const start = [...Array(HEX.count).keys()].find((i) => tileChords(HEX, table, i).length > 0)!;
+    expect(e.tap('a', start, tileCenter(HEX, start)).result.ok).toBe(true);
+    const c0 = a.tileChanges;
+    expect(c0).toBeGreaterThan(0);
+    for (let t = 0; t < 4000 && a.paths.some((q) => q.status === 'growing'); t++) e.tick(knobs.tickMs);
+    expect(a.tileChanges).toBeGreaterThan(c0);
+    const settled = a.tileChanges;
+    for (let t = 0; t < 50; t++) e.tick(knobs.tickMs);
+    expect(a.tileChanges).toBe(settled);
+  });
+});

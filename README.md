@@ -208,7 +208,8 @@ line and you both die.
    circuit or line is paid for once, however many of your tiles it runs
    through. In effect you only gain tiles from a new rule by giving up
    smaller circuits you could otherwise have kept. Your heads don't
-   restart: however many lines you had growing, that many of the regrowing
+   restart: you keep as many heads as you had, captured patterns or not
+   (and a capture on the new rule adds one more), and however many lines you had growing, that many of the regrowing
    pieces grow at your full speed; the rest share one head's worth. Tap a
    slow piece to put a free head on it, or grow a line into one — it takes
    the piece in and carries on past it. A circuit
@@ -381,7 +382,8 @@ an instance's last player leaves it is retired after about fifteen idle
 minutes, and idle costs nothing. The free tier covers roughly fifty
 instance-hours a month. Cloud Run caps a
 request, and so a WebSocket, at an hour; the client reconnects and resumes the
-same player (`join.resume`, kept for `RESUME_GRACE_MS`, default 5 min), so
+same player (`join.resume`; a dropped player is kept until `RESUME_GRACE_MS`,
+default 10 min, after their tiles last changed), so
 nobody notices. A page refresh does the same: the tab keeps its resume ticket
 in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
 
