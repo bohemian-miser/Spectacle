@@ -20,6 +20,9 @@
  *                            new bot code goes live without a deploy — see
  *                            server/brains.ts. Unset = the built-in brains only
  *   BOTS_POLL_MS  (60000)    how often to look there for a new build
+ *   ROOM_MAX_BOTS (6)        most bots players may put in a room (the arena's
+ *                            Bots panel: anyone in the room sets them)
+ *   ROOM_MAX_BOTS_PER_KIND (3)  most of one kind
  *   ROOM_SIZE     (10)       humans per room before another opens
  *   MAX_ROOMS     (80)       rooms at most (then joiners share the emptiest)
  *   ROOM_IDLE_MS  (60000)    an extra empty room closes after this long
@@ -64,13 +67,13 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { Engine } from '../shared/game/engine';
 import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../shared/game/field';
 import { GAME_MODES, isGameMode, knobsForMode, knobsFromEnv, type GameMode, type Knobs } from '../shared/game/knobs';
-import type { ClientMessage, GameEvent, RoomSummary, ServerMessage } from '../shared/game/protocol';
+import type { ClientMessage, GameEvent, RoomBots, RoomSummary, ServerMessage } from '../shared/game/protocol';
 import { fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import { packEvents } from '../shared/game/wire';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
-import { botTotal, Bots, BUILTIN_BRAINS, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet } from '../shared/game/bots';
+import { botTotal, Bots, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet } from '../shared/game/bots';
 import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
@@ -162,6 +165,11 @@ const ROOM_SIZE = Math.max(1, Number(process.env.ROOM_SIZE ?? 10));
 const MAX_ROOMS = Math.max(GAME_MODES.length, Number(process.env.MAX_ROOMS ?? 80));
 /** An extra room nobody is in (or holding for) is closed after this long. */
 const ROOM_IDLE_MS = Number(process.env.ROOM_IDLE_MS ?? 60_000);
+/** Most bots players may ask for in a room, in all and of one kind (`bots` message). */
+const ROOM_MAX_BOTS = positiveInt(process.env.ROOM_MAX_BOTS, 6);
+const ROOM_MAX_BOTS_PER_KIND = positiveInt(process.env.ROOM_MAX_BOTS_PER_KIND, 3);
+/** A player may change a room's bots this often at most. */
+const BOTS_CHANGE_MS = 1000;
 /**
  * Humans this one process will hold before it refuses new joins (existing
  * players reconnecting via `join.resume` are exempt — they add no new load).
@@ -307,6 +315,8 @@ interface Client {
   id: string;
   joined: boolean;
   lastTapAt: number;
+  /** When this client last changed its room's bots. */
+  lastBotsAt: number;
   room: Room | null;
   /** Bytes of the last welcome, which may still be draining: not "behind". */
   allowance: number;
@@ -346,6 +356,12 @@ class Room {
   pending: GameEvent[] = [];
   /** When the room last had nobody in it (0 while occupied). */
   emptySince = 0;
+  /**
+   * The bots the room's players asked for (the arena's Bots panel), or null
+   * for the server's (`botMix`). Once set it holds for the room's life,
+   * new bot brains and their `LIVE_MIX` included.
+   */
+  botChoice: BotMix | null = null;
 
   constructor(
     readonly id: string,
@@ -368,6 +384,15 @@ class Room {
 
   get knobs(): Knobs {
     return this.engine.knobs;
+  }
+
+  /** The bots the room should have: its players' choice, else the server's. */
+  wantedBots(): BotMix {
+    return this.botChoice ?? botMix(this.mode);
+  }
+
+  roomBots(): RoomBots {
+    return this.bots.roomBots(ROOM_MAX_BOTS_PER_KIND, ROOM_MAX_BOTS);
   }
 
   /** Humans in the room, counting the ones held for a resume. */
@@ -631,7 +656,7 @@ function cleanName(raw: unknown): string {
  * board's welcome was tens of MB); older clients still get them plain.
  */
 function welcome(client: Client, room: Room, packed: boolean): void {
-  const common = { t: 'welcome', you: client.id, token: issueToken(client.id), field: spec, knobs: room.knobs, room: room.id } as const;
+  const common = { t: 'welcome', you: client.id, token: issueToken(client.id), field: spec, knobs: room.knobs, room: room.id, bots: room.roomBots() } as const;
   let message: ServerMessage;
   if (packed) {
     const snap = room.engine.packedSnapshot();
@@ -646,7 +671,7 @@ function welcome(client: Client, room: Room, packed: boolean): void {
 }
 
 wss.on('connection', (ws) => {
-  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, room: null, allowance: 0, name: '', packed: false };
+  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, lastBotsAt: 0, room: null, allowance: 0, name: '', packed: false };
   send(ws, {
     t: 'hello',
     field: spec,
@@ -764,6 +789,24 @@ wss.on('connection', (ws) => {
         client.id = `p${nextClient++}`;
         return;
       }
+      case 'bots': {
+        if (!client.joined || !room) return;
+        const now = Date.now();
+        if (now - client.lastBotsAt < BOTS_CHANGE_MS) {
+          send(ws, { t: 'events', ev: [{ t: 'refused', reason: 'one bot change a second' }] });
+          return;
+        }
+        const asked = cleanBotMix(msg.mix, room.bots.brains.kinds, ROOM_MAX_BOTS_PER_KIND, ROOM_MAX_BOTS);
+        if ('refused' in asked) {
+          send(ws, { t: 'events', ev: [{ t: 'refused', reason: asked.refused }] });
+          return;
+        }
+        client.lastBotsAt = now;
+        room.botChoice = asked.mix;
+        room.pending.push(...room.bots.reconcile(asked.mix, now), { t: 'bots', bots: room.roomBots(), by: client.id });
+        note('info', `${client.name} set the bots in ${room.id}: ${formatBotMix(asked.mix, room.bots.brains.kinds)}`);
+        return;
+      }
       case 'ack':
         // The client has this welcome's token: the one it resumed on can go.
         if (client.joined) priorHashes.delete(client.id);
@@ -859,7 +902,13 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
 function applyBrains(set: BrainSet): void {
   brainSet = set;
   const now = Date.now();
-  for (const room of rooms.values()) guard(`brains for ${room.id}`, () => room.pending.push(...room.bots.setBrains(set, now, botMix(room.mode))));
+  for (const room of rooms.values()) {
+    guard(`brains for ${room.id}`, () => {
+      room.pending.push(...room.bots.setBrains(set, now, room.wantedBots()));
+      // The kinds on offer may have changed too.
+      room.pending.push({ t: 'bots', bots: room.roomBots() });
+    });
+  }
   note('info', `bots per room now ${botSummary()}`);
 }
 

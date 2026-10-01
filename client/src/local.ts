@@ -7,11 +7,11 @@
  * what lets the static GitHub Pages build play without a server.
  */
 
-import { BOT_KINDS, Bots, parseBotMix, prepareBots, type BotMix } from '../../shared/game/bots';
+import { BOT_KINDS, Bots, cleanBotMix, parseBotMix, prepareBots, type BotMix } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
 import { buildField, fieldOutline, type FieldSpec } from '../../shared/game/field';
 import { DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
-import type { ClientMessage, GameEvent, ServerMessage } from '../../shared/game/protocol';
+import type { ClientMessage, GameEvent, RoomBots, ServerMessage } from '../../shared/game/protocol';
 import { validateRule } from '../../shared/game/rule';
 import { mulberry32 } from '../../shared/game/rng';
 import type { TileFamilyId } from '../../shared/tiles';
@@ -137,7 +137,7 @@ export class LocalConnection implements GameConnection {
         e.addPlayer(YOU, msg.name.trim() || 'you', rule);
         this.joined = true;
         const snap = e.snapshot();
-        this.deliver({ t: 'welcome', you: YOU, token: 'solo', field: e.field.spec, knobs: this.knobs, players: snap.players, paths: snap.paths });
+        this.deliver({ t: 'welcome', you: YOU, token: 'solo', field: e.field.spec, knobs: this.knobs, players: snap.players, paths: snap.paths, bots: this.roomBots() });
         return;
       }
       case 'tap': {
@@ -165,10 +165,30 @@ export class LocalConnection implements GameConnection {
       case 'pattern':
         this.pending.push(...e.setActive(YOU, Number(msg.index)));
         return;
+      case 'bots': {
+        const b = this.bots;
+        if (!b) return;
+        const asked = cleanBotMix(msg.mix, b.brains.kinds, SOLO_MAX_PER_KIND, SOLO_MAX_PER_KIND * b.brains.kinds.length);
+        if ('refused' in asked) {
+          this.deliver({ t: 'events', ev: [{ t: 'refused', reason: asked.refused }] });
+          return;
+        }
+        // The farmer's and bridge's rules come from the scout: do it now rather than in ticks.
+        prepareBots(e.field, asked.mix);
+        this.pending.push(...b.reconcile(asked.mix, Date.now()), { t: 'bots', bots: b.roomBots(SOLO_MAX_PER_KIND, SOLO_MAX_PER_KIND * b.brains.kinds.length), by: YOU });
+        // The lobby's picker starts from this next time.
+        saveSoloBots(Object.fromEntries(BOT_KINDS.map((k) => [k, asked.mix[k] ?? 0])));
+        return;
+      }
       case 'ping':
         this.deliver({ t: 'pong', n: msg.n });
         return;
     }
+  }
+
+  private roomBots(): RoomBots | undefined {
+    const b = this.bots;
+    return b ? b.roomBots(SOLO_MAX_PER_KIND, SOLO_MAX_PER_KIND * b.brains.kinds.length) : undefined;
   }
 
   close(): void {

@@ -15,7 +15,7 @@
 import type { Engine, Player } from './engine';
 import type { Field } from './field';
 import type { GameMode } from './knobs';
-import type { GameEvent } from './protocol';
+import type { GameEvent, RoomBots } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
 import { brains as BUILTIN_BRAINS, BOT_INFO, BOT_KINDS, type BotKind } from './brains';
@@ -66,6 +66,23 @@ export function formatBotMix(mix: BotMix, kinds: readonly string[] = BOT_KINDS):
 
 export function botTotal(mix: BotMix): number {
   return Object.values(mix).reduce((n, k) => n + (k ?? 0), 0);
+}
+
+/**
+ * A player's ask for a room's bots, checked: only `kinds`, whole numbers
+ * from 0 to `maxPerKind`, at most `max` in all. A mix, or why not.
+ */
+export function cleanBotMix(raw: unknown, kinds: readonly string[], maxPerKind: number, max: number): { mix: BotMix } | { refused: string } {
+  if (!raw || typeof raw !== 'object') return { refused: 'no bots given' };
+  const mix: Record<string, number> = {};
+  for (const [kind, n] of Object.entries(raw as Record<string, unknown>)) {
+    if (!kinds.includes(kind)) return { refused: `no such bot: ${kind}` };
+    if (typeof n !== 'number' || !Number.isInteger(n) || n < 0) return { refused: `bad count for ${kind}` };
+    if (n > maxPerKind) return { refused: `at most ${maxPerKind} of a kind` };
+    if (n > 0) mix[kind] = n;
+  }
+  if (botTotal(mix) > max) return { refused: `at most ${max} bots in a room` };
+  return { mix };
 }
 
 export interface BotOptions {
@@ -206,6 +223,12 @@ export class Bots {
       }
     }
     return ev;
+  }
+
+  /** What a room's players see of its bots (`welcome.bots`, the `bots` event). */
+  roomBots(maxPerKind: number, max: number): RoomBots {
+    const kinds = this.set.kinds.map((kind) => ({ kind, label: this.set.info[kind]?.label ?? kind, blurb: this.set.info[kind]?.blurb ?? '' }));
+    return { kinds, mix: this.mix(), maxPerKind, max };
   }
 
   /** What is playing, for /status. */

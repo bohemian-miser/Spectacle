@@ -269,7 +269,10 @@ describe('a live server', () => {
     expect(again.lines).toBeGreaterThanOrEqual(1);
     expect(room().players.map((p) => p.name)).toContain('Hunter');
     expect(ws.readyState).toBe(WebSocket.OPEN);
-    expect(seen.some((m) => m.t === 'events' && m.ev.some((e) => e.t === 'join' && e.player.name === 'Hunter'))).toBe(true);
+    // /status shows the swap at once; its events reach the socket with the room's next tick.
+    const hunterJoined = () => seen.some((m) => m.t === 'events' && m.ev.some((e) => e.t === 'join' && e.player.name === 'Hunter'));
+    for (let i = 0; i < 40 && !hunterJoined(); i++) await new Promise((r) => setTimeout(r, 50));
+    expect(hunterJoined()).toBe(true);
     expect(seen.some((m) => m.t === 'events' && m.ev.some((e) => e.t === 'leave'))).toBe(false);
   }, 30_000);
 });

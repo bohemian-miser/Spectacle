@@ -10,7 +10,7 @@ import { chordTableFor, stepForward, type ChordTable } from '../../shared/game/s
 import type { PlayerRule } from '../../shared/game/rule';
 import { nextStep, unpackPaths, unpackStep } from '../../shared/game/wire';
 import type { Pt } from '../../shared/tiles';
-import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomSummary, ServerMessage } from '../../shared/game/protocol';
+import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomBots, RoomSummary, ServerMessage } from '../../shared/game/protocol';
 
 export interface ClientPath {
   readonly id: number;
@@ -177,6 +177,8 @@ export class Store {
   you = '';
   /** The server room we were put in (online), e.g. "normal-2". */
   room = '';
+  /** The room's bots and what may be asked for (null from an older server: no Bots panel). */
+  roomBots: RoomBots | null = null;
   /** Resume ticket from the last `welcome` (online only). */
   resume: { id: string; token: string } | null = null;
   /**
@@ -333,6 +335,7 @@ export class Store {
     this.bursts = [];
     this.you = '';
     this.room = '';
+    this.roomBots = null;
     this.resume = null;
     this.lastError = null;
     this.geometryVersion++;
@@ -366,6 +369,7 @@ export class Store {
         this.you = msg.you;
         this.resume = { id: msg.you, token: msg.token };
         this.room = msg.room ?? '';
+        this.roomBots = msg.bots ?? null;
         this.lastError = null;
         this.knobs = msg.knobs;
         if (!this.field || this.field.spec.family !== msg.field.family || this.field.spec.level !== msg.field.level || this.field.spec.rootTile !== msg.field.rootTile) {
@@ -674,6 +678,14 @@ export class Store {
       case 'refused':
         if (Date.now() >= this.quietRefusalsUntil) this.toast(ev.reason, 'bad');
         return;
+      case 'bots': {
+        this.roomBots = ev.bots;
+        if (ev.by === undefined) return;
+        const who = ev.by === this.you ? 'You' : (this.players.get(ev.by)?.name ?? 'Someone');
+        const total = Object.values(ev.bots.mix).reduce((n, k) => n + k, 0);
+        this.toast(`${who} set the bots: ${total === 0 ? 'none' : ev.bots.kinds.filter((k) => ev.bots.mix[k.kind]).map((k) => `${ev.bots.mix[k.kind]} ${k.label}`).join(', ')}`);
+        return;
+      }
     }
   }
 }

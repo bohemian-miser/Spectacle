@@ -14,6 +14,7 @@ import type { Store } from './store';
 import { helpSeen, markHelpSeen } from './session';
 import { boardTheme, useTheme } from './theme';
 import { strandColor } from './tiles-layer';
+import { BotsButton } from './BotsButton';
 import { SettingsButton } from './SettingsButton';
 import { getSettings, updateSettings, useSettings } from './settings';
 import { useStore } from './useStore';
@@ -392,6 +393,7 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
           <button type="button" className="btn btn-accent" onClick={onNewRule}>
             New rule
           </button>
+          <BotsButton store={store} conn={conn} />
           <SettingsButton />
         </div>
       </div>
