@@ -2,15 +2,18 @@
  * What the bots can see and work out: the field's shape, which rules make
  * which kinds of line (a scout, shared by every bot on a field), and a probe
  * that walks a would-be line forward against the live board to see what it
- * runs into. Pure, like the rest of `shared/game`.
+ * runs into. Pure, like the rest of `shared/game`. Part of the hot-loaded
+ * brains (see `index.ts`).
  */
 
-import { validEdgeSubsets, type Pt } from '../tiles';
-import type { Engine, Path } from './engine';
-import { tileAt, tileCenter, type Field } from './field';
-import { fassRule, randomMatching, ruleKey, type PlayerRule } from './rule';
-import { mulberry32, type Rng } from './rng';
-import { chordTableFor, chordsConflict, randomJunctionPicker, startStep, stepForward, tileChords, walkStrand, type ChordTable, type WalkStep } from './strand';
+import { validEdgeSubsets, type Pt } from '../../tiles';
+import type { Engine, Path } from '../engine';
+import { tileAt, tileCenter, type Field } from '../field';
+import { isInfiniteLineRule, randomMatching, ruleKey, type PlayerRule } from '../rule';
+import { mulberry32, type Rng } from '../rng';
+import { chordTableFor, chordsConflict, randomJunctionPicker, startStep, stepForward, tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
+
+export { isInfiniteLineRule };
 
 // --- the field's shape -----------------------------------------------------------
 
@@ -72,16 +75,6 @@ export function stepMid(s: { readonly a: Pt; readonly b: Pt }): Pt {
 }
 
 // --- the infinite-line rules -------------------------------------------------------
-
-/**
- * The FASS family (hex `128`, spectre `1278`, any matching): the rules that
- * draw an endless line. They are for players to find, so no bot plays one
- * unless it is told it may (`BotOptions.infiniteLines`).
- */
-export function isInfiniteLineRule(rule: PlayerRule): boolean {
-  const fass = fassRule(rule.family).subset;
-  return fass.length === rule.subset.length && fass.every((x, i) => x === rule.subset[i]);
-}
 
 // --- the scout ---------------------------------------------------------------------
 

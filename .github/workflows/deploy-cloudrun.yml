@@ -23,8 +23,35 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # A push that changes nothing but shared/game/brains/ needs no deploy: the
+  # "Ship bot brains" workflow hands it to the running servers, and a deploy
+  # would start fresh instances (every board reset) for nothing. Only once
+  # hot brains are set up (GCP_BRAINS_BUCKET); a manual run always deploys.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      deploy: ${{ steps.diff.outputs.deploy }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: diff
+        env:
+          BEFORE: ${{ github.event.before }}
+          HOT: ${{ vars.GCP_BRAINS_BUCKET != '' }}
+        run: |
+          deploy=true
+          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$HOT" = true ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            if ! git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qv '^shared/game/brains/'; then
+              deploy=false
+              echo "Only shared/game/brains/ changed: the Ship bot brains workflow takes it live, no deploy."
+            fi
+          fi
+          echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
+
   deploy:
-    if: vars.GCP_PROJECT != ''
+    needs: changes
+    if: vars.GCP_PROJECT != '' && needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     environment:
       name: online-arena
@@ -79,4 +106,5 @@ jobs:
             FIELD_FAMILY=${{ vars.SPECTACLE_FIELD_FAMILY || 'hex' }}
             FIELD_LEVEL=${{ vars.SPECTACLE_FIELD_LEVEL || '6' }}
             MAX_INSTANCE_PLAYERS=${{ vars.SPECTACLE_MAX_INSTANCE_PLAYERS || '400' }}
+            BOTS_URL=${{ vars.GCP_BRAINS_BUCKET != '' && format('gs://{0}/brains', vars.GCP_BRAINS_BUCKET) || '' }}
       - run: echo "Deployed to ${{ steps.deploy.outputs.url }}"

@@ -15,6 +15,11 @@
  *   BOTS_NORMAL, BOTS_CONQUEST (BOTS)  the same, for one game mode's rooms
  *   BOT_ROTATE_MS (300000)   how long a rotator keeps a rule before starting over
  *   BOT_INFINITE_LINES (0)   1 = bots may play the infinite-line (FASS) rules
+ *   BOTS_URL      (unset)    where hot-loaded bot brains are published
+ *                            (`gs://bucket/brains`, or http(s) for testing):
+ *                            new bot code goes live without a deploy — see
+ *                            server/brains.ts. Unset = the built-in brains only
+ *   BOTS_POLL_MS  (60000)    how often to look there for a new build
  *   ROOM_SIZE     (10)       humans per room before another opens
  *   MAX_ROOMS     (80)       rooms at most (then joiners share the emptiest)
  *   ROOM_IDLE_MS  (60000)    an extra empty room closes after this long
@@ -60,13 +65,13 @@ import { Engine } from '../shared/game/engine';
 import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../shared/game/field';
 import { GAME_MODES, isGameMode, knobsForMode, knobsFromEnv, type GameMode, type Knobs } from '../shared/game/knobs';
 import type { ClientMessage, GameEvent, RoomSummary, ServerMessage } from '../shared/game/protocol';
-import { fassRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
-import { isInfiniteLineRule } from '../shared/game/bot-sense';
+import { fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import { packEvents } from '../shared/game/wire';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
-import { botTotal, Bots, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions } from '../shared/game/bots';
+import { botTotal, Bots, BUILTIN_BRAINS, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet } from '../shared/game/bots';
+import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 
@@ -124,16 +129,22 @@ note('info', `field ${spec.family} level ${spec.level} root ${spec.rootTile}: ${
 
 const seed = process.env.SEED ? Number(process.env.SEED) : (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
 const seedRng = mulberry32(seed);
-/** Which bots each room of a mode starts with (`BOTS`, or `BOTS_<MODE>`). */
-const BOT_MIX = Object.fromEntries(
+/** Which bots each room of a mode has, by this server's settings (`BOTS`, or `BOTS_<MODE>`). */
+const ENV_BOT_MIX = Object.fromEntries(
   GAME_MODES.map((m) => {
     const name = `BOTS_${m.toUpperCase()}`;
     const raw = process.env[name] ?? process.env.BOTS ?? '1';
     const { mix, unknown } = parseBotMix(raw);
-    if (unknown.length) note('warn', `${process.env[name] !== undefined ? name : 'BOTS'}: ignoring ${unknown.join(', ')} (kinds: wanderer, rotator, hunter, farmer, bridge)`);
+    if (unknown.length) note('warn', `${process.env[name] !== undefined ? name : 'BOTS'}: ignoring ${unknown.join(', ')} (kinds: ${BUILTIN_BRAINS.kinds.join(', ')})`);
     return [m, mix];
   }),
 ) as Record<GameMode, BotMix>;
+/** The brains bots play with: the built-in ones until a hot-loaded build replaces them (`server/brains.ts`). */
+let brainSet: BrainSet = BUILTIN_BRAINS;
+/** A mode's bots: the brains' own `mix` for it if they set one (a push can add bots to live rooms), else the server's. */
+function botMix(mode: GameMode): BotMix {
+  return brainSet.mix?.[mode] ?? ENV_BOT_MIX[mode];
+}
 const BOT_OPTIONS: BotOptions = {
   ...DEFAULT_BOT_OPTIONS,
   rotateMs: positiveInt(process.env.BOT_ROTATE_MS, DEFAULT_BOT_OPTIONS.rotateMs),
@@ -141,10 +152,10 @@ const BOT_OPTIONS: BotOptions = {
 };
 for (const m of GAME_MODES) {
   const t = Date.now();
-  prepareBots(field, BOT_MIX[m]);
+  prepareBots(field, botMix(m), brainSet);
   if (Date.now() - t > 5) note('info', `bots scouted the field's rules in ${Date.now() - t} ms`);
 }
-const botSummary = GAME_MODES.map((m) => `${m}: ${formatBotMix(BOT_MIX[m])}`).join(' · ');
+const botSummary = (): string => GAME_MODES.map((m) => `${m}: ${formatBotMix(botMix(m), brainSet.kinds)}`).join(' · ');
 /** Humans per room before the next joiner is put in a new one. */
 const ROOM_SIZE = Math.max(1, Number(process.env.ROOM_SIZE ?? 10));
 /** Rooms at most, all modes together; past it, joiners squeeze into the emptiest room of their mode. */
@@ -251,6 +262,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
         atCapacity: atCapacity(),
         tiles: field.count,
         spec,
+        brains: brainsVersion(),
         rooms: [...rooms.values()].map((r) => r.summary()),
       }),
     );
@@ -343,8 +355,15 @@ class Room {
   ) {
     const rng = mulberry32((seedRng.next() * 0xffffffff) >>> 0);
     this.engine = new Engine(field, knobsForMode(baseKnobs, mode), rng);
-    this.bots = new Bots(this.engine, rng, BOT_OPTIONS.aggression, BOT_OPTIONS);
-    this.pending.push(...this.bots.add(BOT_MIX[mode], Date.now()));
+    this.bots = new Bots(this.engine, rng, BOT_OPTIONS.aggression, BOT_OPTIONS, brainSet);
+    // One bot's brain throwing skips that bot's tick, not the room's.
+    this.bots.onError = (kind, e) => {
+      brainsWatcher?.failed(Date.now());
+      guard(`bot ${kind} in ${this.id}`, () => {
+        throw e;
+      });
+    };
+    this.pending.push(...this.bots.add(botMix(mode), Date.now()));
   }
 
   get knobs(): Knobs {
@@ -834,6 +853,32 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
   });
 }
 
+// --- hot-loaded brains ------------------------------------------------------------
+
+/** Every room's bots to `set`'s brains: same bot players, new minds, and the mix it asks for. */
+function applyBrains(set: BrainSet): void {
+  brainSet = set;
+  const now = Date.now();
+  for (const room of rooms.values()) guard(`brains for ${room.id}`, () => room.pending.push(...room.bots.setBrains(set, now, botMix(room.mode))));
+  note('info', `bots per room now ${botSummary()}`);
+}
+
+const BUILTIN_BRAINS_HASH = brainsHash(ROOT);
+const brainsWatcher: BrainsWatcher | null = process.env.BOTS_URL
+  ? new BrainsWatcher({
+      url: process.env.BOTS_URL,
+      key: sourceKey(ROOT),
+      builtin: BUILTIN_BRAINS_HASH,
+      builtinSet: BUILTIN_BRAINS,
+      apply: (set) => applyBrains(set),
+      log: (level, text) => note(level, text),
+    })
+  : null;
+
+function brainsVersion(): BrainsVersion {
+  return brainsWatcher?.version ?? { source: 'built-in', brains: BUILTIN_BRAINS_HASH, loadedAt: startedAt };
+}
+
 // --- status --------------------------------------------------------------------
 
 /** Everything /status shows. Read-only, and nothing in it lets anyone act as a player. */
@@ -848,7 +893,8 @@ function statusReport(): StatusReport {
     tick: { everyMs: baseKnobs.tickMs, avgMs: +tickStats.avgMs.toFixed(2), maxMs: +tickStats.maxMs.toFixed(1) },
     sockets: wss.clients.size,
     counters,
-    limits: { roomSize: ROOM_SIZE, maxRooms: MAX_ROOMS, botsPerRoom: Math.max(...GAME_MODES.map((m) => botTotal(BOT_MIX[m]))), bots: botSummary },
+    limits: { roomSize: ROOM_SIZE, maxRooms: MAX_ROOMS, botsPerRoom: Math.max(...GAME_MODES.map((m) => botTotal(botMix(m)))), bots: botSummary() },
+    brains: { ...brainsVersion(), refused: brainsWatcher?.refused?.reason ?? null },
     rooms: [...rooms.values()].map((r) => {
       const players = [...r.engine.players.values()].map((p) => ({
         name: p.name,
@@ -868,5 +914,6 @@ function statusReport(): StatusReport {
 }
 
 http.listen(PORT, () => {
-  note('info', `listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots per room: ${botSummary}, ${ROOM_SIZE} per room, max ${MAX_ROOMS} rooms)`);
+  note('info', `listening on http://localhost:${PORT}  (ws: /ws, seed ${seed}, bots per room: ${botSummary()}, ${ROOM_SIZE} per room, max ${MAX_ROOMS} rooms)`);
+  brainsWatcher?.start(positiveInt(process.env.BOTS_POLL_MS, 60_000));
 });

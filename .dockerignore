@@ -5,3 +5,4 @@ dist
 deploy
 *.png
 *.log
+dist-brains

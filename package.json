@@ -17,7 +17,8 @@
     "bench:field": "tsx scripts/bench-field.ts",
     "bench:lag": "tsx scripts/lag-bench.ts",
     "bench:stress": "tsx scripts/stress-bench.ts",
-    "servers": "tsx scripts/servers.ts"
+    "servers": "tsx scripts/servers.ts",
+    "brains": "tsx scripts/brains.ts"
   },
   "dependencies": {
     "react": "^18.3.1",
@@ -33,6 +34,7 @@
     "@types/ws": "^8.18.1",
     "@vitejs/plugin-react": "^4.7.0",
     "concurrently": "^9.2.1",
+    "esbuild": "^0.28.2",
     "typescript": "^5.9.3",
     "vite": "^7.1.7",
     "vitest": "^3.2.7"

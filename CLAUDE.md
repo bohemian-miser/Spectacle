@@ -34,11 +34,15 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   engine.ts       Authoritative simulation: players, paths, tap, tick, cuts,
                   circuits, zero-sum points, tap restrictions. Deterministic
                   given its Rng. No I/O.
-  bots.ts         Bots: five kinds (wanderer, rotator, hunter, farmer,
-                  bridge) as a `BotMix`; `parseBotMix` reads `BOTS`.
-  bot-sense.ts    What bots see: the rule scout (one per field, sliced per
-                  tick or `prepareBots` up front), `probe` (walk a would-be
-                  line against the live board), isInfiniteLineRule.
+  bots.ts         Bots, host half: `BotMix` (`parseBotMix` reads `BOTS`),
+                  the `Brain`/`BrainSet` interface, and `Bots` — a room's
+                  bot players, driving their brains; `setBrains` swaps
+                  brains live (players kept), `reconcile` matches a mix.
+  brains/         HOT-LOADED (see "settled"): how bots play. kinds.ts (five
+                  kinds: wanderer, rotator, hunter, farmer, bridge),
+                  sense.ts (rule scout, sliced per tick or `prepareBots` up
+                  front; `probe` walks a would-be line against the live
+                  board), mix.ts (`LIVE_MIX`), index.ts (the `brains` set).
   wire.ts         The packed wire: welcome lines as first step + length (a
                   loop: first step only), and events with steps as `begin` +
                   `grow` (packEvents); the client regrows them.
@@ -53,6 +57,10 @@ server/index.ts   Node + ws. Rooms per game mode (`Room`: engine + bots +
                   per room, static dist/, resume tokens (RESUME_GRACE_MS),
                   env config, guard() round every message/tick, note() log.
                   tests/rooms.test.ts spawns it.
+server/brains.ts  Hot-loaded brains: `sourceKey`/`brainsHash`, reads
+                  `BOTS_URL` (gs:// with the instance's token, or http),
+                  `BrainsWatcher` polls the manifest, checks key + SHA-256,
+                  imports, applies; reverts a build that keeps throwing.
 server/status-page.ts  /status (HTML, polls /status.json): rooms, players,
                   memory, loop time, joins/drops/errors, the recent log.
 server/pattern-stats.ts  Which rules people play and how they score: a
@@ -102,6 +110,9 @@ scripts/stress-bench.ts  `npm run bench:stress`: two humans painting all game
                   with every head and six patterns — what fills a board far
                   faster than bots do. Engine tick/tap, wire, store, tints and
                   overlay per minute as it fills (CLIENT=0: engine only).
+scripts/brains.ts  `npm run brains -- build|check`: bundle brains/ (esbuild)
+                  + manifest into dist-brains/; load it as a server would and
+                  play it, alone and swapped in under live bots.
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
                   heartbeats (who is in which room), traffic, instance-count
@@ -111,7 +122,9 @@ deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
                   solo), publish.yml (GHCR image), pages.yml (solo build),
-                  deploy-cloudrun.yml (skipped until GCP_PROJECT var is set).
+                  deploy-cloudrun.yml (skipped until GCP_PROJECT var is set;
+                  skips itself when a push only touches brains/), brains.yml
+                  (ships brains/ to GCS; skipped until GCP_BRAINS_BUCKET).
 ```
 
 ## Commands
@@ -158,6 +171,22 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   (Before this, wanderers drew from every clean rule, the FASS subset included.)
   Bot work per tick stays in single-digit ms at hex level 6 —
   `scripts/bot-arena.ts` prints it; keep it there.
+- **Bot brains hot-load; everything else deploys.** Bot *players* live in the
+  engine; their *brains* (`shared/game/brains/`) are swappable while rooms
+  run (`Bots.setBrains`: same players, lines, rule; `start(now, resumed)`,
+  where a resumed farmer/bridge keeps its rule). A push to main touching only
+  `brains/` skips the Cloud Run deploy; brains.yml builds, plays and uploads
+  it to `gs://$GCP_BRAINS_BUCKET/brains/` (build first, then
+  `manifest.json`), and servers with `BOTS_URL` poll and swap it in. A server
+  loads only a build whose `key` (hash of `shared/` minus `brains/`) is its
+  own, so brains always see the engine they were compiled against: code in
+  `brains/` may import anything in `shared/` but only *types* from
+  `../bots`. `BrainSet.mix` (`brains/mix.ts`, `LIVE_MIX`) overrides `BOTS`
+  per mode and live rooms reconcile to it. `Bots.onError` (set by the
+  server) makes one brain's exception skip only that bot; 20 in a minute
+  revert to the built-in brains and blacklist that build. The bucket must
+  stay CI-write-only — a build runs in-process. An infinite loop is not
+  caught. `tests/brains.test.ts` swaps a build into a spawned server.
 - **Two game modes** (`knobs.mode`, per room): **Normal** (default in the
   lobby and on the server) and **Conquest (beta)** — everything described
   under "Captured patterns" below. In normal mode a rival line wholly inside

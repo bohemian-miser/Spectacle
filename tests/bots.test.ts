@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isInfiniteLineRule, scoutFor } from '../shared/game/bot-sense';
+import { isInfiniteLineRule, scoutFor } from '../shared/game/brains/sense';
 import { BOT_KINDS, Bots, formatBotMix, parseBotMix, prepareBots, type BotMix } from '../shared/game/bots';
 import { Engine } from '../shared/game/engine';
 import { buildField, fieldOutline } from '../shared/game/field';

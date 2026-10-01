@@ -25,6 +25,8 @@ export interface StatusReport {
   readonly sockets: number;
   readonly counters: { readonly joins: number; readonly resumes: number; readonly leaves: number; readonly dropped: number; readonly errors: number };
   readonly limits: { readonly roomSize: number; readonly maxRooms: number; readonly botsPerRoom: number; readonly bots: string };
+  /** Which bot brains are playing: the built-in ones or a hot-loaded build (`server/brains.ts`), and why the last build was refused. */
+  readonly brains: { readonly source: 'built-in' | 'hot'; readonly brains: string; readonly commit?: string; readonly loadedAt: number; readonly refused: string | null };
   readonly rooms: readonly {
     readonly id: string;
     readonly mode: GameMode;
@@ -120,7 +122,7 @@ export const STATUS_PAGE = `<!doctype html>
     const humans = r.rooms.flatMap((room) => room.players.filter((p) => !p.bot));
     const online = humans.filter((p) => p.connected).length;
     const held = humans.length - online;
-    $('state').innerHTML = '<span class="dot"></span>instance ' + esc(r.instance.id) + (r.instance.revision ? ' (' + esc(r.instance.revision) + ')' : '') + ' · up ' + esc(ago(r.now - r.startedAt)) + ' · ' + esc(r.field.family) + ' level ' + esc(r.field.level) + ' · ' + esc(r.field.tiles.toLocaleString()) + ' tiles · bots: ' + esc(r.limits.bots);
+    $('state').innerHTML = '<span class="dot"></span>instance ' + esc(r.instance.id) + (r.instance.revision ? ' (' + esc(r.instance.revision) + ')' : '') + ' · up ' + esc(ago(r.now - r.startedAt)) + ' · ' + esc(r.field.family) + ' level ' + esc(r.field.level) + ' · ' + esc(r.field.tiles.toLocaleString()) + ' tiles · bots: ' + esc(r.limits.bots) + ' · brains: ' + esc(r.brains.source) + ' ' + esc(r.brains.brains.slice(0, 8)) + (r.brains.commit ? ' (' + esc(r.brains.commit.slice(0, 7)) + ', ' + esc(ago(r.now - r.brains.loadedAt)) + ')' : '') + (r.brains.refused ? ' · last build refused: ' + esc(r.brains.refused) : '');
     const tickCls = r.tick.maxMs > r.tick.everyMs ? 'is-bad' : r.tick.maxMs > r.tick.everyMs / 2 ? 'is-warn' : '';
     const memCls = r.memory.rssMb > 900 ? 'is-bad' : r.memory.rssMb > 750 ? 'is-warn' : '';
     $('stats').innerHTML = [

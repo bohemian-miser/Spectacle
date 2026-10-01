@@ -26,6 +26,8 @@ jobs:
       - run: npm run typecheck
       - run: npm test
       - run: npm run build
+      - name: Bot brains build and play as a hot-loaded module
+        run: npm run brains -- build && npm run brains -- check
 
   smoke:
     name: Browser smoke (server + client)
