@@ -17,7 +17,7 @@ let server: ChildProcess;
 async function waitForHealth(): Promise<void> {
   for (let i = 0; i < 100; i++) {
     try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/healthz`);
+      const r = await fetch(`http://127.0.0.1:${PORT}/health`);
       if (r.ok) return;
     } catch {
       /* not up yet */
@@ -72,14 +72,14 @@ describe('rooms', () => {
     // Each room has its own bot, and only its own players.
     expect(c.players.filter((p) => !p.bot).map((p) => p.id)).toEqual([c.you]);
     expect(c.players.some((p) => p.bot)).toBe(true);
-    const health = (await (await fetch(`http://127.0.0.1:${PORT}/healthz`)).json()) as { players: number; rooms: { id: string; players: number }[] };
+    const health = (await (await fetch(`http://127.0.0.1:${PORT}/health`)).json()) as { players: number; rooms: { id: string; players: number }[] };
     expect(health.players).toBe(4);
     expect(Object.fromEntries(health.rooms.map((r) => [r.id, r.players]))).toEqual({ 'normal-1': 2, 'conquest-1': 1, 'normal-2': 1 });
   });
 
   it('leave frees the seat at once, with no resume window', async () => {
     const health = async () =>
-      ((await (await fetch(`http://127.0.0.1:${PORT}/healthz`)).json()) as { rooms: { id: string; players: number }[] }).rooms;
+      ((await (await fetch(`http://127.0.0.1:${PORT}/health`)).json()) as { rooms: { id: string; players: number }[] }).rooms;
     const e = await join('conquest');
     expect(e.room).toBe('conquest-1');
     expect((await health()).find((r) => r.id === 'conquest-1')?.players).toBe(2);

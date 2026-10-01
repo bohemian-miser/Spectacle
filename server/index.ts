@@ -115,7 +115,7 @@ const startedAt = Date.now();
 /**
  * Which process this is. Cloud Run may run several instances (and, straight
  * after a deploy, the old revision's instances keep their open sockets for up
- * to the request timeout), each with its own rooms — so /status, /healthz and
+ * to the request timeout), each with its own rooms — so /status, /health and
  * the heartbeat log name the instance they came from. `K_REVISION` is set by
  * Cloud Run; the id is random per process.
  */
@@ -259,7 +259,9 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
     res.end(STATUS_PAGE);
     return;
   }
-  if (url.pathname === '/healthz') {
+  // /health, not /healthz: Cloud Run's front end keeps paths ending in z for
+  // itself and answers them 404. /healthz stays for the VM and older images.
+  if (url.pathname === '/health' || url.pathname === '/healthz') {
     res.writeHead(200, { 'content-type': 'application/json' });
     res.end(
       JSON.stringify({

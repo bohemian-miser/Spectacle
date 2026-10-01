@@ -116,7 +116,7 @@ scripts/brains.ts  `npm run brains -- build|check`: bundle brains/ (esbuild)
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
                   heartbeats (who is in which room), traffic, instance-count
-                  metric, /healthz, recent joins/leaves, via gcloud's token
+                  metric, /health, recent joins/leaves, via gcloud's token
                   over REST. `--url` reads one server's /status.json instead.
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
@@ -227,7 +227,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   before `roomForJoin`/`validateRule` do any work): at or past it, a join is
   refused with `error.code: 'full'` on the socket it came in on (not
   rerouted). A `join.resume` is exempt (checked first): it replaces a player
-  already counted. `/healthz` reports `maxPlayers`/`atCapacity`. At level 6
+  already counted. `/health` reports `maxPlayers`/`atCapacity`. At level 6
   the field is ~540 MB RSS idle and 80 players across 9 rooms add ~30 MB and
   ~10% of a core (a local load test), so 400 is about half a vCPU inside
   `1Gi`; raise CPU with memory before raising the cap. **Named rooms and
@@ -237,7 +237,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   invites exact across instances needs routing by room (e.g. several
   one-instance services with the shard in the link) — open, owner's call.
   Every instance names itself (`INSTANCE`: random id + `K_REVISION`) on
-  `/status`, `/healthz`, and a once-a-minute `{"message":"heartbeat"}` log
+  `/status`, `/health`, and a once-a-minute `{"message":"heartbeat"}` log
   line (only while it has sockets) — the log is the one view across them all.
 - **Client fallback: never a silent dead end.** `error.code` (protocol.ts)
   gives the client a machine-readable reason instead of parsing text.

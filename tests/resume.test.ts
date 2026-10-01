@@ -18,7 +18,7 @@ let awayServer: ChildProcess;
 async function waitForHealth(port = PORT): Promise<void> {
   for (let i = 0; i < 100; i++) {
     try {
-      const r = await fetch(`http://127.0.0.1:${port}/healthz`);
+      const r = await fetch(`http://127.0.0.1:${port}/health`);
       if (r.ok) return;
     } catch {
       /* not up yet */
@@ -70,7 +70,7 @@ class Client {
 async function awaitDrop(c: Client): Promise<void> {
   c.ws.close();
   await new Promise<void>((r) => c.ws.once('close', () => r()));
-  await fetch(`http://127.0.0.1:${c.port}/healthz`);
+  await fetch(`http://127.0.0.1:${c.port}/health`);
 }
 
 beforeAll(async () => {
@@ -152,7 +152,7 @@ describe('resume', () => {
     await b.open();
     await b.until('hello');
     b.send({ t: 'join', name: 'ignored', rule: fassRule('hex'), resume: { id: w1.you, token: w1.token } });
-    await fetch(`http://127.0.0.1:${PORT}/healthz`);
+    await fetch(`http://127.0.0.1:${PORT}/health`);
     await awaitDrop(b);
 
     // All the client has is still w1's token: it must still be Gus.
@@ -198,7 +198,7 @@ describe('resume', () => {
     expect(w2.players.filter((p) => p.name === 'Eve')).toHaveLength(1);
     // The old socket's close must not have unhooked the new one: b still
     // hears about a newcomer.
-    await fetch(`http://127.0.0.1:${PORT}/healthz`);
+    await fetch(`http://127.0.0.1:${PORT}/health`);
     const c = new Client();
     await c.open();
     await c.until('hello');

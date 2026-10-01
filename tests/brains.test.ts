@@ -223,7 +223,7 @@ describe('a live server', () => {
     });
     for (let i = 0; i < 100; i++) {
       try {
-        if ((await fetch(`http://127.0.0.1:${PORT}/healthz`)).ok) break;
+        if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break;
       } catch {
         /* not up yet */
       }
