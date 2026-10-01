@@ -61,7 +61,8 @@ server/pattern-stats.ts  Which rules people play and how they score: a
                   `stint` line per finished stint on stdout, STATS_FILE.
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
-  session.ts      The tab's resume ticket (sessionStorage) and the
+  session.ts      The tab's resume ticket (sessionStorage, shared copy in
+                  localStorage for a new tab) and the
                   once-per-browser help flag (localStorage).
   net.ts          WebSocket GameConnection. local.ts: LocalConnection = the
                   same engine + bots inside the tab (solo mode / Pages build).
@@ -585,7 +586,15 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   over a player whose old socket is still open — a refresh usually beats the
   old page's close — so `tryResume` renames the old client before closing it,
   or its close handler would unhook the new one. The ticket lives in
-  `sessionStorage`: per tab, gone with the tab, never sent as a cookie.
+  `sessionStorage` (per tab, never sent as a cookie), with a copy in
+  `localStorage` (`spectacle.lastSession`, with `seenAt`, refreshed every
+  30 s and on `pagehide` by `touchSession`) that a tab with no ticket of its
+  own resumes on while it is under 5 min old — so closing the tab and coming
+  back keeps the player. A tab never takes over a player another open tab
+  claims (`heldElsewhere`; a tab claims its player while reconnecting too).
+  `clearSession` drops only the tab's ticket (lost to another tab: the copy
+  is theirs now); `forgetSession` also drops the copy, only on leaving for
+  good. `tests/session.test.ts`.
 - **`tests/resume.test.ts` used to flake** (~1 in 5): the resume window only
   opens once the *server's* close handler has detached the player, so a
   reconnect fired straight after `ws.close()` legitimately got a new player.
