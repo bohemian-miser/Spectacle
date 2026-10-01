@@ -519,9 +519,19 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **`tapOntoOthers` defaults false** — tests that tap onto a rival must set it.
 - **Bots compound.** Speed ∝ score and lines multiply; bots on the FASS rule
   can run away. That's tuning, not a bug — see knobs.
-- **Point-in-polygon on the circuit's `a` points** decides "inside" (engine
-  taps, `tilesInsidePolygon`). Tiles the loop passes through get the strong
-  tint; the enclosed free tiles get a fainter wash, cached per closed path.
+- **Point-in-polygon on the circuit's `a` points** decides "inside" in the
+  engine (taps, captures). The client's washes instead fill in from the line
+  (`tilesEnclosed`): seeded with the tiles across the inside edges of every
+  line tile — a loop can cross a tile twice, so each tile's outline is split
+  by all its chords, sorted round it — and spread across shared edges
+  (`acrossEdge`, worked out lazily; vertex neighbours would leak on the
+  Spectre board), stopped by the line and the board's edge. Same tiles as
+  the old test (`tests/enclosed.test.ts`, incl. whole strands of random
+  rules), but a claim enclosing 52k tiles at hex 6 takes 20 ms, not 6 s. It
+  gives the tiles ring by ring, so a new circuit's wash spreads in from the
+  line (`RING_MS`, at most `REVEAL_MS`); tint passes run every frame while
+  one plays. Tiles the loop passes through get the strong tint; the enclosed
+  free tiles get a fainter wash, cached per closed path.
 - **The rule pattern** (your chords, faint, on tiles no rival's line touches —
   your own lines' tiles included — and not inside a rival's circuit) draws on
   the overlay past `PATTERN_MIN_SCALE` (1.3 × `ARROW_MIN_SCALE`, divided by

@@ -11,7 +11,7 @@
  * Zoomed in close, your own rule is sketched faintly over the free tiles.
  */
 
-import { fieldOutline, pathPolygon, tilesInBox, tilesInsidePolygon, type Box, type Field } from '../../shared/game/field';
+import { fieldOutline, tilesEnclosed, tilesInBox, type Box, type Field } from '../../shared/game/field';
 import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand';
 import { getSettings, type CircuitStyle, type Settings } from './settings';
 import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
@@ -66,6 +66,13 @@ const SPARKS = 7;
 
 /** Least time between two rebuilds of the tile tints while the board is busy (ms). */
 const TINT_MIN_MS = 200;
+
+/**
+ * A new circuit's wash spreads in from its line a ring of tiles at a time:
+ * `RING_MS` a ring, faster for a big one so none takes over `REVEAL_MS`.
+ */
+const RING_MS = 14;
+const REVEAL_MS = 800;
 
 /** How long a player whose name found no place waits before the next search (ms). */
 const LABEL_RETRY_MS = 300;
@@ -130,7 +137,7 @@ export class Renderer {
   /** Team colours: yours blue, everyone else red. */
   private teams = getSettings().teams;
   /** A closed circuit's enclosed tiles; a closed path never changes, so once is enough. */
-  private readonly interiors = new WeakMap<ClientPath, readonly number[]>();
+  private readonly interiors = new WeakMap<ClientPath, { tiles: readonly number[]; rings: readonly number[] }>();
   /** A closed path's colour and darkening, keyed on the owner colour it was made from. */
   private looks = new WeakMap<ClientPath, readonly [string, readonly [string, number]]>();
   private readonly rgbCache = new Map<string, [number, number, number]>();
@@ -149,7 +156,9 @@ export class Renderer {
   /** Tiles inside anyone else's closed circuit, and how many such circuits (kept with the washes). */
   private readonly rivalInterior = new Map<number, number>();
   /** The closed lines the washes were last worked out for, as they were then. */
-  private readonly closedSeen = new Map<ClientPath, { owner: string; pattern: number; inside: readonly number[] }>();
+  private readonly closedSeen = new Map<ClientPath, { owner: string; pattern: number; inside: readonly number[]; shown: number }>();
+  /** Circuits whose wash is still spreading in from the line (see `RING_MS`). */
+  private reveals: { path: ClientPath; rings: readonly number[]; start: number }[] = [];
   /** Tile → the closed lines round it (the washes' layers). */
   private readonly cover = new Map<number, ClientPath[]>();
   private readonly visible: number[] = [];
@@ -342,8 +351,10 @@ export class Renderer {
     const store = this.store;
     const full = this.lastGeometry === -1 || store.tintsVersion !== this.lastTintsVersion;
     const washes = full || store.closedVersion !== this.lastClosedVersion;
-    if (!full && !washes && this.touched.size === 0) return;
-    if (now - this.lastTintAt < TINT_MIN_MS && this.lastGeometry !== -1) return;
+    // A wash spreading in from its line moves every frame; its passes only touch the new ring.
+    const revealing = this.reveals.length > 0;
+    if (!full && !washes && this.touched.size === 0 && !revealing) return;
+    if (now - this.lastTintAt < TINT_MIN_MS && this.lastGeometry !== -1 && !revealing) return;
     this.lastTintAt = now;
     this.lastGeometry = store.geometryVersion;
     this.lastTintsVersion = store.tintsVersion;
@@ -356,11 +367,10 @@ export class Renderer {
       return rgb;
     };
     const touched = this.touched;
-    if (washes) {
-      this.washes(full, tintOf, touched);
-      // Your pattern skips rival circuits' interiors, which the washes work out.
-      this.tintEpoch++;
-    }
+    if (washes) this.washes(full, tintOf, touched, now);
+    if (this.reveals.length > 0) this.reveal(now, tintOf, touched);
+    // Your pattern skips rival circuits' interiors, which the washes work out.
+    if (washes || revealing) this.tintEpoch++;
     const tint = (tile: number): void => {
       const paths = store.occupancy.get(tile);
       if (paths) {
@@ -402,9 +412,12 @@ export class Renderer {
    * than hiding behind the first loop to claim it. Flip pieces close circuits
    * all the time, so only the tiles inside the circuits that closed, opened,
    * went or changed hands since last time are worked out again (all of them
-   * when `full`); those go into `touched`. Keeps `rivalInterior` too.
+   * when `full`); those go into `touched`. Keeps `rivalInterior` too. A
+   * circuit's inside is found by filling in from its line (`tilesEnclosed`),
+   * ring by ring, and a circuit that just closed shows it that way: its wash
+   * spreads in from the line (`reveal`).
    */
-  private washes(full: boolean, tintOf: (path: ClientPath) => [number, number, number], touched: Set<number>): void {
+  private washes(full: boolean, tintOf: (path: ClientPath) => [number, number, number], touched: Set<number>, now: number): void {
     const store = this.store;
     const field = this.field;
     if (full) {
@@ -412,48 +425,79 @@ export class Renderer {
       this.cover.clear();
       this.wash.clear();
       this.rivalInterior.clear();
+      this.reveals = [];
     }
     if (!field) return;
     const redo = new Set<number>();
-    const cover = (path: ClientPath, inside: readonly number[], owner: string, on: boolean): void => {
-      const rival = owner !== store.you;
-      for (const t of inside) {
-        redo.add(t);
-        const list = this.cover.get(t);
-        if (on) {
-          if (list) list.push(path);
-          else this.cover.set(t, [path]);
-        } else if (list) {
-          const i = list.indexOf(path);
-          if (i >= 0) list.splice(i, 1);
-          if (list.length === 0) this.cover.delete(t);
-        }
-        if (!rival) continue;
-        const n = (this.rivalInterior.get(t) ?? 0) + (on ? 1 : -1);
-        if (n > 0) this.rivalInterior.set(t, n);
-        else this.rivalInterior.delete(t);
-      }
-    };
     const live = new Set<ClientPath>();
     for (const path of store.paths.values()) {
       if (path.status !== 'closed' || path.steps.length < 2 || !store.players.has(path.owner)) continue;
       live.add(path);
       const seen = this.closedSeen.get(path);
       if (seen && seen.owner === path.owner && seen.pattern === path.pattern) continue;
-      if (seen) cover(path, seen.inside, seen.owner, false);
+      if (seen) this.coverTiles(path, seen.inside.slice(0, seen.shown), seen.owner, false, redo);
       let inside = this.interiors.get(path);
       if (!inside) {
-        inside = tilesInsidePolygon(field, pathPolygon(path));
+        inside = tilesEnclosed(field, path.steps, path.region);
         this.interiors.set(path, inside);
       }
-      cover(path, inside, path.owner, true);
-      this.closedSeen.set(path, { owner: path.owner, pattern: path.pattern, inside });
+      // A circuit just closed spreads in from its line; anything else (a
+      // line changing hands, a fresh board) shows at once.
+      const spread = !seen && !full && inside.rings.length > 1;
+      const shown = spread ? inside.rings[1] : inside.tiles.length;
+      this.coverTiles(path, inside.tiles.slice(0, shown), path.owner, true, redo);
+      this.closedSeen.set(path, { owner: path.owner, pattern: path.pattern, inside: inside.tiles, shown });
+      if (spread) this.reveals.push({ path, rings: inside.rings, start: now });
     }
     for (const [path, seen] of [...this.closedSeen]) {
       if (live.has(path)) continue;
-      cover(path, seen.inside, seen.owner, false);
+      this.coverTiles(path, seen.inside.slice(0, seen.shown), seen.owner, false, redo);
       this.closedSeen.delete(path);
     }
+    this.recompose(redo, tintOf, touched);
+  }
+
+  /** Spread the newest circuits' washes on to the rings now due. */
+  private reveal(now: number, tintOf: (path: ClientPath) => [number, number, number], touched: Set<number>): void {
+    const redo = new Set<number>();
+    this.reveals = this.reveals.filter(({ path, rings, start }) => {
+      const seen = this.closedSeen.get(path);
+      if (!seen || seen.owner !== path.owner) return false;
+      const ring = Math.floor((now - start) / Math.min(RING_MS, REVEAL_MS / rings.length)) + 1;
+      const target = ring >= rings.length ? seen.inside.length : rings[ring];
+      if (target > seen.shown) {
+        this.coverTiles(path, seen.inside.slice(seen.shown, target), seen.owner, true, redo);
+        seen.shown = target;
+      }
+      return seen.shown < seen.inside.length;
+    });
+    this.recompose(redo, tintOf, touched);
+  }
+
+  /** Lay `path`'s wash on `tiles` (or take it off), keeping `rivalInterior`; the tiles go in `redo`. */
+  private coverTiles(path: ClientPath, tiles: readonly number[], owner: string, on: boolean, redo: Set<number>): void {
+    const rival = owner !== this.store.you;
+    for (const t of tiles) {
+      redo.add(t);
+      const list = this.cover.get(t);
+      if (on) {
+        if (list) list.push(path);
+        else this.cover.set(t, [path]);
+      } else if (list) {
+        const i = list.indexOf(path);
+        if (i >= 0) list.splice(i, 1);
+        if (list.length === 0) this.cover.delete(t);
+      }
+      if (!rival) continue;
+      const n = (this.rivalInterior.get(t) ?? 0) + (on ? 1 : -1);
+      if (n > 0) this.rivalInterior.set(t, n);
+      else this.rivalInterior.delete(t);
+    }
+  }
+
+  /** Work out the wash of each tile in `redo` again from the circuits round it; they go in `touched`. */
+  private recompose(redo: Iterable<number>, tintOf: (path: ClientPath) => [number, number, number], touched: Set<number>): void {
+    const store = this.store;
     const size = (path: ClientPath): number => this.closedSeen.get(path)!.inside.length;
     for (const t of redo) {
       touched.add(t);
