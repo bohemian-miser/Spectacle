@@ -324,6 +324,7 @@ Server environment:
 | `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules (off: those are for players to find) |
 | `BOTS_URL` | unset | where hot-loaded bot brains are published (`gs://bucket/brains`) — see "Bots without a deploy" |
 | `BOTS_POLL_MS` | `60000` | how often a server looks there for a new build |
+| `ROOM_MAX_BOTS`, `ROOM_MAX_BOTS_PER_KIND` | `6`, `3` | most bots players may put in a room with the Bots panel, in all and of one kind |
 | `ROOM_SIZE` | `10` | humans per room; the next joiner of that mode gets a new room |
 | `MAX_ROOMS` | `80` | rooms at most, all modes; past it joiners share the emptiest room of their mode |
 | `ROOM_IDLE_MS` | `60000` | an extra room nobody is in (or holding for) closes after this long |
@@ -337,7 +338,14 @@ Server environment:
 
 Five kinds, mixed freely — on the server with `BOTS` (e.g.
 `BOTS=bridge+hunter:2`; use `+` rather than commas in Cloud Run env vars),
-in solo with the lobby's picker (or `/?solo&bots=bridge+farmer`):
+in solo with the lobby's picker (or `/?solo&bots=bridge+farmer`). In the
+arena the **Bots** button (beside Settings) changes them mid-game. Online, it
+changes them for the whole room: anyone in the room may, everyone sees a
+note saying who did, and the server caps it (`ROOM_MAX_BOTS`,
+`ROOM_MAX_BOTS_PER_KIND`, one change a second per player). Bots added join
+straight away, and a bot taken off takes its lines with it. A room keeps
+its players' choice for as long as it lasts, even when new bot brains or a
+`LIVE_MIX` arrive:
 
 | Kind | What it does |
 |---|---|

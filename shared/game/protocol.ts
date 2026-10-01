@@ -105,6 +105,11 @@ export type ClientMessage =
   | { readonly t: 'leave' }
   /** The `welcome` (and its resume token) arrived: the token resumed on may die now. */
   | { readonly t: 'ack' }
+  /**
+   * Set the room's bots: how many of each kind (kinds from `RoomBots.kinds`).
+   * Anyone in the room may; it applies to everyone (a `bots` event).
+   */
+  | { readonly t: 'bots'; readonly mix: Readonly<Record<string, number>> }
   | { readonly t: 'ping'; readonly n: number };
 
 // --- server → client ---------------------------------------------------------
@@ -219,7 +224,20 @@ export type GameEvent =
     }
   | { readonly t: 'score'; readonly id: string; readonly score: number; readonly combo: number }
   /** Your tap was refused, with a reason to show. */
-  | { readonly t: 'refused'; readonly reason: string };
+  | { readonly t: 'refused'; readonly reason: string }
+  /** The room's bots changed: what plays now, and who changed it (a player id; absent for the server, e.g. new bot brains). */
+  | { readonly t: 'bots'; readonly bots: RoomBots; readonly by?: string };
+
+/** A room's bots, and what may be asked for. */
+export interface RoomBots {
+  /** The kinds the room's bot brains offer, in order. */
+  readonly kinds: readonly { readonly kind: string; readonly label: string; readonly blurb: string }[];
+  /** How many of each are playing. */
+  readonly mix: Readonly<Record<string, number>>;
+  /** Most bots of one kind, and in all, a `bots` message may ask for. */
+  readonly maxPerKind: number;
+  readonly max: number;
+}
 
 /** One arena on the server. */
 export interface RoomSummary {
@@ -256,6 +274,8 @@ export type ServerMessage =
       readonly packed?: PackedPaths;
       /** The room you were put in (online), e.g. "normal-2". */
       readonly room?: string;
+      /** The room's bots (absent from older servers). */
+      readonly bots?: RoomBots;
     }
   | { readonly t: 'events'; readonly ev: readonly GameEvent[] }
   | { readonly t: 'pong'; readonly n: number }

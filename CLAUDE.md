@@ -163,7 +163,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **One bot per room** (`BOTS=1` everywhere it is deployed) unless the owner
   sets a mix. `BOTS` takes a number (wanderers, as ever) or kinds
   (`bridge+hunter:2`; `+` because gcloud splits env vars on commas),
-  `BOTS_NORMAL`/`BOTS_CONQUEST` override per mode. Solo picks per kind in
+  `BOTS_NORMAL`/`BOTS_CONQUEST` override per mode. **Players can change a
+  room's bots** (owner's call: anyone in the room): the arena's Bots button
+  (`BotsButton.tsx`) sends `{t:'bots', mix}`; the server checks it
+  (`cleanBotMix`: known kinds, `ROOM_MAX_BOTS_PER_KIND` 3, `ROOM_MAX_BOTS`
+  6, one change a second per client), sets `Room.botChoice`,
+  `Bots.reconcile`s and sends a `bots` event (`RoomBots`, `by` = player id)
+  to everyone (the client toasts who). `welcome.bots` carries the same.
+  `botChoice` outlives new brains and `LIVE_MIX` (`wantedBots`). Solo takes
+  the same message (`LocalConnection`, caps as the lobby's picker) and saves
+  it as the picker's choice. `tests/room-bots.test.ts`. Solo picks per kind in
   the lobby (localStorage `spectacle.soloBots`, `?bots=`), one of each by
   default. **No bot plays an infinite-line rule** (the whole hex `128` /
   spectre `1278` subset, any matching — `isInfiniteLineRule`) unless
