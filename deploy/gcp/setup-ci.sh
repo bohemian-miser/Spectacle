@@ -10,6 +10,10 @@
 # constraints/iam.disableServiceAccountKeyCreation, which forbids keys
 # outright — this path works there too.)
 #
+# Also makes a private bucket for hot-loaded bot brains: CI (and only CI)
+# writes new bot code there, and the running servers read it with their own
+# service account, so bots change without a deploy (server/brains.ts).
+#
 # Then prints the variables to add to the GitHub repo. Run once with `gcloud`
 # logged in:
 #
@@ -25,11 +29,12 @@ POOL="${POOL:-github}"
 PROVIDER="${PROVIDER:-spectacle}"
 REPO_SLUG="${REPO_SLUG:-bohemian-miser/Spectacle}"
 SA="$SA_NAME@$PROJECT.iam.gserviceaccount.com"
+BUCKET="${BUCKET:-$PROJECT-spectacle-brains}"
 
 gcloud config set project "$PROJECT" >/dev/null
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
   iam.googleapis.com iamcredentials.googleapis.com sts.googleapis.com \
-  cloudbuild.googleapis.com
+  cloudbuild.googleapis.com storage.googleapis.com
 
 PNUM=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
 
@@ -43,6 +48,18 @@ gcloud iam service-accounts describe "$SA" >/dev/null 2>&1 ||
 for role in roles/run.admin roles/artifactregistry.writer roles/iam.serviceAccountUser; do
   gcloud projects add-iam-policy-binding "$PROJECT" --member "serviceAccount:$SA" --role "$role" --quiet >/dev/null
 done
+
+# Bot brains: the deployer writes them, the servers (Cloud Run's runtime
+# service account — the default compute one unless RUNTIME_SA says otherwise)
+# read them. Nobody else: what lands here runs inside the game server.
+RUNTIME_SA="${RUNTIME_SA:-$PNUM-compute@developer.gserviceaccount.com}"
+gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1 ||
+  gcloud storage buckets create "gs://$BUCKET" --location "$REGION" \
+    --uniform-bucket-level-access --public-access-prevention
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member "serviceAccount:$SA" --role roles/storage.objectAdmin --quiet >/dev/null
+gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+  --member "serviceAccount:$RUNTIME_SA" --role roles/storage.objectViewer --quiet >/dev/null
 
 # The pool holds the trust; the provider says *who* may use it. The attribute
 # condition is the load-bearing line — without it any repo on GitHub could mint
@@ -77,6 +94,7 @@ In the GitHub repo (Settings → Secrets and variables → Actions → Variables
   GCP_AR_REPO       = $REPO
   GCP_WIF_PROVIDER  = $WIF
   GCP_DEPLOYER_SA   = $SA
+  GCP_BRAINS_BUCKET = $BUCKET
 
 Or in one go:
 
@@ -85,9 +103,13 @@ Or in one go:
   gh variable set GCP_AR_REPO      --body '$REPO'
   gh variable set GCP_WIF_PROVIDER --body '$WIF'
   gh variable set GCP_DEPLOYER_SA  --body '$SA'
+  gh variable set GCP_BRAINS_BUCKET --body '$BUCKET'
 
 The "Deploy online arena to Cloud Run" workflow then runs on every push to
-main (and on demand from the Actions tab). Its output prints the service URL;
+main (and on demand from the Actions tab) — except a push that only touches
+shared/game/brains/: "Ship bot brains" uploads those to gs://$BUCKET and the
+running servers swap them in, no deploy. Run the deploy once after setting
+GCP_BRAINS_BUCKET so the servers know where to look (BOTS_URL). Its output prints the service URL;
 put that in the SPECTACLE_ONLINE_URL variable so the Pages build links to it.
 
 Only $REPO_SLUG can assume this service account. Set REPO_SLUG= if you fork.

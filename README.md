@@ -322,6 +322,8 @@ Server environment:
 | `BOTS_NORMAL`, `BOTS_CONQUEST` | `BOTS` | the same, for one game mode's rooms |
 | `BOT_ROTATE_MS` | `300000` | how long a rotator keeps a rule before starting over |
 | `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules (off: those are for players to find) |
+| `BOTS_URL` | unset | where hot-loaded bot brains are published (`gs://bucket/brains`) — see "Bots without a deploy" |
+| `BOTS_POLL_MS` | `60000` | how often a server looks there for a new build |
 | `ROOM_SIZE` | `10` | humans per room; the next joiner of that mode gets a new room |
 | `MAX_ROOMS` | `80` | rooms at most, all modes; past it joiners share the emptiest room of their mode |
 | `ROOM_IDLE_MS` | `60000` | an extra room nobody is in (or holding for) closes after this long |
@@ -350,6 +352,43 @@ clean rules on the field once (~0.2 s at hex level 6, at startup).
 `npx tsx scripts/bot-arena.ts bridge,hunter:2 5 5` plays bots against each
 other headless for 5 simulated minutes and prints scores, circuits,
 collisions and what the bots cost per tick.
+
+### Bots without a deploy
+
+A redeploy starts fresh instances, and every board with them. Bot code
+doesn't need one. How bots *play* lives in `shared/game/brains/`. The bot
+*players* (lines, score, patterns) live in the engine, as everyone's do. A
+push to `main` that changes nothing but `shared/game/brains/` skips the
+Cloud Run deploy. Instead the **Ship bot brains** workflow
+(`.github/workflows/brains.yml`) builds that directory into one module, plays
+it headless (`npm run brains -- check`) and uploads it to a private bucket.
+Each running server polls the bucket (`BOTS_URL`, every `BOTS_POLL_MS`) and
+swaps the new brains into its rooms. The board, the people on it and every
+bot player stay as they are. Each bot carries on under a new brain of its
+kind, keeping its rule. A new instance starts on the brains it shipped with
+and picks up the latest build within seconds.
+
+- **A new kind of bot:** add its class to `brains/kinds.ts` (or a file of
+  its own) and register it there: `BOT_KINDS`, `BOT_INFO`, `makeBot`. It also
+  shows up in the solo lobby's picker after the next full deploy.
+- **Bots into live rooms:** set `LIVE_MIX` in `brains/mix.ts`, e.g.
+  `{ normal: { wanderer: 1, hunter: 1 } }`. Rooms add or drop bots to match.
+  This overrides `BOTS` for the modes it names.
+- **What needs a deploy:** anything outside `brains/`. A build is only loaded
+  by a server made from the same `shared/` source (a hash of everything
+  under `shared/` but the brains), so it can never run against an engine it
+  wasn't built for. A push that changes both deploys as usual, and the new
+  servers already carry the new brains.
+- **Safety:** a bot that throws skips its turn and nothing else. A build that
+  throws 20 times in a minute is dropped for the server's own brains and
+  never retried. The build runs inside the server, so the bucket is private
+  and only CI can write to it. An infinite loop in a brain would still stall
+  that instance, so keep each tick's work small. `/status` shows which
+  brains are playing and why the last build was refused, if one was.
+
+Setting it up: `setup-ci.sh` makes the bucket (re-run it on an existing
+project). Add the `GCP_BRAINS_BUCKET` variable it prints, then run the
+Cloud Run deploy once so the servers get `BOTS_URL`.
 
 ## Solo mode and GitHub Pages
 
@@ -391,7 +430,9 @@ in `sessionStorage`, and the server rotates the token on every resume. Cold star
 who is in them, memory, how long a loop pass takes, joins, drops and errors,
 and the recent log (the same lines go to Cloud Run's logs). Every merge to
 `main` redeploys, and a redeploy drops everyone connected and starts an empty
-board, so merge when nobody is playing.
+board, so merge when nobody is playing. The exception is a merge that only
+changes bot brains, which goes live without a redeploy (see "Bots without a
+deploy").
 
 *Which patterns people play.* Set `STATS_KEY` and `/patterns?key=…` shows, per
 rule and mode, how many stints (one player on one rule) it had, the time spent
@@ -555,7 +596,8 @@ shared/game/    field.ts     one finite patch: instances, vertex-neighbours, hit
                 protocol.ts  wire types
 server/         Node + ws: rooms per game mode (a new one every ROOM_SIZE humans),
                 ticks each engine, broadcasts batched events per room,
-                serves dist/. bots.ts is the opposition.
+                serves dist/. shared/game/brains/ is the opposition —
+                hot-loadable without a restart (server/brains.ts).
 client/         Vite + React: lobby with the rule editor (interactive SVG
                 tiles, level-3 preview), the arena — a WebGL2 instanced tile
                 layer (Canvas2D fallback) under a Canvas2D strand overlay —

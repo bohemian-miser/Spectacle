@@ -147,3 +147,13 @@ export function fassRule(family: TileFamilyId): PlayerRule {
       return defaultRule(family);
   }
 }
+
+/**
+ * The FASS family (hex `128`, spectre `1278`, any matching): the rules that
+ * draw an endless line. They are for players to find, so no bot plays one
+ * unless it is told it may (`BotOptions.infiniteLines`).
+ */
+export function isInfiniteLineRule(rule: PlayerRule): boolean {
+  const fass = fassRule(rule.family).subset;
+  return fass.length === rule.subset.length && fass.every((x, i) => x === rule.subset[i]);
+}

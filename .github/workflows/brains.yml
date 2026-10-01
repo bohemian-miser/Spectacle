@@ -1,0 +1,60 @@
+# Ship new bot brains to the running servers without a deploy.
+#
+# A push to main that touches shared/game/brains/ builds that directory into
+# one module, plays it (scripts/brains.ts check), and uploads it with its
+# manifest to gs://$GCP_BRAINS_BUCKET/brains/. Every live server polls that
+# manifest (BOTS_URL, set by deploy-cloudrun.yml) and swaps the new brains
+# into its rooms within a minute or so: boards, players and bot players stay
+# as they are. When nothing outside shared/game/brains/ changed, the Cloud
+# Run deploy skips itself, so this is the only thing that happens.
+#
+# A server only loads a build made from its own shared/ source (everything
+# but the brains), so a push that also changes the engine waits for that
+# push's deploy — which carries the same brains built in anyway.
+#
+# Skipped until GCP_BRAINS_BUCKET is set (deploy/gcp/setup-ci.sh makes it).
+name: Ship bot brains
+
+on:
+  push:
+    branches: [main]
+    paths: ['shared/game/brains/**']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: brains
+  cancel-in-progress: false
+
+jobs:
+  ship:
+    if: vars.GCP_PROJECT != '' && vars.GCP_BRAINS_BUCKET != ''
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run brains -- build
+      - run: npm run brains -- check
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # The build first, then the manifest that points at it: a server never
+      # sees a manifest whose build isn't there yet.
+      - name: Upload
+        env:
+          DEST: gs://${{ vars.GCP_BRAINS_BUCKET }}/brains
+        run: |
+          gcloud storage cp dist-brains/brains-*.mjs "$DEST/"
+          gcloud storage cp dist-brains/manifest.json "$DEST/manifest.json" --cache-control=no-store
+          cat dist-brains/manifest.json
