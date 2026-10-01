@@ -17,7 +17,7 @@ let server: ChildProcess;
 async function waitForHealth(): Promise<void> {
   for (let i = 0; i < 100; i++) {
     try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/healthz`);
+      const r = await fetch(`http://127.0.0.1:${PORT}/health`);
       if (r.ok) return;
     } catch {
       /* not up yet */
@@ -71,7 +71,7 @@ describe('instance capacity', () => {
     const refused = (await join(connect())) as Extract<ServerMessage, { t: 'error' }>;
     expect(refused).toMatchObject({ t: 'error', code: 'full' });
 
-    const health = (await (await fetch(`http://127.0.0.1:${PORT}/healthz`)).json()) as {
+    const health = (await (await fetch(`http://127.0.0.1:${PORT}/health`)).json()) as {
       players: number;
       maxPlayers: number;
       atCapacity: boolean;
@@ -88,7 +88,7 @@ describe('instance capacity', () => {
     expect(resumed.you).toBe(a.you);
 
     // Still exactly the same two humans — a resume replaces, it doesn't add.
-    const after = (await (await fetch(`http://127.0.0.1:${PORT}/healthz`)).json()) as { players: number };
+    const after = (await (await fetch(`http://127.0.0.1:${PORT}/health`)).json()) as { players: number };
     expect(after.players).toBe(2);
   });
 });

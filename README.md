@@ -512,7 +512,7 @@ and find an empty room of the same name. While traffic fits on one instance
 keeps invites and resume exact, at the price of capping the online arena at
 one instance's players (everyone past it is offered bots).
 
-**Seeing every instance.** `/status` and `/healthz` show only the instance
+**Seeing every instance.** `/status` and `/health` show only the instance
 that answered — the header names it (`instance <id> (<revision>)`), so two
 people comparing notes can tell whether they are on the same one. A deploy
 also splits players: the old revision's instances keep their open sockets
@@ -529,7 +529,7 @@ jsonPayload.message="heartbeat"
 and the Cloud Run console's *Metrics → Container instance count* graph shows
 how many are running. Or, from a terminal logged in with `gcloud`, all of it
 at once — revisions and traffic, the running-instance count, which instance
-`/healthz` reaches, every instance with people on it and who is in which room,
+`/status.json` reaches, every instance with people on it and who is in which room,
 and the recent joins and leaves:
 
 ```bash
@@ -539,8 +539,9 @@ npm run servers -- --url http://localhost:8787   # one server (local, the VM) vi
 ```
 
 `--since 10m`, `--events 40`, `--json`, `--project/--region/--service` too.
-(On Cloud Run `/healthz` itself answers 404 from outside: Google's front end
-reserves paths ending in `z`. `/status` and `/status.json` get through.)
+(The health check is `/health`, not `/healthz`: on Cloud Run Google's front
+end keeps paths ending in `z` for itself and answers them 404. `/healthz`
+still works locally and on the VM.)
 
 That refusal is also where the client's own fallback kicks in: the lobby
 shows the reason and a **Play bots instead** link straight away, and if the

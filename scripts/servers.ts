@@ -6,8 +6,7 @@
  * instance with anyone connected writes a `heartbeat` line a minute (see
  * server/index.ts). This reads those, plus the service's revisions and
  * traffic, the instance-count metric (idle instances don't beat), which
- * instance /status.json reaches right now (not /healthz: Cloud Run's front end
- * reserves paths ending in z and answers them 404 itself), and the recent joins/leaves from the log.
+ * instance /status.json reaches right now, and the recent joins/leaves from the log.
  *
  *   npx tsx scripts/servers.ts                      # Cloud Run, via gcloud's login
  *   npx tsx scripts/servers.ts --watch 30           # redraw every 30 s
