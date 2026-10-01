@@ -107,7 +107,7 @@ describe('scoreTiles: the score is the tiles you control', () => {
   });
 
   it('a new rule budgets in tiles: laid on no more tiles than were held, regrown to the plan', () => {
-    const knobs: Knobs = { ...DEFAULT_KNOBS, maxHeads: 0 };
+    const knobs: Knobs = { ...DEFAULT_KNOBS, maxHeads: 0, regrowDiscount: 1 };
     const e = new Engine(HEX, knobs, mulberry32(1));
     const rule = defaultRule('hex');
     e.addPlayer('a', 'Ann', rule);

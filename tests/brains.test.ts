@@ -275,4 +275,40 @@ describe('a live server', () => {
     expect(hunterJoined()).toBe(true);
     expect(seen.some((m) => m.t === 'events' && m.ev.some((e) => e.t === 'leave'))).toBe(false);
   }, 30_000);
+
+  it('retunes a running room from the build’s tuning: new knobs to the clients, fixed ones kept', async () => {
+    const seen: ServerMessage[] = [];
+    ws.on('message', (d) => seen.push(JSON.parse(String(d)) as ServerMessage));
+    await buildBrains(dir, {
+      source:
+        "import { brains as b } from './index';\n" +
+        'export const brains = { ...b, tuning: { ...b.tuning, regrowDiscount: 0.5, maxHeads: 3, scoreTiles: false, nope: 1 }, botTuning: { aggression: 0.9 } };',
+      label: 'live-3',
+    });
+    let s = await status();
+    for (let i = 0; i < 50 && s.brains.brains !== 'live-3'; i++) {
+      await new Promise((r) => setTimeout(r, 100));
+      s = await status();
+    }
+    expect(s.brains).toMatchObject({ source: 'hot', brains: 'live-3', refused: null });
+    const knobs = () => seen.flatMap((m) => (m.t === 'events' ? m.ev.flatMap((e) => (e.t === 'knobs' ? [e.knobs] : [])) : []));
+    for (let i = 0; i < 40 && knobs().length === 0; i++) await new Promise((r) => setTimeout(r, 50));
+    expect(knobs()).toHaveLength(1);
+    // The running room keeps how it scores; the rest is live, and the bad knob is dropped.
+    expect(knobs()[0]).toMatchObject({ regrowDiscount: 0.5, maxHeads: 3, scoreTiles: true, mode: 'normal' });
+    expect(knobs()[0]).not.toHaveProperty('nope');
+    // A new player gets them in the welcome too.
+    const ws2 = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    const welcome = new Promise<ServerMessage>((r) =>
+      ws2.on('message', (d) => {
+        const m = JSON.parse(String(d)) as ServerMessage;
+        if (m.t === 'welcome') r(m);
+      }),
+    );
+    await new Promise((r) => ws2.once('open', r));
+    ws2.send(JSON.stringify({ t: 'join', name: 'second', rule: defaultRule('hex') }));
+    const w = await welcome;
+    expect(w.t === 'welcome' && w.knobs).toMatchObject({ regrowDiscount: 0.5, maxHeads: 3 });
+    ws2.close();
+  }, 30_000);
 });

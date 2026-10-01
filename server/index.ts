@@ -39,7 +39,8 @@
  *                            infinite-line rule while away (-1 = never)
  *   STATS_KEY     (unset)    serves /patterns?key=… (which rules people play, and their scores); unset = off
  *   STATS_FILE    (unset)    keep those pattern stats in this JSON file across restarts
- *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts)
+ *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts);
+ *                            wins over the live tuning (shared/game/brains/tuning.ts)
  *
  * Scaling past one instance: this process holds all its rooms in memory, so it
  * cannot share state with another instance — but it doesn't need to. Every
@@ -66,14 +67,14 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { Engine } from '../shared/game/engine';
 import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../shared/game/field';
-import { GAME_MODES, isGameMode, knobsForMode, knobsFromEnv, type GameMode, type Knobs } from '../shared/game/knobs';
+import { applyTuning, DEFAULT_KNOBS, GAME_MODES, isGameMode, knobsChanged, knobsForMode, knobsFromEnv, retune, type GameMode, type Knobs } from '../shared/game/knobs';
 import type { ClientMessage, GameEvent, RoomBots, RoomSummary, ServerMessage } from '../shared/game/protocol';
 import { fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import { packEvents } from '../shared/game/wire';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
-import { botTotal, Bots, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet } from '../shared/game/bots';
+import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet } from '../shared/game/bots';
 import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
@@ -120,7 +121,21 @@ const startedAt = Date.now();
  * Cloud Run; the id is random per process.
  */
 const INSTANCE = { id: randomBytes(3).toString('hex'), revision: process.env.K_REVISION ?? null };
-const baseKnobs = knobsFromEnv(process.env);
+/**
+ * The knobs a brain set's live tuning (`brains/tuning.ts`) gives, over the
+ * engine's defaults; this server's `KNOB_*` env vars win over both.
+ */
+function tunedKnobs(set: BrainSet, label: string): Knobs {
+  const { knobs, ignored } = applyTuning(DEFAULT_KNOBS, set.tuning);
+  if (ignored.length) note('warn', `${label} tuning: ignoring ${ignored.join(', ')} (unknown, or the wrong type)`);
+  return knobsFromEnv(process.env, knobs);
+}
+/** The knobs new rooms open with (`mode` aside); live tuning replaces it (`applyBrains`). */
+let baseKnobs = tunedKnobs(BUILTIN_BRAINS, 'built-in');
+{
+  const pinned = knobsChanged(applyTuning(DEFAULT_KNOBS, BUILTIN_BRAINS.tuning).knobs, baseKnobs);
+  if (pinned.length) note('info', `KNOB_* env pins ${pinned.join(', ')}: live tuning won't change them here`);
+}
 const spec = fieldSpecFromEnv();
 const t0 = Date.now();
 // One field for every room: it is deterministic from the spec and never
@@ -148,11 +163,15 @@ let brainSet: BrainSet = BUILTIN_BRAINS;
 function botMix(mode: GameMode): BotMix {
   return brainSet.mix?.[mode] ?? ENV_BOT_MIX[mode];
 }
-const BOT_OPTIONS: BotOptions = {
-  ...DEFAULT_BOT_OPTIONS,
-  rotateMs: positiveInt(process.env.BOT_ROTATE_MS, DEFAULT_BOT_OPTIONS.rotateMs),
-  infiniteLines: process.env.BOT_INFINITE_LINES === '1',
-};
+/** The bots' options under a brain set: its `botTuning`, then this server's `BOT_ROTATE_MS` / `BOT_INFINITE_LINES`. */
+function botOptions(set: BrainSet): BotOptions {
+  const tuned = { ...DEFAULT_BOT_OPTIONS, ...botTuningOf(set) };
+  return {
+    ...tuned,
+    rotateMs: positiveInt(process.env.BOT_ROTATE_MS, tuned.rotateMs),
+    infiniteLines: process.env.BOT_INFINITE_LINES === '1',
+  };
+}
 for (const m of GAME_MODES) {
   const t = Date.now();
   prepareBots(field, botMix(m), brainSet);
@@ -373,7 +392,8 @@ class Room {
   ) {
     const rng = mulberry32((seedRng.next() * 0xffffffff) >>> 0);
     this.engine = new Engine(field, knobsForMode(baseKnobs, mode), rng);
-    this.bots = new Bots(this.engine, rng, BOT_OPTIONS.aggression, BOT_OPTIONS, brainSet);
+    const options = botOptions(brainSet);
+    this.bots = new Bots(this.engine, rng, options.aggression, options, brainSet);
     // One bot's brain throwing skips that bot's tick, not the room's.
     this.bots.onError = (kind, e) => {
       brainsWatcher?.failed(Date.now());
@@ -904,8 +924,18 @@ for (const sig of ['SIGTERM', 'SIGINT'] as const) {
 function applyBrains(set: BrainSet): void {
   brainSet = set;
   const now = Date.now();
+  // Live tuning: new knobs for new rooms, and for running ones all but their fixed ones.
+  const next = tunedKnobs(set, 'new');
+  const changed = knobsChanged(baseKnobs, next);
+  if (changed.length) note('info', `tuning: ${changed.map((k) => `${k} ${String(baseKnobs[k])} → ${String(next[k])}`).join(', ')}`);
+  baseKnobs = next;
+  const options = botOptions(set);
   for (const room of rooms.values()) {
+    guard(`knobs for ${room.id}`, () => {
+      if (room.engine.setKnobs(retune(room.knobs, knobsForMode(next, room.mode)))) room.pending.push({ t: 'knobs', knobs: room.knobs });
+    });
     guard(`brains for ${room.id}`, () => {
+      room.bots.setOptions(options);
       room.pending.push(...room.bots.setBrains(set, now, room.wantedBots()));
       // The kinds on offer may have changed too.
       room.pending.push({ t: 'bots', bots: room.roomBots() });

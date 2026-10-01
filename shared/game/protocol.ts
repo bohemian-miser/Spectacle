@@ -226,7 +226,9 @@ export type GameEvent =
   /** Your tap was refused, with a reason to show. */
   | { readonly t: 'refused'; readonly reason: string }
   /** The room's bots changed: what plays now, and who changed it (a player id; absent for the server, e.g. new bot brains). */
-  | { readonly t: 'bots'; readonly bots: RoomBots; readonly by?: string };
+  | { readonly t: 'bots'; readonly bots: RoomBots; readonly by?: string }
+  /** The room's knobs changed (live tuning, `brains/tuning.ts`): all of them, as `welcome.knobs`. */
+  | { readonly t: 'knobs'; readonly knobs: Knobs };
 
 /** A room's bots, and what may be asked for. */
 export interface RoomBots {

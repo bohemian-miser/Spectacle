@@ -1,4 +1,5 @@
-# Ship new bot brains to the running servers without a deploy.
+# Ship new bot brains — and the game's live tuning (shared/game/brains/
+# tuning.ts: every gameplay knob) — to the running servers without a deploy.
 #
 # A push to main that touches shared/game/brains/ builds that directory into
 # one module, plays it (scripts/brains.ts check), and uploads it with its

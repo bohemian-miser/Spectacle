@@ -54,7 +54,7 @@ describe('a rule change coalesces', () => {
     for (let k = 0; k < rev.absorb.length; k += 2) share.set(rev.absorb[k], rev.absorb[k + 1]);
     const bought = [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])];
     const total = [...share.values()].reduce((x, y) => x + y, 0);
-    expect(total * budget).toBeCloseTo(bought.reduce((n, q) => n + q.price, 0), 0);
+    expect(total * budget).toBeCloseTo(bought.reduce((n, q) => n + q.cost, 0), 0);
 
     expect(store.coalesce).toHaveLength(1);
     const c = store.coalesce[0];

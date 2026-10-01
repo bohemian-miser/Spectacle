@@ -64,7 +64,7 @@
 import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
 import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesInBox, type Box, type Field } from './field';
-import { headLimit, stepIntervalMs, type Knobs } from './knobs';
+import { headLimit, knobsChanged, stepIntervalMs, type Knobs } from './knobs';
 import { circuitBonus, planRegrow } from './regrow';
 import { packStep } from './wire';
 import type { GameEvent, PathStatus, PathWire, PatternPublic, PlayerPublic } from './protocol';
@@ -243,10 +243,21 @@ export class Engine {
 
   constructor(
     readonly field: Field,
-    readonly knobs: Knobs,
+    public knobs: Knobs,
     private readonly rng: Rng,
   ) {
     this.pickJunction = randomJunctionPicker(rng);
+  }
+
+  /**
+   * New knobs for a running game (live tuning). Everything reads `knobs` as
+   * it goes, so they take effect from the next call; the caller keeps the
+   * room's fixed ones (`retune`). True when anything changed.
+   */
+  setKnobs(next: Knobs): boolean {
+    const changed = knobsChanged(this.knobs, next).length > 0;
+    this.knobs = next;
+    return changed;
   }
 
   // --- players -------------------------------------------------------------
@@ -323,13 +334,13 @@ export class Engine {
     if (this.knobs.resetScoreOnRule) p.score = 0;
     p.combo = this.knobs.comboStart;
     this.scoreDirty.delete(id);
-    // Where the budget goes: each bought circuit's price, shared by the held
+    // Where the budget goes: each bought circuit's cost, shared by the held
     // tiles it starts again on — the switch animation sends the old tiles'
     // motes there in proportion.
     const absorb = new Map<number, number>();
     for (const q of plan ? [...plan.kept, ...(plan.stretch ? [plan.stretch] : [])] : []) {
       const at = new Set(q.seeds.map((k) => Math.floor(k / 64)));
-      for (const t of at) absorb.set(t, (absorb.get(t) ?? 0) + q.price / at.size);
+      for (const t of at) absorb.set(t, (absorb.get(t) ?? 0) + q.cost / at.size);
     }
     // Sent as fractions of the budget: they add up to what it bought (under 1
     // when some was lost; past it with a stretch).

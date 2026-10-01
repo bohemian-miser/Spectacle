@@ -686,6 +686,10 @@ export class Store {
         this.toast(`${who} set the bots: ${total === 0 ? 'none' : ev.bots.kinds.filter((k) => ev.bots.mix[k.kind]).map((k) => `${ev.bots.mix[k.kind]} ${k.label}`).join(', ')}`);
         return;
       }
+      case 'knobs':
+        // Live tuning: the HUD (speed, heads) reads these as it renders.
+        this.knobs = ev.knobs;
+        return;
     }
   }
 }

@@ -14,7 +14,7 @@
 
 import type { Engine, Player } from './engine';
 import type { Field } from './field';
-import type { GameMode } from './knobs';
+import type { GameMode, Tuning } from './knobs';
 import type { GameEvent, RoomBots } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
@@ -96,6 +96,19 @@ export interface BotOptions {
 
 export const DEFAULT_BOT_OPTIONS: BotOptions = { aggression: 0.3, rotateMs: 5 * 60_000, infiniteLines: false };
 
+/**
+ * A brain set's `botTuning`, checked (a hot-loaded build isn't trusted):
+ * `aggression` in [0, 1], `rotateMs` a positive number; anything else dropped.
+ */
+export function botTuningOf(set: Pick<BrainSet, 'botTuning'>): Partial<BotOptions> {
+  const t = set.botTuning as Record<string, unknown> | undefined;
+  const out: { -readonly [K in keyof BotOptions]?: BotOptions[K] } = {};
+  if (!t || typeof t !== 'object') return out;
+  if (typeof t.aggression === 'number' && t.aggression >= 0 && t.aggression <= 1) out.aggression = t.aggression;
+  if (typeof t.rotateMs === 'number' && Number.isFinite(t.rotateMs) && t.rotateMs > 0) out.rotateMs = t.rotateMs;
+  return out;
+}
+
 // --- the brain interface ----------------------------------------------------------
 //
 // What a hot-loaded build of `brains/` must provide. The server only loads a
@@ -138,6 +151,14 @@ export interface BrainSet {
    * left out keeps the server's own setting.
    */
   readonly mix?: Readonly<Partial<Record<GameMode, BotMix>>>;
+  /**
+   * The game's knobs (`brains/tuning.ts`), laid over `DEFAULT_KNOBS` by the
+   * server and solo play (`applyTuning`) — a way to retune running games
+   * with a push. Checked, not trusted: unknown or ill-typed knobs are ignored.
+   */
+  readonly tuning?: Readonly<Partial<Tuning>>;
+  /** The bots' own numbers (`BOT_TUNING`), over `DEFAULT_BOT_OPTIONS`. */
+  readonly botTuning?: Readonly<Partial<Pick<BotOptions, 'aggression' | 'rotateMs'>>>;
   /** A new bot's name: the `nth` (from 1) of its kind in the room. */
   name(kind: string, nth: number): string;
   make(kind: string, id: string, ctx: BotContext): Brain;
@@ -176,7 +197,7 @@ export function prepareBots(field: Field, mix: BotMix, set: BrainSet = BUILTIN_B
 
 export class Bots {
   private readonly bots: Brain[] = [];
-  private readonly options: BotOptions;
+  private options: BotOptions;
   private set: BrainSet;
   private made = 0;
   /** Bots of each kind added so far (for names). */
@@ -197,6 +218,11 @@ export class Bots {
   ) {
     this.options = { ...DEFAULT_BOT_OPTIONS, aggression, ...options };
     this.set = set;
+  }
+
+  /** New options for the brains made from now on (`setBrains` remakes them all). */
+  setOptions(options: Partial<BotOptions>): void {
+    this.options = { ...this.options, ...options };
   }
 
   /** The brains playing now. */

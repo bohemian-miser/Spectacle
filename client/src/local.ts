@@ -7,10 +7,10 @@
  * what lets the static GitHub Pages build play without a server.
  */
 
-import { BOT_KINDS, Bots, cleanBotMix, parseBotMix, prepareBots, type BotMix } from '../../shared/game/bots';
+import { BOT_KINDS, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, parseBotMix, prepareBots, type BotMix } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
 import { buildField, fieldOutline, type FieldSpec } from '../../shared/game/field';
-import { DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
+import { applyTuning, DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
 import type { ClientMessage, GameEvent, RoomBots, ServerMessage } from '../../shared/game/protocol';
 import { validateRule } from '../../shared/game/rule';
 import { mulberry32 } from '../../shared/game/rng';
@@ -78,7 +78,8 @@ export class LocalConnection implements GameConnection {
     private readonly store: Store,
     private readonly opts: SoloOptions,
     mode: GameMode = 'normal',
-    base: Knobs = DEFAULT_KNOBS,
+    // What servers play under: the engine's defaults with the live tuning (brains/tuning.ts).
+    base: Knobs = applyTuning(DEFAULT_KNOBS, BUILTIN_BRAINS.tuning).knobs,
   ) {
     this.knobs = knobsForMode(base, mode);
   }
@@ -91,7 +92,7 @@ export class LocalConnection implements GameConnection {
     const rng = mulberry32((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
     this.engine = new Engine(field, this.knobs, rng);
     prepareBots(field, this.opts.bots);
-    this.bots = new Bots(this.engine, rng);
+    this.bots = new Bots(this.engine, rng, undefined, botTuningOf(BUILTIN_BRAINS));
     const ev = this.bots.add(this.opts.bots, Date.now());
     this.store.connected = true;
     this.deliver({ t: 'hello', field: spec, knobs: this.knobs, tiles: field.count, players: this.engine.players.size });

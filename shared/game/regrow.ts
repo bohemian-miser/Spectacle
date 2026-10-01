@@ -10,17 +10,24 @@
  * it, if nobody cuts it first. What is left after that is lost with the old
  * lines.
  *
- * The budget already paid for the tiles you hold, and a bought circuit's held
- * tiles score straight back when laid; so really the switch trades: tiles
- * you gain beyond your own cost the smaller circuits you can then no longer
- * afford.
- *
  * Only the tiles you held change hands: the engine lays the bought circuits'
  * chords there and lets them grow the rest of the way, scoring as they go, so
- * on a board nobody touches you end with exactly `outcome`: what you paid,
- * plus whatever the stretch circuit is worth beyond its tiles. A circuit that
+ * on a board nobody touches you end with exactly `outcome`: what you bought
+ * (worth more than it cost, by the discount below), plus whatever the
+ * stretch circuit is worth beyond its tiles. A circuit that
  * gets cut on the way is lost like any other line; one that closes round a
  * rival's lines captures them as usual — a bonus the price doesn't include.
+ *
+ * Tiles you don't hold yet are discounted (`regrowDiscount`, 0.99): one `d`
+ * steps of growth from your nearest held tile along the strand costs
+ * `0.99 ** d` of its price, the way a reward further off is worth less — it
+ * has further to grow and more chance of being cut. A circuit's `cost` is
+ * that sum (plus a circuit's bonus, undiscounted); the budget pays costs,
+ * and the board pays out prices. So far tiles are nearly free — a gap
+ * between held tiles costs at most about 2 / (1 − 0.99) ≈ 200 however long
+ * — and a switch can buy circuits worth far more than the score it spends.
+ * At 1 there is no discount: cost = price, and an untouched board ends at
+ * most at the old score (plus the stretch).
  *
  * Planned against the board as it stands: a strand that runs into a tile an
  * opponent's line is on (`blocked`) can't close, so it is a line from your
@@ -53,6 +60,12 @@ export interface RegrowCircuit {
   readonly area: number;
   /** What it scores once drawn: its tiles, plus a circuit's bonus at `comboStart`. */
   readonly price: number;
+  /**
+   * What it costs the budget: `price`, with each tile you don't hold
+   * discounted by `regrowDiscount ** d` (`d` = steps from the nearest held
+   * tile along it). Equal to `price` when the discount is 1.
+   */
+  readonly cost: number;
   /** Its chords on tiles you hold (`tile * 64 + chord`): where it starts again. */
   readonly seeds: readonly number[];
 }
@@ -65,7 +78,7 @@ export interface RegrowPlan {
   readonly skipped: readonly RegrowCircuit[];
   /** The cheapest circuit too dear to buy, taken for just its held tiles' points. */
   readonly stretch?: RegrowCircuit;
-  /** Budget used: the kept circuits' prices, plus the stretch's held tiles. */
+  /** Budget used: the kept circuits' costs, plus the stretch's held tiles. */
   readonly spent: number;
   /** The score it all comes to once closed, on a board nobody touches. */
   readonly outcome: number;
@@ -109,26 +122,27 @@ export function planRegrow(
       for (const s of circuit.walked) seen.add(key(s.tile, s.chord));
       if (!circuit.found) continue;
       const seeds = circuit.found.steps.filter((s) => tiles.has(s.tile)).map((s) => key(s.tile, s.chord));
-      found.push({ ...circuit.found, seeds });
+      found.push({ ...circuit.found, seeds, cost: discounted(knobs, circuit.found, tiles) });
     }
   }
-  // Longest first; ties by price, then by where they are (deterministic).
-  found.sort((a, b) => b.length - a.length || b.price - a.price || a.seeds[0] - b.seeds[0]);
+  // Longest first; ties by cost, then by where they are (deterministic).
+  found.sort((a, b) => b.length - a.length || b.cost - a.cost || a.seeds[0] - b.seeds[0]);
   const kept: RegrowCircuit[] = [];
   const skipped: RegrowCircuit[] = [];
   let left = budget;
   for (const q of found) {
-    if (q.price <= left) {
+    if (q.cost <= left) {
       kept.push(q);
-      left -= q.price;
+      left -= q.cost;
     } else skipped.push(q);
   }
   const spent = budget - left;
   // Scoring by tiles, circuits that share a tile hold it once between them.
   const union = (qs: readonly RegrowCircuit[]): number => new Set(qs.flatMap((q) => q.steps.map((s) => s.tile))).size;
-  const outcome = knobs.scoreTiles ? union(kept) : spent;
+  const value = (qs: readonly RegrowCircuit[]): number => (knobs.scoreTiles ? union(qs) : qs.reduce((n, q) => n + q.price, 0));
+  const outcome = value(kept);
   let cheapest = -1;
-  for (let i = 0; i < skipped.length; i++) if (cheapest < 0 || skipped[i].price < skipped[cheapest].price) cheapest = i;
+  for (let i = 0; i < skipped.length; i++) if (cheapest < 0 || skipped[i].cost < skipped[cheapest].cost) cheapest = i;
   const over = cheapest >= 0 ? skipped[cheapest] : undefined;
   const held = !over ? 0 : knobs.scoreTiles ? new Set(over.seeds.map((k) => Math.floor(k / 64))).size : over.seeds.length * knobs.pointsPerTile;
   if (!over || held > left) return { budget, kept, skipped, spent, outcome };
@@ -138,7 +152,7 @@ export function planRegrow(
     skipped: skipped.filter((q) => q !== over),
     stretch: over,
     spent: spent + held,
-    outcome: knobs.scoreTiles ? union([...kept, over]) : outcome + over.price,
+    outcome: value([...kept, over]),
   };
 }
 
@@ -159,7 +173,7 @@ function walkCandidate(
   limit: number,
   knobs: Knobs,
   blocked: (tile: number) => boolean,
-): { walked: readonly WalkStep[]; found?: Omit<RegrowCircuit, 'seeds'> } {
+): { walked: readonly WalkStep[]; found?: Omit<RegrowCircuit, 'seeds' | 'cost'> } {
   if (blocked(tile)) return { walked: [startStep(field, table, tile, c, 1)] };
   const fwd = walk(field, table, tile, c, 1, limit, blocked);
   if (fwd.closed) {
@@ -228,7 +242,46 @@ function walk(
   }
 }
 
-function priced(knobs: Knobs, steps: readonly WalkStep[], area: number): Omit<RegrowCircuit, 'seeds' | 'region'> & { closed: true } {
+/**
+ * `q.price` with each step on a tile not in `held` weighted `regrowDiscount ** d`,
+ * `d` its distance in steps from the nearest step on a held tile — round the
+ * loop either way for a loop, along the line for anything else. Scoring by
+ * tiles, a tile counts once, at its nearest step.
+ */
+function discounted(knobs: Knobs, q: Omit<RegrowCircuit, 'seeds' | 'cost'>, held: ReadonlySet<number>): number {
+  const g = knobs.regrowDiscount;
+  if (!(g < 1)) return q.price;
+  const steps = q.steps;
+  const n = steps.length;
+  const loop = q.closed && !q.region;
+  const dist = new Float64Array(n).fill(Infinity);
+  for (let i = 0; i < n; i++) if (held.has(steps[i].tile)) dist[i] = 0;
+  // Two sweeps each way; a loop goes round twice so distances wrap.
+  const laps = loop ? 2 : 1;
+  for (let k = 1; k < laps * n; k++) {
+    const i = k % n;
+    const j = (k - 1) % n;
+    dist[i] = Math.min(dist[i], dist[j] + 1);
+  }
+  for (let k = laps * n - 2; k >= 0; k--) {
+    const i = k % n;
+    const j = (k + 1) % n;
+    dist[i] = Math.min(dist[i], dist[j] + 1);
+  }
+  const w = (i: number): number => (Number.isFinite(dist[i]) ? g ** dist[i] : 0);
+  if (knobs.scoreTiles) {
+    const near = new Map<number, number>();
+    for (let i = 0; i < n; i++) near.set(steps[i].tile, Math.max(near.get(steps[i].tile) ?? 0, w(i)));
+    let sum = 0;
+    for (const x of near.values()) sum += x;
+    return sum;
+  }
+  let sum = 0;
+  for (let i = 0; i < n; i++) sum += w(i);
+  return sum * knobs.pointsPerTile + (q.price - linePrice(knobs, steps));
+}
+
+function priced(knobs: Knobs, steps: readonly WalkStep[], area: number): Omit<RegrowCircuit, 'seeds' | 'region' | 'cost'> & { closed: true } {
   const length = steps.length;
   return { steps, length, area, price: linePrice(knobs, steps) + (knobs.scoreTiles ? 0 : circuitBonus(knobs, length, area, knobs.comboStart)), closed: true };
 }

@@ -18,10 +18,10 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { Bots, BUILTIN_BRAINS, formatBotMix, type BotMix, type BrainSet } from '../shared/game/bots';
+import { Bots, botTuningOf, BUILTIN_BRAINS, formatBotMix, type BotMix, type BrainSet } from '../shared/game/bots';
 import { Engine } from '../shared/game/engine';
 import { buildField, fieldOutline } from '../shared/game/field';
-import { DEFAULT_KNOBS, GAME_MODES, knobsForMode } from '../shared/game/knobs';
+import { applyTuning, DEFAULT_KNOBS, GAME_MODES, knobsForMode } from '../shared/game/knobs';
 import { mulberry32 } from '../shared/game/rng';
 import { BRAINS_DIR, brainsHash, importBrains, sourceKey, type BrainsManifest } from '../server/brains';
 
@@ -87,6 +87,11 @@ export function trial(set: BrainSet, log: (s: string) => void = () => {}): void 
     const unknown = Object.keys(mix).filter((k) => !set.kinds.includes(k));
     if (unknown.length) throw new Error(`mix for ${mode} names kinds the brains don't have: ${unknown.join(', ')}`);
   }
+  // The tuning must be all good: a server would quietly ignore the bad knobs.
+  const { knobs: tuned, ignored } = applyTuning(DEFAULT_KNOBS, set.tuning);
+  if (ignored.length) throw new Error(`tuning: unknown or ill-typed knobs ${ignored.join(', ')}`);
+  const badBots = Object.keys(set.botTuning ?? {}).filter((k) => !(k in botTuningOf(set)));
+  if (badBots.length) throw new Error(`botTuning: out of range or unknown ${badBots.join(', ')}`);
   const field = buildField({ family: 'hex', level: 4, rootTile: 'Delta' });
   fieldOutline(field);
   const everyKind = (kinds: readonly string[]): BotMix => Object.fromEntries(kinds.map((k) => [k, 1]));
@@ -101,8 +106,8 @@ export function trial(set: BrainSet, log: (s: string) => void = () => {}): void 
   // 1. On its own, every kind, both modes.
   for (const mode of GAME_MODES) {
     const rng = mulberry32(7);
-    const engine = new Engine(field, knobsForMode(DEFAULT_KNOBS, mode), rng);
-    const bots = new Bots(engine, rng, undefined, {}, set);
+    const engine = new Engine(field, knobsForMode(tuned, mode), rng);
+    const bots = new Bots(engine, rng, undefined, botTuningOf(set), set);
     bots.add(everyKind(set.kinds), 0);
     play(engine, bots, 0, 2 * 60_000);
     const lines = [...engine.players.values()].reduce((n, p) => n + p.paths.length, 0);
@@ -119,6 +124,8 @@ export function trial(set: BrainSet, log: (s: string) => void = () => {}): void 
   const before = bots.list();
   const lines = (id: string) => engine.players.get(id)?.paths.map((q) => q.id).join(',');
   const linesBefore = new Map(before.map((b) => [b.id, lines(b.id)]));
+  engine.setKnobs({ ...knobsForMode(tuned, 'normal'), scoreTiles: engine.knobs.scoreTiles });
+  bots.setOptions(botTuningOf(set));
   bots.setBrains(set, now);
   for (const b of before) {
     if (!set.kinds.includes(b.kind)) continue;

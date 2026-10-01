@@ -195,19 +195,22 @@ line and you both die.
    captured patterns go, and your score is spent on the new rule's circuits
    through the tiles those lines held: longest first, each costing what it
    scores once closed (its tiles; in points scoring, its tiles plus bonus),
-   until the next one costs more than what is left.
+   until the next one costs more than what is left. Tiles you don't hold
+   yet come at a discount: one `d` steps of growth from your nearest held
+   tile costs 0.99<sup>d</sup> of a tile (`regrowDiscount`), so the far
+   reaches of a big circuit are nearly free.
    Then one stretch: the cheapest circuit that was too dear comes too, if
    what is left covers just the tiles of it you already hold. The circuits
    you get start again on the tiles you already held and grow the rest of
    the way, earning their points as they go. If nobody gets in the way, you
-   end up with the score you spent, plus whatever the stretch circuit is
-   worth beyond its tiles. The plan goes by the board as it is: where the
+   end up with everything you bought — more than the score you spent, by
+   whatever the discount saved, plus whatever the stretch circuit is worth
+   beyond its tiles. The plan goes by the board as it is: where the
    new rule's line would run into someone else's line (or a dead end) it
    can't close, so it is priced as a line up to there, a point a tile, and
    when it regrows it stops there rather than crashing into them. Each
    circuit or line is paid for once, however many of your tiles it runs
-   through. In effect you only gain tiles from a new rule by giving up
-   smaller circuits you could otherwise have kept. Your heads don't
+   through. Your heads don't
    restart: you keep as many heads as you had, captured patterns or not
    (and a capture on the new rule adds one more), and however many lines you had growing, that many of the regrowing
    pieces grow at your full speed; the rest share one head's worth. Tap a
@@ -248,10 +251,13 @@ strands on top still carry. Light is the default; your choice is remembered in
 this browser, and `?theme=dark` / `?theme=light` forces one for a link or a
 screenshot.
 
-Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts);
-set any of them with `KNOB_<NAME>` environment variables
-(`KNOB_BASE_STEP_MS=250 KNOB_CROSSING_MODE=tile …`). Mechanics first, balance
-later.
+Every number above is a knob in [`shared/game/knobs.ts`](shared/game/knobs.ts).
+The values the game plays under are in
+[`shared/game/brains/tuning.ts`](shared/game/brains/tuning.ts): change one
+there and push, and running servers pick it up without a deploy (see
+"Bots without a deploy"). A server's `KNOB_<NAME>` environment variables
+(`KNOB_BASE_STEP_MS=250 KNOB_CROSSING_MODE=tile …`) win over that file.
+Mechanics first, balance later.
 
 ## Infrastructure
 
@@ -330,7 +336,7 @@ Server environment:
 | `ROOM_IDLE_MS` | `60000` | an extra room nobody is in (or holding for) closes after this long |
 | `MAX_INSTANCE_PLAYERS` | `400` | humans this **process** holds before it refuses new joins (`error.code: 'full'`) — see "Scaling for a surge" |
 | `SEED` | random | RNG seed |
-| `KNOB_*` | see knobs.ts | any gameplay knob |
+| `KNOB_*` | see knobs.ts | any gameplay knob; pins it over `brains/tuning.ts` on this server |
 
 `npm run bench:field` prints build time and size per level.
 
@@ -382,6 +388,14 @@ and picks up the latest build within seconds.
 - **Bots into live rooms:** set `LIVE_MIX` in `brains/mix.ts`, e.g.
   `{ normal: { wanderer: 1, hunter: 1 } }`. Rooms add or drop bots to match.
   This overrides `BOTS` for the modes it names.
+- **Retuning the game:** every gameplay knob's live value is in
+  `brains/tuning.ts` (`TUNING`; the bots' aggression and rotation time in
+  `BOT_TUNING`), e.g. `regrowDiscount: 0.99`. Change a number and push: running
+  rooms switch to it at once, and players' screens are sent the new values.
+  Two exceptions: `scoreTiles` reaches only rooms opened after the change,
+  and `mode`/`tickMs` aren't in the file at all. A server's `KNOB_*` env var
+  for a knob wins over the file. A knob that doesn't exist or has the wrong
+  type is ignored by servers and fails the workflow's check.
 - **What needs a deploy:** anything outside `brains/`. A build is only loaded
   by a server made from the same `shared/` source (a hash of everything
   under `shared/` but the brains), so it can never run against an engine it

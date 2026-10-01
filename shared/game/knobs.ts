@@ -1,8 +1,14 @@
 /**
- * Every tunable in one place. The server owns the live values (env overrides
- * below) and sends them to clients in the welcome message, so the HUD can show
- * what it is playing under. Mechanics first; balance later — but every number
- * that will need balancing is already a knob rather than a literal.
+ * Every tunable in one place. `DEFAULT_KNOBS` is the engine's baseline — what
+ * the tests pin. What servers and solo play actually run is
+ * `shared/game/brains/tuning.ts` (`TUNING`) on top of it: that file is
+ * hot-loaded with the bot brains, so a push that changes only it reaches
+ * running rooms without a deploy (`applyTuning`, `retune`). A server's
+ * `KNOB_*` env vars win over both. The server sends the live values to
+ * clients in the welcome (and a `knobs` event when they change), so the HUD
+ * can show what it is playing under. Mechanics first; balance later — but
+ * every number that will need balancing is already a knob rather than a
+ * literal.
  */
 
 /**
@@ -154,6 +160,15 @@ export interface Knobs {
    * close — on an untouched board, back to the score you paid.
    */
   regrowOnRule: boolean;
+  /**
+   * What a tile you don't hold yet costs a regrow plan: `regrowDiscount ** d`,
+   * where `d` is how many steps of growth it is from your nearest held tile
+   * along the strand (held tiles cost full price). Below 1, far tiles are
+   * cheap — a circuit of any size costs at most its held tiles plus about
+   * `2 / (1 - regrowDiscount)` per gap between them — so a switch can buy
+   * circuits bigger than the score it spends. 1 = no discount.
+   */
+  regrowDiscount: number;
   maxPlayers: number;
   maxNameLength: number;
 }
@@ -203,6 +218,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   maxLivePaths: 0,
   resetScoreOnRule: true,
   regrowOnRule: true,
+  regrowDiscount: 0.99,
   maxPlayers: 200,
   maxNameLength: 16,
 });
@@ -279,4 +295,63 @@ export function knobsFromEnv(env: Record<string, string | undefined>, base: Knob
     }
   }
   return out;
+}
+
+/**
+ * The knobs `tuning.ts` sets: all of them but the arena's `mode` (per room)
+ * and `tickMs` (the server's loop, fixed at start).
+ */
+export type Tuning = Omit<Knobs, 'mode' | 'tickMs'>;
+
+/** Knobs a running room keeps from when it opened: a new value reaches only rooms opened after it. */
+export const ROOM_FIXED_KNOBS: readonly (keyof Knobs)[] = ['mode', 'tickMs', 'scoreTiles'];
+
+const ENUM_KNOBS: Partial<Record<keyof Knobs, readonly string[]>> = {
+  junctionPolicy: ['random', 'stop'],
+  crossingMode: ['geometric', 'tile'],
+};
+
+/**
+ * `base` with `tuning` laid over it — only known knobs (not `mode` or
+ * `tickMs`), each of the same type as in `base` (a finite number, a boolean,
+ * one of an enum's values). Anything else is left as it was and named in
+ * `ignored`: a hot-loaded build is checked, not trusted.
+ */
+export function applyTuning(base: Knobs, tuning: unknown): { knobs: Knobs; ignored: string[] } {
+  const out: Knobs = { ...base };
+  const rec = out as unknown as Record<string, unknown>;
+  const ignored: string[] = [];
+  if (!tuning || typeof tuning !== 'object')
+    return {
+      knobs: out,
+      ignored: tuning === undefined ? [] : ['(not an object)'],
+    };
+  for (const [key, value] of Object.entries(tuning as Record<string, unknown>)) {
+    const k = key as keyof Knobs;
+    const current = rec[key];
+    const ok =
+      key !== 'mode' &&
+      key !== 'tickMs' &&
+      Object.prototype.hasOwnProperty.call(base, key) &&
+      (typeof current === 'number'
+        ? typeof value === 'number' && Number.isFinite(value)
+        : typeof current === 'boolean'
+          ? typeof value === 'boolean'
+          : typeof value === 'string' && (ENUM_KNOBS[k] ?? []).includes(value));
+    if (ok) rec[key] = value;
+    else ignored.push(key);
+  }
+  return { knobs: out, ignored };
+}
+
+/** `next` for a room already running under `current`: the `ROOM_FIXED_KNOBS` stay as they are. */
+export function retune(current: Knobs, next: Knobs): Knobs {
+  const out = { ...next } as Record<string, unknown>;
+  for (const k of ROOM_FIXED_KNOBS) out[k] = current[k];
+  return out as unknown as Knobs;
+}
+
+/** The knobs whose values differ between `a` and `b`. */
+export function knobsChanged(a: Knobs, b: Knobs): (keyof Knobs)[] {
+  return (Object.keys(b) as (keyof Knobs)[]).filter((k) => a[k] !== b[k]);
 }
