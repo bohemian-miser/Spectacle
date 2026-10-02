@@ -7,8 +7,8 @@
  */
 
 import { useEffect, useState, type FormEvent } from 'react';
+import { createPortal } from 'react-dom';
 import { ONLINE_URL, SOLO_ONLY } from './App';
-import { ModalBackdrop } from './ModalBackdrop';
 import { BACKLOG_URL, feedbackContext, feedbackUrl, issueSearchUrl, ISSUES_URL, MAX_MESSAGE, sendFeedback, type GameContext } from './feedback';
 
 type Sending = { t: 'idle' } | { t: 'sending' } | { t: 'sent'; id: string } | { t: 'failed'; error: string };
@@ -52,92 +52,96 @@ export function FeedbackButton({ game }: { game: () => GameContext }): JSX.Eleme
       <button type="button" className="btn" aria-label="Feedback" title="Report a bug or suggest something" onClick={show}>
         Feedback
       </button>
-      {open && (
-        <ModalBackdrop onClose={() => setOpen(false)}>
-          <form
-            className="modal feedback-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-label="Feedback"
-            onClick={(e) => e.stopPropagation()}
-            onSubmit={(e) => void submit(e)}
-          >
-            <div className="modal-head">
-              <b>Feedback</b>
-              <button type="button" className="btn modal-close" aria-label="Close" onClick={() => setOpen(false)}>
-                ✕
-              </button>
-            </div>
-            {sending.t === 'sent' ? (
-              <>
-                <p>
-                  Thanks, it's in.{' '}
-                  {sending.id && (
-                    <>
-                      Its id is{' '}
-                      <a href={issueSearchUrl(sending.id)} target="_blank" rel="noreferrer">
-                        <code>{sending.id}</code>
-                      </a>
-                      .
-                    </>
-                  )}
-                </p>
-                <p>
-                  <b>Got a coding agent?</b> Check back in 10 minutes and get your coding agent to work on the bug and make a PR.
-                </p>
-              </>
-            ) : !url ? (
-              <p className="muted">
-                This copy of the game has no server to send feedback to.{' '}
-                <a href={ISSUES_URL} target="_blank" rel="noreferrer">
-                  Open an issue on GitHub
-                </a>{' '}
-                instead.
-              </p>
-            ) : (
-              <>
-                <p>
-                  Found a bug, or have an idea? Say what happened and what you expected. An agent will prepare a bug on your behalf and add it to our{' '}
-                  <a href={BACKLOG_URL} target="_blank" rel="noreferrer">
-                    issue backlog
-                  </a>
-                  .
-                </p>
-                <p className="muted feedback-note">Your message may be quoted in that public issue; your contact never is.</p>
-                <textarea
-                  aria-label="Message"
-                  placeholder="What happened?"
-                  value={message}
-                  maxLength={MAX_MESSAGE}
-                  autoFocus
-                  onChange={(e) => setMessage(e.target.value)}
-                />
-                <input
-                  type="text"
-                  aria-label="Contact"
-                  placeholder="Email or handle, for a reply (optional)"
-                  value={contact}
-                  maxLength={200}
-                  onChange={(e) => setContact(e.target.value)}
-                />
-                <label className="setting setting-check">
-                  <input type="checkbox" checked={details} onChange={(e) => setDetails(e.target.checked)} />
-                  <span>Include where I was (rule, room, browser)</span>
-                </label>
-                {sending.t === 'failed' && <p className="feedback-error">{sending.error}</p>}
-                <div className="feedback-actions">
+      {/* Portalled to <body>, as Settings' and Bots': the HUD's backdrop-filter traps a fixed child inside the panel. */}
+      {open &&
+        createPortal(
+          <div className="modal-backdrop" onClick={() => setOpen(false)}>
+            <form
+              className="modal feedback-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-label="Feedback"
+              onClick={(e) => e.stopPropagation()}
+              onSubmit={(e) => void submit(e)}
+            >
+              <div className="modal-head">
+                <b>Feedback</b>
+                <button type="button" className="btn modal-close" aria-label="Close" onClick={() => setOpen(false)}>
+                  ✕
+                </button>
+              </div>
+              {sending.t === 'sent' ? (
+                <>
+                  <p>
+                    Thanks, it's in.{' '}
+                    {sending.id && (
+                      <>
+                        Its id is{' '}
+                        <a href={issueSearchUrl(sending.id)} target="_blank" rel="noreferrer">
+                          <code>{sending.id}</code>
+                        </a>
+                        .
+                      </>
+                    )}
+                  </p>
+                  <p>
+                    <b>Got a coding agent?</b> Check back in 10 minutes and get your coding agent to work on the bug and make a PR.
+                  </p>
+                </>
+              ) : !url ? (
+                <p className="muted">
+                  This copy of the game has no server to send feedback to.{' '}
                   <a href={ISSUES_URL} target="_blank" rel="noreferrer">
-                    Or open a GitHub issue
-                  </a>
-                  <button type="submit" className="btn btn-accent" disabled={!message.trim() || sending.t === 'sending'}>
-                    {sending.t === 'sending' ? 'Sending…' : 'Send'}
-                  </button>
-                </div>
-              </>
-            )}
-          </form>
-        </ModalBackdrop>
-      )}
+                    Open an issue on GitHub
+                  </a>{' '}
+                  instead.
+                </p>
+              ) : (
+                <>
+                  <p>
+                    Found a bug, or have an idea? Say what happened and what you expected. An agent will prepare a bug on your behalf and add it to
+                    our{' '}
+                    <a href={BACKLOG_URL} target="_blank" rel="noreferrer">
+                      issue backlog
+                    </a>
+                    .
+                  </p>
+                  <p className="muted feedback-note">Your message may be quoted in that public issue; your contact never is.</p>
+                  <textarea
+                    aria-label="Message"
+                    placeholder="What happened?"
+                    value={message}
+                    maxLength={MAX_MESSAGE}
+                    autoFocus
+                    onChange={(e) => setMessage(e.target.value)}
+                  />
+                  <input
+                    type="text"
+                    aria-label="Contact"
+                    placeholder="Email or handle, for a reply (optional)"
+                    value={contact}
+                    maxLength={200}
+                    onChange={(e) => setContact(e.target.value)}
+                  />
+                  <label className="setting setting-check">
+                    <input type="checkbox" checked={details} onChange={(e) => setDetails(e.target.checked)} />
+                    <span>Include where I was (rule, room, browser)</span>
+                  </label>
+                  {sending.t === 'failed' && <p className="feedback-error">{sending.error}</p>}
+                  <div className="feedback-actions">
+                    <a href={ISSUES_URL} target="_blank" rel="noreferrer">
+                      Or open a GitHub issue
+                    </a>
+                    <button type="submit" className="btn btn-accent" disabled={!message.trim() || sending.t === 'sending'}>
+                      {sending.t === 'sending' ? 'Sending…' : 'Send'}
+                    </button>
+                  </div>
+                </>
+              )}
+            </form>
+          </div>,
+          document.body,
+        )}
     </>
   );
 }

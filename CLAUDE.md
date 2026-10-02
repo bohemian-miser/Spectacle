@@ -99,11 +99,9 @@ client/src/       Vite + React.
                   (?circuits= overrides), plain board and team colours (both
                   on by default). SettingsButton.tsx is
                   the ⚙ button + modal (theme, circuit colours, plain board).
-  FeedbackButton.tsx  Feedback button + modal beside it (feedback.ts: where
-                  it posts, the context sent along).
-  ModalBackdrop.tsx  Every modal's backdrop, portalled to <body>: the HUD's
-                  backdrop-filter traps fixed children (a modal opened from
-                  the HUD covered only the HUD).
+  FeedbackButton.tsx  Feedback button + modal beside it, portalled to <body>
+                  like Settings' and Bots' (feedback.ts: where it posts, the
+                  context sent along).
   styles.css      Spectre's explorer tokens, both schemes, incl. the board
                   knobs (--tile-*, --board-*, --strand-darken).
   render.ts       Camera, tint sync, Canvas2D strand overlay.
@@ -190,7 +188,10 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   (`bridge+hunter:2`; `+` because gcloud splits env vars on commas),
   `BOTS_NORMAL`/`BOTS_CONQUEST` override per mode. **Players can change a
   room's bots** (owner's call: anyone in the room): the arena's Bots button
-  (`BotsButton.tsx`) sends `{t:'bots', mix}`; the server checks it
+  (`BotsButton.tsx`) sends `{t:'bots', mix}` — no Apply: each −/+ shows at
+  once and quick taps go as one message, spaced for the server's one change a
+  second; its modal is portalled to `<body>` (as Settings') because the HUD's
+  `backdrop-filter` traps a fixed child inside the panel; the server checks it
   (`cleanBotMix`: known kinds, `ROOM_MAX_BOTS_PER_KIND` 3, `ROOM_MAX_BOTS`
   6, one change a second per client), sets `Room.botChoice`,
   `Bots.reconcile`s and sends a `bots` event (`RoomBots`, `by` = player id)
