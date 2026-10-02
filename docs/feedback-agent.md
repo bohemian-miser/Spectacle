@@ -4,7 +4,8 @@ A player presses **Feedback** in the game, writes what went wrong, and sends
 it. Within about ten minutes a Gemini agent has read it against the code and
 filed it as a GitHub issue (or added it to one that already covers it). The
 owner hands an issue to the Gemini fixer by labelling it `agent-ready`; the
-fixer opens a PR with tests and waits for CI to go green. The issues are
+fixer opens a PR with tests and waits for CI to go green, and answers the
+owner's comments and reviews on that PR. The issues are
 public and written to stand alone, so a player's own coding agent can pick
 one up too, which the modal invites them to do.
 
@@ -21,7 +22,10 @@ game client ──POST /feedback──▶ game server ──▶ gs://…-spectac
                gemini-issue-solver.yml: branch, fix + tests, PR (agent:gemini), CI green
                                      │
                                      ▼
-                              owner reviews and merges
+            owner comments / reviews ──▶ gemini-comment-responder.yml: answer, push, CI
+                                     │
+                                     ▼
+                              owner approves and merges
 ```
 
 The same idea as Recipe Lanes' feedback triage and Gemini solver, adapted:
@@ -38,6 +42,7 @@ five minutes rather than daily; and both agents run with less within reach
 | `scripts/feedback.ts` (`npm run feedback -- …`) | `pull`: the untriaged reports as the agent may see them. `mark`: the agent records a decision in `.triage/ledger.jsonl`. `apply`: moves decided reports to `triaged/`. |
 | `.github/workflows/feedback-triage.yml` + `.github/gemini/feedback-triage.md` | The triage run and the agent's brief. |
 | `.github/workflows/gemini-issue-solver.yml` + `GEMINI.md`, `.gemini/agents/orchestrator.md`, `.gemini/commands/resolve-issue.toml` | The fixer and its brief. |
+| `.github/workflows/gemini-comment-responder.yml` + `.gemini/commands/address-comment.toml` | Wakes the fixer when the owner comments on or reviews (anything but an approval) one of its PRs. The thread is filtered to the owner's comments before the agent sees it. |
 
 ### Storage
 
@@ -78,8 +83,10 @@ injection.
   Recipe Lanes, no background refresher keeps the app's private key in a
   process the agent could read. No Google credentials are on its runner.
 - **Only the owner's label starts the fixer** (`github.event.sender.login ==
-  github.repository_owner`). The owner's comments on an issue override its
-  body; nobody else's text is treated as instructions.
+  github.repository_owner`), and only the owner's comments wake the
+  responder, which is handed a queue of the owner's comments alone (filtered
+  in the workflow, outside the model). The owner's comments on an issue
+  override its body; nobody else's text is treated as instructions.
 - **Logs are scrubbed** of the Gemini key and the GitHub token before upload:
   artifacts on a public repo can be downloaded.
 - What the agents *can* still do if subverted: the triage agent can file,
@@ -92,7 +99,7 @@ injection.
 |---|---|---|
 | `feedback` | issue | Filed by the triage agent from a player report. |
 | `agent-ready` | issue | Owner: hand this to the Gemini fixer. Applying it starts a run. |
-| `agent:gemini` | PR | Opened by the Gemini fixer. |
+| `agent:gemini` | PR | Opened by the Gemini fixer; the owner's comments on it wake the responder. |
 
 The triage workflow creates the labels if they are missing. Everything the
 agents write ends with `<!-- gemini-agent -->`.
@@ -157,6 +164,8 @@ agents write ends with `<!-- gemini-agent -->`.
   runs stop after one quick look at the bucket.
 - **Fix an issue:** add `agent-ready` to it. Or Actions → *Gemini issue
   solver* → Run workflow, with a number or blank for the oldest eligible.
+- **Ask for changes:** comment on the agent's PR, or submit a review with
+  inline comments. An approval doesn't wake it.
 - **Who sent a report?** The issue carries its feedback id; the contact (if
   any) is only in the bucket:
   `gcloud storage cat gs://spectacle-game-spectacle-feedback/triaged/<id>.json`.
@@ -165,6 +174,3 @@ agents write ends with `<!-- gemini-agent -->`.
 - **Locally:** `FEEDBACK_URL=/tmp/fb npm run dev`, send some feedback, then
   `FEEDBACK_URL=/tmp/fb npm run feedback -- pull`.
 - Agent transcripts are in each run's `gemini-*logs` artifact.
-
-Not ported from Recipe Lanes yet: the comment responder (the agent answering
-review comments on its own PRs).

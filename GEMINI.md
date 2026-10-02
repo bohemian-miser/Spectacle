@@ -1,9 +1,10 @@
 # Spectacle workspace instructions (Gemini CLI)
 
 Gemini CLI loads this for every task in this repo. The Gemini agent runs from
-GitHub Actions: `feedback-triage.yml` files player feedback as issues, and
+GitHub Actions: `feedback-triage.yml` files player feedback as issues,
 `gemini-issue-solver.yml` fixes an issue once the owner labels it
-`agent-ready`. See `docs/feedback-agent.md`.
+`agent-ready`, and `gemini-comment-responder.yml` answers the owner's
+comments on the PR it opened. See `docs/feedback-agent.md`.
 
 ## Ground rules
 

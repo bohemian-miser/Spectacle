@@ -4,3 +4,4 @@ dist/
 .claude/
 dist-brains/
 .triage/
+.agent-input/

@@ -101,6 +101,9 @@ client/src/       Vite + React.
                   the ⚙ button + modal (theme, circuit colours, plain board).
   FeedbackButton.tsx  Feedback button + modal beside it (feedback.ts: where
                   it posts, the context sent along).
+  ModalBackdrop.tsx  Every modal's backdrop, portalled to <body>: the HUD's
+                  backdrop-filter traps fixed children (a modal opened from
+                  the HUD covered only the HUD).
   styles.css      Spectre's explorer tokens, both schemes, incl. the board
                   knobs (--tile-*, --board-*, --strand-darken).
   render.ts       Camera, tint sync, Canvas2D strand overlay.
@@ -141,7 +144,9 @@ deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (ships brains/ to GCS; skipped until GCP_BRAINS_BUCKET),
                   feedback-triage.yml (feedback → issues, every 5 min;
                   skipped until GCP_FEEDBACK_BUCKET), gemini-issue-solver.yml
-                  (owner labels an issue agent-ready → Gemini PR).
+                  (owner labels an issue agent-ready → Gemini PR),
+                  gemini-comment-responder.yml (owner comments on that PR →
+                  the agent answers or pushes).
 GEMINI.md, .gemini/, .github/gemini/  The Gemini agents' briefs.
 docs/feedback-agent.md  The feedback → issue → agent PR loop, its safety
                   rules and its setup.
