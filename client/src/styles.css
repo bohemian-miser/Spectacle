@@ -128,6 +128,16 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .setting { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 10px; font-size: 14px; }
 .setting select { font: inherit; padding: 4px 6px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
 .setting-check { grid-template-columns: auto 1fr; }
+.head-buttons { display: flex; gap: 6px; flex-wrap: wrap; }
+.feedback-modal { width: min(100%, 420px); }
+.feedback-modal p { margin: 0; font-size: 14px; }
+.feedback-modal a { color: var(--accent); }
+.feedback-modal textarea,
+.feedback-modal input[type='text'] { font: inherit; font-size: 14px; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--text); }
+.feedback-modal textarea { min-height: 120px; resize: vertical; }
+.feedback-note { font-size: 13px; }
+.feedback-error { color: var(--bad); }
+.feedback-actions { display: flex; align-items: center; justify-content: space-between; gap: 10px; font-size: 13px; }
 
 /* Lobby */
 .lobby { max-width: 980px; margin: 0 auto; padding: 24px 16px 48px; display: grid; gap: 18px; }
