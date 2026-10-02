@@ -70,6 +70,11 @@ server/pattern-stats.ts  Which rules people play and how they score: a
                   stint per (player, rule), sampled once a second; rows per
                   (mode, rule, bot). /patterns(.json)?key=STATS_KEY, a JSON
                   `stint` line per finished stint on stdout, STATS_FILE.
+server/feedback.ts  POST /feedback: parseFeedback (whitelisted, capped
+                  context), FeedbackLimiter, the store under FEEDBACK_URL
+                  (gs:// create-only, or a dir: new/<id>.json → triaged/),
+                  toTriageItem (what the triage agent may see).
+server/gcp.ts     parseGsUrl, metadataTokens (the instance's GCP token).
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
   session.ts      The tab's resume ticket (sessionStorage, shared copy in
@@ -94,6 +99,8 @@ client/src/       Vite + React.
                   (?circuits= overrides), plain board and team colours (both
                   on by default). SettingsButton.tsx is
                   the ⚙ button + modal (theme, circuit colours, plain board).
+  FeedbackButton.tsx  Feedback button + modal beside it (feedback.ts: where
+                  it posts, the context sent along).
   styles.css      Spectre's explorer tokens, both schemes, incl. the board
                   knobs (--tile-*, --board-*, --strand-darken).
   render.ts       Camera, tint sync, Canvas2D strand overlay.
@@ -119,6 +126,8 @@ scripts/brains.ts  `npm run brains -- build|check`: bundle brains/ (esbuild)
 scripts/readme-shots.ts  Regenerates docs/images/ (the README's screenshots).
 scripts/regrow-shots.ts  A rule switch played out with and without
                   `regrowDiscount`, as before/after PNGs (needs PW_EXE).
+scripts/feedback.ts  `npm run feedback -- pull|mark|apply`: the triage half
+                  of feedback (docs/feedback-agent.md).
 scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
                   heartbeats (who is in which room), traffic, instance-count
                   metric, /health, recent joins/leaves, via gcloud's token
@@ -129,7 +138,13 @@ deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   solo), publish.yml (GHCR image), pages.yml (solo build),
                   deploy-cloudrun.yml (skipped until GCP_PROJECT var is set;
                   skips itself when a push only touches brains/), brains.yml
-                  (ships brains/ to GCS; skipped until GCP_BRAINS_BUCKET).
+                  (ships brains/ to GCS; skipped until GCP_BRAINS_BUCKET),
+                  feedback-triage.yml (feedback → issues, every 5 min;
+                  skipped until GCP_FEEDBACK_BUCKET), gemini-issue-solver.yml
+                  (owner labels an issue agent-ready → Gemini PR).
+GEMINI.md, .gemini/, .github/gemini/  The Gemini agents' briefs.
+docs/feedback-agent.md  The feedback → issue → agent PR loop, its safety
+                  rules and its setup.
 ```
 
 ## Commands
@@ -185,6 +200,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   (Before this, wanderers drew from every clean rule, the FASS subset included.)
   Bot work per tick stays in single-digit ms at hex level 6 —
   `scripts/bot-arena.ts` prints it; keep it there.
+- **Feedback → issues → agent PRs** (docs/feedback-agent.md). The Feedback
+  button posts to `POST /feedback`; the server keeps each report in the
+  `FEEDBACK_URL` bucket (it can only create there); `feedback-triage.yml`
+  has Gemini file them as public issues every 5 minutes (the modal promises
+  ~10); the owner's `agent-ready` label starts `gemini-issue-solver.yml`.
+  Reports are untrusted, so: the triage agent's job holds no Google
+  credentials (pull and apply are separate jobs); `toTriageItem` drops the
+  contact and hides an infinite-line rule; the solver refuses to run unless
+  a ruleset makes `main` take a reviewed PR, and gets a one-hour app token,
+  no long-lived key. Keep all of that if you touch it.
 - **Bot brains hot-load; everything else deploys.** Bot *players* live in the
   engine; their *brains* (`shared/game/brains/`) are swappable while rooms
   run (`Bots.setBrains`: same players, lines, rule; `start(now, resumed)`,

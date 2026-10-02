@@ -107,4 +107,5 @@ jobs:
             FIELD_LEVEL=${{ vars.SPECTACLE_FIELD_LEVEL || '6' }}
             MAX_INSTANCE_PLAYERS=${{ vars.SPECTACLE_MAX_INSTANCE_PLAYERS || '400' }}
             BOTS_URL=${{ vars.GCP_BRAINS_BUCKET != '' && format('gs://{0}/brains', vars.GCP_BRAINS_BUCKET) || '' }}
+            FEEDBACK_URL=${{ vars.GCP_FEEDBACK_BUCKET != '' && format('gs://{0}', vars.GCP_FEEDBACK_BUCKET) || '' }}
       - run: echo "Deployed to ${{ steps.deploy.outputs.url }}"

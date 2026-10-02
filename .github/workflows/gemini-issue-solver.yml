@@ -1,0 +1,160 @@
+# Fix one issue with tests and open a PR, when the repo owner labels the
+# issue `agent-ready` (or on a manual run). The agent's brief: GEMINI.md,
+# .gemini/agents/orchestrator.md, .gemini/commands/resolve-issue.toml.
+# See docs/feedback-agent.md.
+#
+# Safety, because the agent reads issues the triage agent wrote from
+# anonymous player feedback:
+# - Only the owner's label starts it.
+# - It won't run unless a ruleset makes main take a reviewed pull request: a
+#   push to main deploys (deploy-cloudrun.yml) and ships bot code that runs
+#   inside the game servers (brains.yml).
+# - Its GitHub token is a one-hour GitHub App installation token for this
+#   repo only (contents, pull requests, issues; not workflows), minted just
+#   before the agent starts. No refresher keeps the app's key around, and no
+#   Google credentials are on this runner.
+# - Not GITHUB_TOKEN: a PR opened with it triggers no CI, and the agent must
+#   see CI go green.
+#
+# Config: GEMINI_API_KEY (secret); AGENT_APP_ID (variable) and
+# AGENT_APP_PRIVATE_KEY (secret) for a GitHub App installed on this repo with
+# Contents, Pull requests and Issues read/write.
+name: Gemini issue solver
+
+on:
+  issues:
+    types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue to fix (blank = the oldest open agent-ready issue nobody is on)
+        required: false
+        type: string
+
+# One Gemini agent job at a time: the dedup assumes runs don't overlap.
+# GitHub keeps one queued run per group, so if several issues are labelled
+# while a run is going, re-apply the label (or dispatch) for the ones dropped.
+concurrency:
+  group: gemini-agent
+  cancel-in-progress: false
+
+jobs:
+  solve:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.label.name == 'agent-ready' && github.event.sender.login == github.repository_owner)
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    env:
+      TARGET_ISSUE: ${{ github.event_name == 'issues' && github.event.issue.number || inputs.issue_number }}
+    steps:
+      - name: main takes reviewed pull requests only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[] | select(.type == "pull_request") | .parameters.required_approving_review_count] | max // 0')
+          if [ "${n:-0}" -lt 1 ]; then
+            echo "::error::No ruleset makes main take a reviewed pull request, so the agent could push straight to production. Add one first (docs/feedback-agent.md, 'Setup')."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Gemini CLI, ripgrep, and Chromium for the smoke rounds
+        run: |
+          npm install -g @google/gemini-cli --silent
+          sudo apt-get install -y --no-install-recommends ripgrep
+          npx playwright install --with-deps chromium
+
+      - id: app
+        if: vars.AGENT_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      # Gemini CLI strips token-like variables from the shells it starts, so
+      # gh (and git, through gh) is logged in through gh's config file.
+      - name: Log the agent in
+        env:
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No agent token: set AGENT_APP_ID and AGENT_APP_PRIVATE_KEY (docs/feedback-agent.md). GITHUB_TOKEN won't do: its pull requests trigger no CI."
+            exit 1
+          fi
+          printf '%s' "$TOKEN" | gh auth login --with-token
+          gh auth setup-git
+          git config --global user.name "gemini-agent"
+          git config --global user.email "gemini-agent@users.noreply.github.com"
+
+      - name: Run the solver
+        timeout-minutes: 50
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+          GEMINI_MODEL: gemini-3.1-pro-preview
+        run: |
+          set -o pipefail
+          gemini --approval-mode=yolo -p "/resolve-issue $TARGET_ISSUE" 2>&1 | tee "$RUNNER_TEMP/gemini-run.log"
+
+      # Gemini CLI exits 0 even when the agent didn't deliver: the issue must
+      # be closed (already fixed) or have an open PR that closes it.
+      - name: Check the outcome
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ -z "$TARGET_ISSUE" ]; then
+            echo "Queue mode (no issue named): nothing to check."
+            exit 0
+          fi
+          state=$(gh issue view "$TARGET_ISSUE" -R "$GITHUB_REPOSITORY" --json state -q .state)
+          if [ "$state" = CLOSED ]; then
+            echo "Issue #$TARGET_ISSUE is closed."
+            exit 0
+          fi
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --label agent:gemini --json number,body \
+            --jq ".[] | select(.body | test(\"#$TARGET_ISSUE([^0-9]|\$)\")) | .number" | head -1)
+          if [ -n "$pr" ]; then
+            echo "PR #$pr is open for issue #$TARGET_ISSUE."
+            exit 0
+          fi
+          echo "::error::The run ended without a PR for issue #$TARGET_ISSUE or closing it: see the gemini-logs artifact."
+          exit 1
+
+      - name: Collect and scrub agent logs
+        if: always()
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/gemini-logs"
+          cp "$RUNNER_TEMP/gemini-run.log" "$RUNNER_TEMP/gemini-logs/" 2>/dev/null || true
+          cp -r "$HOME/.gemini/tmp" "$RUNNER_TEMP/gemini-logs/sessions" 2>/dev/null || true
+          cp smoke*.png "$RUNNER_TEMP/gemini-logs/" 2>/dev/null || true
+          # Artifacts on a public repo can be downloaded: scrub credentials.
+          find "$RUNNER_TEMP/gemini-logs" -type f ! -name '*.png' | while read -r f; do
+            for s in "$GEMINI_API_KEY" "$TOKEN"; do
+              [ -n "$s" ] && sed -i "s|$s|***|g" "$f" || true
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemini-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}/gemini-logs/
+          if-no-files-found: ignore
+          retention-days: 30

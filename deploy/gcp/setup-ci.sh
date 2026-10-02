@@ -14,6 +14,10 @@
 # writes new bot code there, and the running servers read it with their own
 # service account, so bots change without a deploy (server/brains.ts).
 #
+# And a private bucket for player feedback: the servers may only add reports
+# to it (they can't read, list or delete them), and CI's triage workflow
+# files them as GitHub issues (server/feedback.ts, docs/feedback-agent.md).
+#
 # Then prints the variables to add to the GitHub repo. Run once with `gcloud`
 # logged in:
 #
@@ -30,6 +34,7 @@ PROVIDER="${PROVIDER:-spectacle}"
 REPO_SLUG="${REPO_SLUG:-bohemian-miser/Spectacle}"
 SA="$SA_NAME@$PROJECT.iam.gserviceaccount.com"
 BUCKET="${BUCKET:-$PROJECT-spectacle-brains}"
+FEEDBACK_BUCKET="${FEEDBACK_BUCKET:-$PROJECT-spectacle-feedback}"
 
 gcloud config set project "$PROJECT" >/dev/null
 gcloud services enable run.googleapis.com artifactregistry.googleapis.com \
@@ -60,6 +65,16 @@ gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$SA" --role roles/storage.objectAdmin --quiet >/dev/null
 gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
   --member "serviceAccount:$RUNTIME_SA" --role roles/storage.objectViewer --quiet >/dev/null
+
+# Player feedback: the servers create reports and nothing more; the deployer
+# (the triage workflow) reads them and moves them to triaged/.
+gcloud storage buckets describe "gs://$FEEDBACK_BUCKET" >/dev/null 2>&1 ||
+  gcloud storage buckets create "gs://$FEEDBACK_BUCKET" --location "$REGION" \
+    --uniform-bucket-level-access --public-access-prevention
+gcloud storage buckets add-iam-policy-binding "gs://$FEEDBACK_BUCKET" \
+  --member "serviceAccount:$SA" --role roles/storage.objectAdmin --quiet >/dev/null
+gcloud storage buckets add-iam-policy-binding "gs://$FEEDBACK_BUCKET" \
+  --member "serviceAccount:$RUNTIME_SA" --role roles/storage.objectCreator --quiet >/dev/null
 
 # The pool holds the trust; the provider says *who* may use it. The attribute
 # condition is the load-bearing line — without it any repo on GitHub could mint
@@ -95,6 +110,7 @@ In the GitHub repo (Settings → Secrets and variables → Actions → Variables
   GCP_WIF_PROVIDER  = $WIF
   GCP_DEPLOYER_SA   = $SA
   GCP_BRAINS_BUCKET = $BUCKET
+  GCP_FEEDBACK_BUCKET = $FEEDBACK_BUCKET
 
 Or in one go:
 
@@ -104,12 +120,14 @@ Or in one go:
   gh variable set GCP_WIF_PROVIDER --body '$WIF'
   gh variable set GCP_DEPLOYER_SA  --body '$SA'
   gh variable set GCP_BRAINS_BUCKET --body '$BUCKET'
+  gh variable set GCP_FEEDBACK_BUCKET --body '$FEEDBACK_BUCKET'
 
 The "Deploy online arena to Cloud Run" workflow then runs on every push to
 main (and on demand from the Actions tab) — except a push that only touches
 shared/game/brains/: "Ship bot brains" uploads those to gs://$BUCKET and the
 running servers swap them in, no deploy. Run the deploy once after setting
-GCP_BRAINS_BUCKET so the servers know where to look (BOTS_URL). Its output prints the service URL;
+GCP_BRAINS_BUCKET or GCP_FEEDBACK_BUCKET so the servers know where to look
+(BOTS_URL, FEEDBACK_URL). Its output prints the service URL;
 put that in the SPECTACLE_ONLINE_URL variable so the Pages build links to it.
 
 Only $REPO_SLUG can assume this service account. Set REPO_SLUG= if you fork.
