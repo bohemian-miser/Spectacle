@@ -735,3 +735,11 @@ first four and builds the Docker image.
 - Shared growth budget across a player's lines.
 - Infinite field via Spectre's un-rooted engine; binary wire format;
   persistence; rooms.
+- A dedicated runtime service account for Cloud Run (owner's call, once
+  feedback is running): the servers run as the default compute account
+  (`$PNUM-compute@developer.gserviceaccount.com`). On spectacle-game it holds
+  no project roles (checked 2026-10-02), but anything else on default compute
+  shares it, along with its two bucket grants. Give the servers their own,
+  with only `storage.objectViewer` on the brains bucket and
+  `storage.objectCreator` on the feedback bucket, deploy with
+  `--service-account`, and point setup-ci.sh's `RUNTIME_SA` at it.
