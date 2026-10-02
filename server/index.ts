@@ -76,6 +76,8 @@ import { packEvents } from '../shared/game/wire';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
 import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet } from '../shared/game/bots';
 import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
+import { clientAddress, FeedbackLimiter, feedbackId, feedbackStore, MAX_BODY, parseFeedback, type FeedbackRecord } from './feedback';
+import { metadataTokens } from './gcp';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 
@@ -242,6 +244,89 @@ function statsKeyOk(url: URL): boolean {
   return timingSafeEqual(a, b);
 }
 
+// --- feedback ------------------------------------------------------------------
+
+/**
+ * Where player reports go (server/feedback.ts): `gs://bucket/prefix` or a
+ * directory. Unset, POST /feedback answers 503 and the client offers a GitHub
+ * issue instead. The triage workflow drains it into GitHub issues.
+ */
+const FEEDBACK_URL = process.env.FEEDBACK_URL ?? '';
+const feedbackKept = FEEDBACK_URL ? feedbackStore(FEEDBACK_URL, metadataTokens()) : null;
+const feedbackLimit = new FeedbackLimiter(
+  positiveInt(process.env.FEEDBACK_PER_ADDRESS, 3),
+  positiveInt(process.env.FEEDBACK_PER_WINDOW, 60),
+  positiveInt(process.env.FEEDBACK_WINDOW_MS, 10 * 60_000),
+);
+// Any origin: the GitHub Pages build posts here, and there are no cookies to protect.
+const FEEDBACK_CORS = {
+  'access-control-allow-origin': '*',
+  'access-control-allow-methods': 'POST, OPTIONS',
+  'access-control-allow-headers': 'content-type',
+  'access-control-max-age': '86400',
+};
+
+function handleFeedback(req: IncomingMessage, res: ServerResponse): void {
+  const reply = (status: number, body: object): void => {
+    if (res.headersSent) return;
+    res.writeHead(status, { ...FEEDBACK_CORS, 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify(body));
+  };
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204, FEEDBACK_CORS);
+    res.end();
+    return;
+  }
+  if (req.method !== 'POST') return reply(405, { error: 'POST only.' });
+  if (!feedbackKept) return reply(503, { error: 'Feedback is not set up on this server.' });
+  const chunks: Buffer[] = [];
+  let size = 0;
+  req.on('data', (c: Buffer) => {
+    size += c.length;
+    if (size <= MAX_BODY) chunks.push(c);
+    else if (!res.headersSent) {
+      reply(413, { error: 'Too long.' });
+      res.once('finish', () => req.destroy());
+    }
+  });
+  req.on('end', () => {
+    if (size > MAX_BODY) return;
+    let body: unknown;
+    try {
+      body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    } catch {
+      return reply(400, { error: 'Expected JSON.' });
+    }
+    const input = parseFeedback(body);
+    if ('error' in input) return reply(400, { error: input.error });
+    if (!feedbackLimit.take(clientAddress(req.headers['x-forwarded-for'], req.socket.remoteAddress), Date.now())) {
+      return reply(429, { error: 'That is a lot of feedback at once. Please try again in a few minutes.' });
+    }
+    const now = new Date();
+    const record: FeedbackRecord = {
+      id: feedbackId(now),
+      createdAt: now.toISOString(),
+      ...input,
+      server: { instance: INSTANCE.id, revision: INSTANCE.revision },
+    };
+    feedbackKept.add(record).then(
+      () => {
+        note('info', `feedback ${record.id}`);
+        reply(200, { ok: true, id: record.id });
+      },
+      (e: unknown) => {
+        counters.errors++;
+        note('error', `feedback ${record.id} not kept: ${e instanceof Error ? e.message : String(e)}`);
+        // Not lost: the report is in the log (contact left out), to file by hand.
+        const { contact: _, ...unsaved } = record;
+        console.log(JSON.stringify({ message: 'feedback-unsaved', record: unsaved }));
+        reply(502, { error: 'Could not save that just now. Please try again later.' });
+      },
+    );
+  });
+  req.on('error', () => reply(400, { error: 'Bad request.' }));
+}
+
 // --- static files ------------------------------------------------------------
 
 const MIME: Record<string, string> = {
@@ -257,6 +342,10 @@ const MIME: Record<string, string> = {
 
 function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', 'http://x');
+  if (url.pathname === '/feedback') {
+    handleFeedback(req, res);
+    return;
+  }
   if (url.pathname === '/status.json') {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify(statusReport()));

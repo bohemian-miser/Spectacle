@@ -27,6 +27,7 @@ import { tmpdir } from 'node:os';
 import { join, relative, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { isBrainSet, type BrainSet } from '../shared/game/bots';
+import { metadataTokens, parseGsUrl } from './gcp';
 
 /** Where the brains live, relative to the repo root. */
 export const BRAINS_DIR = 'shared/game/brains';
@@ -84,33 +85,17 @@ export function brainsHash(root: string): string {
 
 /** `gs://bucket/prefix` → a reader of objects under it (instance credentials on GCP); `http(s)://…` → plain GETs. */
 export function objectReader(base: string): (name: string) => Promise<Buffer> {
-  const gs = /^gs:\/\/([^/]+)\/?(.*)$/.exec(base);
+  const gs = parseGsUrl(base);
   if (!gs) {
     const root = base.replace(/\/+$/, '');
     return async (name) => get(`${root}/${name}`, {});
   }
-  const [, bucket, prefix] = gs;
-  const dir = prefix.replace(/\/+$/, '');
-  let token: { value: string; until: number } | null = null;
-  let noMetadata = false;
+  const { bucket, prefix: dir } = gs;
+  const token = metadataTokens();
   const auth = async (): Promise<Record<string, string>> => {
-    if (noMetadata) return {};
-    if (!token || Date.now() > token.until) {
-      try {
-        const r = await fetch('http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/token', {
-          headers: { 'Metadata-Flavor': 'Google' },
-          signal: AbortSignal.timeout(2000),
-        });
-        if (!r.ok) throw new Error(`metadata server: ${r.status}`);
-        const j = (await r.json()) as { access_token: string; expires_in: number };
-        token = { value: j.access_token, until: Date.now() + (j.expires_in - 60) * 1000 };
-      } catch {
-        // Not on GCP: read the bucket anonymously (it must be public then).
-        noMetadata = true;
-        return {};
-      }
-    }
-    return { Authorization: `Bearer ${token.value}` };
+    const t = await token();
+    // Not on GCP: read the bucket anonymously (it must be public then).
+    return t ? { Authorization: `Bearer ${t}` } : {};
   };
   return async (name) => {
     const object = encodeURIComponent(dir ? `${dir}/${name}` : name);
