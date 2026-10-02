@@ -6,6 +6,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { ModalBackdrop } from './ModalBackdrop';
 import { CIRCUIT_STYLES, parseCircuitStyle, useSettings } from './settings';
 import { parseTheme, useTheme } from './theme';
 
@@ -29,7 +30,7 @@ export function SettingsButton(): JSX.Element {
         <span aria-hidden="true">⚙</span> Settings
       </button>
       {open && (
-        <div className="modal-backdrop" onClick={() => setOpen(false)}>
+        <ModalBackdrop onClose={() => setOpen(false)}>
           <div className="modal" role="dialog" aria-modal="true" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <b>Settings</b>
@@ -66,7 +67,7 @@ export function SettingsButton(): JSX.Element {
               <span>Team colours: you blue, everyone else red (T)</span>
             </label>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
     </>
   );

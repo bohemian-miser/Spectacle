@@ -8,6 +8,7 @@
  */
 
 import { useEffect, useState } from 'react';
+import { ModalBackdrop } from './ModalBackdrop';
 import type { GameConnection } from './net';
 import type { Store } from './store';
 
@@ -42,7 +43,7 @@ export function BotsButton({ store, conn }: { store: Store; conn: GameConnection
         Bots {playing}
       </button>
       {draft && (
-        <div className="modal-backdrop" onClick={() => setDraft(null)}>
+        <ModalBackdrop onClose={() => setDraft(null)}>
           <div className="modal" role="dialog" aria-modal="true" aria-label="Bots" onClick={(e) => e.stopPropagation()}>
             <div className="modal-head">
               <b>Bots</b>
@@ -90,7 +91,7 @@ export function BotsButton({ store, conn }: { store: Store; conn: GameConnection
               </button>
             </div>
           </div>
-        </div>
+        </ModalBackdrop>
       )}
     </>
   );
