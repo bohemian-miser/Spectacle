@@ -18,7 +18,8 @@
     "bench:lag": "tsx scripts/lag-bench.ts",
     "bench:stress": "tsx scripts/stress-bench.ts",
     "servers": "tsx scripts/servers.ts",
-    "brains": "tsx scripts/brains.ts"
+    "brains": "tsx scripts/brains.ts",
+    "feedback": "tsx scripts/feedback.ts"
   },
   "dependencies": {
     "react": "^18.3.1",

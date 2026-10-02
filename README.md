@@ -297,6 +297,10 @@ flowchart LR
   Workload Identity Federation pinned to this repository — there is no
   service-account key anywhere.
 - **Pages.** The same engine and bots compiled into a static, solo-only build.
+- **Feedback.** The in-game Feedback button lands reports in a private
+  bucket; every five minutes a Gemini agent files them as GitHub issues, and
+  an issue the owner labels `agent-ready` gets a Gemini-written PR with tests
+  — see [docs/feedback-agent.md](docs/feedback-agent.md).
 - **Alternative host.** A free `e2-micro` VM with Caddy (TLS) and Watchtower
   (auto-pull from GHCR) — see below.
 

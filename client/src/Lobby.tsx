@@ -7,6 +7,7 @@ import { SOLO_LEVELS, SOLO_MAX_PER_KIND, type SoloOptions } from './local';
 import { BOT_INFO, BOT_KINDS } from '../../shared/game/bots';
 import { RuleEditor } from './RuleEditor';
 import type { Store } from './store';
+import { FeedbackButton } from './FeedbackButton';
 import { SettingsButton } from './SettingsButton';
 
 export interface LobbyProps {
@@ -89,7 +90,10 @@ export function Lobby(props: LobbyProps): JSX.Element {
             {hello && mode === 'online' ? ` ${hello.tiles.toLocaleString()} tiles, ${hello.players} playing.` : ''}
           </p>
         </div>
-        <SettingsButton />
+        <span className="head-buttons">
+          <FeedbackButton game={() => ({ mode, gameMode, room: store.room, field: hello?.field, rule })} />
+          <SettingsButton />
+        </span>
       </header>
 
       {!inArena && (

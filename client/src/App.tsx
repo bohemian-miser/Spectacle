@@ -274,6 +274,7 @@ export function App(): JSX.Element {
       <Arena
         store={store}
         conn={connRef.current}
+        mode={mode}
         onNewRule={() => setScreen('lobby')}
         onLeave={leave}
         struggling={mode === 'online' && struggling}

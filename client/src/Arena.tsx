@@ -8,6 +8,7 @@ import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointer
 import { fieldKey, tileAt } from '../../shared/game/field';
 import { MODE_LABELS, speedFor } from '../../shared/game/knobs';
 import { describeRule } from '../../shared/game/rule';
+import type { Mode } from './App';
 import type { GameConnection } from './net';
 import { Renderer } from './render';
 import type { Store } from './store';
@@ -15,6 +16,7 @@ import { helpSeen, markHelpSeen } from './session';
 import { boardTheme, useTheme } from './theme';
 import { strandColor } from './tiles-layer';
 import { BotsButton } from './BotsButton';
+import { FeedbackButton } from './FeedbackButton';
 import { SettingsButton } from './SettingsButton';
 import { getSettings, updateSettings, useSettings } from './settings';
 import { useStore } from './useStore';
@@ -22,6 +24,8 @@ import { useStore } from './useStore';
 export interface ArenaProps {
   readonly store: Store;
   readonly conn: GameConnection;
+  /** Online or solo: told in feedback reports. */
+  readonly mode: Mode;
   onNewRule(): void;
   /** Leave the arena for the lobby (mode, online or solo, …). */
   onLeave(): void;
@@ -66,7 +70,7 @@ const PAINT_TAP_MS = 120;
 /** Hold a press this long without moving to paint instead of pan. */
 const HOLD_MS = 300;
 
-export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }: ArenaProps): JSX.Element {
+export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiveUp }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tileCanvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
@@ -395,6 +399,16 @@ export function Arena({ store, conn, onNewRule, onLeave, struggling, onGiveUp }:
           </button>
           <BotsButton store={store} conn={conn} />
           <SettingsButton />
+          <FeedbackButton
+            game={() => ({
+              mode,
+              gameMode,
+              room: store.room,
+              field: store.field?.spec,
+              rule: active?.rule,
+              renderer: rendererRef.current?.layerKind,
+            })}
+          />
         </div>
       </div>
 

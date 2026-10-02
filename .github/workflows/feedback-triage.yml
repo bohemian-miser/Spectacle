@@ -1,0 +1,200 @@
+# Turn player feedback into GitHub issues, every five minutes: the feedback
+# modal tells players to check back in ten (GitHub may start a scheduled run
+# a few minutes late). The game server keeps each report in
+# gs://$GCP_FEEDBACK_BUCKET/new/ (server/feedback.ts). Three jobs, so the
+# agent never shares a runner with Google credentials:
+#
+#   pull    looks for untriaged reports, and stops there when there are none
+#           (most runs); otherwise hands them on as the agent may see them —
+#           no contact, no infinite-line rule named (scripts/feedback.ts).
+#   triage  a Gemini agent files, merges or skips each one
+#           (.github/gemini/feedback-triage.md) with GITHUB_TOKEN and nothing
+#           else, recording each decision as it goes.
+#   apply   moves every report it decided on to triaged/, even when the agent
+#           failed halfway, so nothing is filed twice.
+#
+# The owner then hands an issue to the Gemini fixer by labelling it
+# `agent-ready` (gemini-issue-solver.yml); anyone else's coding agent can pick
+# it up too. See docs/feedback-agent.md.
+#
+# Skipped until GCP_FEEDBACK_BUCKET is set (deploy/gcp/setup-ci.sh); the
+# triage job needs the GEMINI_API_KEY secret.
+name: Feedback triage
+
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+concurrency:
+  group: feedback-triage
+  cancel-in-progress: false
+
+env:
+  FEEDBACK_URL: gs://${{ vars.GCP_FEEDBACK_BUCKET }}
+
+jobs:
+  pull:
+    if: vars.GCP_PROJECT != '' && vars.GCP_FEEDBACK_BUCKET != ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      count: ${{ steps.pull.outputs.count || '0' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      # Most runs find nothing: find that out before installing anything.
+      - id: peek
+        run: |
+          n=$( (gcloud storage ls "$FEEDBACK_URL/new/" 2>/dev/null || true) | grep -c '\.json$' || true)
+          echo "new=${n:-0}" >> "$GITHUB_OUTPUT"
+          echo "${n:-0} untriaged reports"
+      - if: steps.peek.outputs.new != '0'
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - if: steps.peek.outputs.new != '0'
+        run: npm ci
+      - id: pull
+        if: steps.peek.outputs.new != '0'
+        run: |
+          npm run --silent feedback -- pull --limit 30 > /dev/null
+          echo "count=$(node -p "require('./.triage/queue.json').length")" >> "$GITHUB_OUTPUT"
+      - if: steps.pull.outputs.count != '' && steps.pull.outputs.count != '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: triage-queue
+          path: .triage/queue.json
+          include-hidden-files: true
+          retention-days: 3
+
+  triage:
+    needs: pull
+    if: needs.pull.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: triage-queue
+          path: .triage
+      - name: Gemini CLI and ripgrep
+        run: |
+          npm install -g @google/gemini-cli --silent
+          sudo apt-get install -y --no-install-recommends ripgrep
+      # Idempotent: the labels the agent files with, and the ones the owner
+      # and the fixer use, exist before anyone needs them.
+      - name: Labels
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh label create feedback -R "$GITHUB_REPOSITORY" --color 0e8a16 --description "From the in-game feedback button" 2>/dev/null || true
+          gh label create agent-ready -R "$GITHUB_REPOSITORY" --color 5319e7 --description "Owner: hand this issue to the Gemini fixer" 2>/dev/null || true
+          gh label create agent:gemini -R "$GITHUB_REPOSITORY" --color 1d76db --description "Pull request opened by the Gemini agent" 2>/dev/null || true
+      # Gemini CLI strips token-like variables from the shells it starts, so
+      # gh is logged in through its own config file instead.
+      - name: Log gh in for the agent
+        env:
+          TOKEN: ${{ github.token }}
+        run: printf '%s' "$TOKEN" | gh auth login --with-token
+      - name: Run the triage agent
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+          GEMINI_MODEL: gemini-3.1-pro-preview
+        run: |
+          if [ -z "$GEMINI_API_KEY" ]; then
+            echo "::error::Set the GEMINI_API_KEY secret (docs/feedback-agent.md)."
+            exit 1
+          fi
+          set -o pipefail
+          gemini --approval-mode=yolo -p "$(cat .github/gemini/feedback-triage.md)" 2>&1 | tee "$RUNNER_TEMP/gemini-run.log"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: triage-ledger
+          path: .triage/ledger.jsonl
+          include-hidden-files: true
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Collect and scrub agent logs
+        if: always()
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/gemini-logs"
+          cp "$RUNNER_TEMP/gemini-run.log" "$RUNNER_TEMP/gemini-logs/" 2>/dev/null || true
+          cp -r "$HOME/.gemini/tmp" "$RUNNER_TEMP/gemini-logs/sessions" 2>/dev/null || true
+          # Artifacts on a public repo can be downloaded: scrub credentials.
+          find "$RUNNER_TEMP/gemini-logs" -type f | while read -r f; do
+            for s in "$GEMINI_API_KEY" "$TOKEN"; do
+              [ -n "$s" ] && sed -i "s|$s|***|g" "$f" || true
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemini-triage-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}/gemini-logs/
+          if-no-files-found: ignore
+          retention-days: 14
+
+  apply:
+    needs: [pull, triage]
+    if: always() && needs.pull.result == 'success' && needs.pull.outputs.count != '0'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - uses: actions/download-artifact@v4
+        with:
+          name: triage-queue
+          path: .triage
+      # No ledger means the agent decided nothing: the reports wait for the next run.
+      - id: ledger
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: triage-ledger
+          path: .triage
+      - if: steps.ledger.outcome == 'success'
+        uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - if: steps.ledger.outcome == 'success'
+        uses: google-github-actions/setup-gcloud@v2
+      - if: steps.ledger.outcome == 'success'
+        run: npm run --silent feedback -- apply

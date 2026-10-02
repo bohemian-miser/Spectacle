@@ -3,7 +3,7 @@ import react from '@vitejs/plugin-react';
 
 // The client lives in `client/`; the built bundle lands in `dist/` where the
 // game server (`server/index.ts`) serves it next to the WebSocket endpoint.
-// In dev, Vite proxies `/ws` to the tsx-run server on :8787.
+// In dev, Vite proxies `/ws` and `/feedback` to the tsx-run server on :8787.
 export default defineConfig({
   root: 'client',
   // '/' when the game server serves the client; '/Spectacle/' for GitHub Pages.
@@ -17,6 +17,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/ws': { target: 'ws://localhost:8787', ws: true },
+      '/feedback': 'http://localhost:8787',
     },
   },
 });

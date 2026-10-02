@@ -1,0 +1,19 @@
+# Invoked via: /resolve-issue or /resolve-issue <issue-number>
+# Run by .github/workflows/gemini-issue-solver.yml.
+description = "Fix one agent-ready Spectacle issue with tests, open a PR, and get its CI green."
+
+prompt = """
+You are running an autonomous issue-solving pass on the Spectacle repo.
+
+Delegate the run to the `orchestrator` subagent (.gemini/agents/orchestrator.md) and relay its final report. If subagents are unavailable, follow .gemini/agents/orchestrator.md yourself, step by step.
+
+The contract (the orchestrator file is authoritative):
+- EXACTLY ONE open issue labelled `agent-ready`: the number in the arguments if there is one, else the oldest eligible one.
+- Dedup first: no open PR and no remote branch may already target it.
+- Already fixed on main: comment with evidence and close it, no code.
+- Smallest change; tests mandatory; typecheck, test and build locally (smoke rounds too for anything players see); never --no-verify.
+- Push `fix/issue-<n>-<slug>`, open a PR against main labelled `agent:gemini` with `Closes #<n>`, comment on the issue; end every comment with `<!-- gemini-agent -->`.
+- Wait for CI; done means every check green. Never report success otherwise.
+
+Arguments: {{args}}
+"""

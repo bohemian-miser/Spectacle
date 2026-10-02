@@ -3,3 +3,5 @@ dist/
 *.log
 .claude/
 dist-brains/
+.triage/
+.agent-input/
