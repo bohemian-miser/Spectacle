@@ -138,13 +138,13 @@ deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
                   solo), publish.yml (GHCR image), pages.yml (solo build),
                   deploy-cloudrun.yml (skipped until GCP_PROJECT var is set;
-                  skips itself when a push only touches brains/), brains.yml
+                  skips itself when a push touches nothing in the image:
+                  brains/, .github/, .gemini/, docs/, *.md), brains.yml
                   (ships brains/ to GCS; skipped until GCP_BRAINS_BUCKET),
                   feedback-triage.yml (feedback → issues, every 5 min;
-                  skipped until GCP_FEEDBACK_BUCKET), gemini-issue-solver.yml
-                  (owner labels an issue agent-ready → Gemini PR),
-                  gemini-comment-responder.yml (owner comments on that PR →
-                  the agent answers or pushes).
+                  skipped until GCP_FEEDBACK_BUCKET), gemini-agent.yml
+                  (owner labels an issue agent-ready → Gemini PR; trusted
+                  comments on the issue or PR → it answers or pushes).
 GEMINI.md, .gemini/, .github/gemini/  The Gemini agents' briefs.
 docs/feedback-agent.md  The feedback → issue → agent PR loop, its safety
                   rules and its setup.
@@ -210,7 +210,9 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   button posts to `POST /feedback`; the server keeps each report in the
   `FEEDBACK_URL` bucket (it can only create there); `feedback-triage.yml`
   has Gemini file them as public issues every 5 minutes (the modal promises
-  ~10); the owner's `agent-ready` label starts `gemini-issue-solver.yml`.
+  ~10); the owner's `agent-ready` label starts `gemini-agent.yml`, and
+  comments by the owner or invited collaborators (only theirs, filtered by
+  the workflow before the agent sees anything) wake it again.
   Reports are untrusted, so: the triage agent's job holds no Google
   credentials (pull and apply are separate jobs); `toTriageItem` drops the
   contact and hides an infinite-line rule; the solver refuses to run unless

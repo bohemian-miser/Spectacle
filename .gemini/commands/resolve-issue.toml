@@ -1,5 +1,6 @@
-# Invoked via: /resolve-issue or /resolve-issue <issue-number>
-# Run by .github/workflows/gemini-issue-solver.yml.
+# Invoked via: /resolve-issue <issue-number>
+# Run by .github/workflows/gemini-agent.yml, which has put the issue's trusted
+# comments (owner and invited collaborators) in .agent-input/issue-comments.json.
 description = "Fix one agent-ready Spectacle issue with tests, open a PR, and get its CI green."
 
 prompt = """
@@ -8,8 +9,10 @@ You are running an autonomous issue-solving pass on the Spectacle repo.
 Delegate the run to the `orchestrator` subagent (.gemini/agents/orchestrator.md) and relay its final report. If subagents are unavailable, follow .gemini/agents/orchestrator.md yourself, step by step.
 
 The contract (the orchestrator file is authoritative):
-- EXACTLY ONE open issue labelled `agent-ready`: the number in the arguments if there is one, else the oldest eligible one.
+- EXACTLY ONE issue: the number in the arguments, open and labelled `agent-ready`.
 - Dedup first: no open PR and no remote branch may already target it.
+- Read the issue body and .agent-input/issue-comments.json only; never fetch the comment thread yourself. Trusted comments override the body.
+- Unclear, or it would overturn a settled decision nobody trusted has approved: ask one question on the issue and stop.
 - Already fixed on main: comment with evidence and close it, no code.
 - Smallest change; tests mandatory; typecheck, test and build locally (smoke rounds too for anything players see); never --no-verify.
 - Push `fix/issue-<n>-<slug>`, open a PR against main labelled `agent:gemini` with `Closes #<n>`, comment on the issue; end every comment with `<!-- gemini-agent -->`.

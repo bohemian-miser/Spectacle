@@ -23,10 +23,12 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  # A push that changes nothing but shared/game/brains/ needs no deploy: the
-  # "Ship bot brains" workflow hands it to the running servers, and a deploy
-  # would start fresh instances (every board reset) for nothing. Only once
-  # hot brains are set up (GCP_BRAINS_BUCKET); a manual run always deploys.
+  # A push that changes nothing the servers run needs no deploy, which would
+  # start fresh instances (every board reset) for nothing: agent briefs and
+  # workflows (.github/, .gemini/; this file excepted), docs/ and top-level
+  # Markdown aren't in the image. Nor is shared/game/brains/ once hot brains
+  # are set up (GCP_BRAINS_BUCKET): the "Ship bot brains" workflow hands
+  # those to the running servers. A manual run always deploys.
   changes:
     runs-on: ubuntu-latest
     outputs:
@@ -41,10 +43,13 @@ jobs:
           HOT: ${{ vars.GCP_BRAINS_BUCKET != '' }}
         run: |
           deploy=true
-          if [ "$GITHUB_EVENT_NAME" = push ] && [ "$HOT" = true ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            if ! git diff --name-only "$BEFORE" "$GITHUB_SHA" | grep -qv '^shared/game/brains/'; then
+          if [ "$GITHUB_EVENT_NAME" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+            outside='^(\.github/|\.gemini/|docs/|[^/]+\.md$)'
+            [ "$HOT" = true ] && outside='^(shared/game/brains/|\.github/|\.gemini/|docs/|[^/]+\.md$)'
+            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
+            if ! echo "$files" | grep -Evq "$outside" && ! echo "$files" | grep -q '^\.github/workflows/deploy-cloudrun\.yml$'; then
               deploy=false
-              echo "Only shared/game/brains/ changed: the Ship bot brains workflow takes it live, no deploy."
+              echo "Nothing the servers run changed (brains go live through Ship bot brains): no deploy."
             fi
           fi
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
