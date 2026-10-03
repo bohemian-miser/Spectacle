@@ -172,7 +172,7 @@ describe('toTriageItem', () => {
 });
 
 describe('POST /feedback on the real server', () => {
-  const PORT = 21000 + Math.floor(Math.random() * 1000);
+  const PORT = 24000 + Math.floor(Math.random() * 1000); // brains.test.ts has 21000–21999
   const url = `http://127.0.0.1:${PORT}/feedback`;
   let dir: string;
   let server: TestServer;

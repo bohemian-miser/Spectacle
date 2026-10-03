@@ -11,7 +11,7 @@ import { startServer, type TestServer } from './server';
 
 const PORT = 18000 + Math.floor(Math.random() * 1000);
 /** A second server, with short away timers. */
-const AWAY_PORT = PORT + 1000;
+const AWAY_PORT = PORT + 5000; // 23000–23999: rooms.test.ts has 19000–19999
 let server: TestServer;
 let awayServer: TestServer;
 
