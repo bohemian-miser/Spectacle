@@ -476,7 +476,7 @@ function nearestEdge(v: readonly Pt[], p: Pt): number {
   return best;
 }
 
-function pointSegDist2(p: Pt, a: Pt, b: Pt): number {
+export function pointSegDist2(p: Pt, a: Pt, b: Pt): number {
   const vx = b.x - a.x;
   const vy = b.y - a.y;
   const len2 = vx * vx + vy * vy;

@@ -8,7 +8,7 @@
 
 import { validEdgeSubsets, type Pt } from '../../tiles';
 import type { Engine, Path } from '../engine';
-import { tileAt, tileCenter, type Field } from '../field';
+import { tileAt, tileCenter, type Field, fieldOutline, pointSegDist2, onFieldBoundary } from '../field';
 import { isInfiniteLineRule, randomMatching, ruleKey, type PlayerRule } from '../rule';
 import { mulberry32, type Rng } from '../rng';
 import { chordTableFor, chordsConflict, randomJunctionPicker, startStep, stepForward, tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
@@ -255,4 +255,84 @@ export function probe(engine: Engine, me: string, table: ChordTable, tile: numbe
     const hit = rivalAt(engine, me, s);
     if (hit) return { steps, end: 'hit', hit };
   }
+}
+
+// --- edge indices for bridges ----------------------------------------------------
+
+export interface EdgeStart {
+  readonly tile: number;
+  readonly chord: number;
+  readonly exitEnd: 0 | 1;
+  readonly pos: number;
+}
+
+export function edgeStarts(field: Field, table: ChordTable): EdgeStart[] {
+  const ring = fieldOutline(field);
+  const n = ring.length;
+  const starts: EdgeStart[] = [];
+
+  const ringPos = (p: Pt): number => {
+    let best = -1;
+    let bestD = 1e-4;
+    for (let k = 0; k < n; k++) {
+      const d = pointSegDist2(p, ring[k], ring[(k + 1) % n]);
+      if (d < bestD) {
+        bestD = d;
+        best = k;
+      }
+    }
+    if (best < 0) return 0;
+    const a = ring[best];
+    const b = ring[(best + 1) % n];
+    const len2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
+    if (len2 < 1e-6) return best;
+    const t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / len2;
+    return best + Math.max(0, Math.min(1, t));
+  };
+
+  for (let t = 0; t < field.count; t++) {
+    const chords = tileChords(field, table, t);
+    for (let c = 0; c < chords.length; c++) {
+      const chord = chords[c];
+      if (onFieldBoundary(field, t, chord[0])) starts.push({ tile: t, chord: c, exitEnd: 1, pos: ringPos(chord[0]) });
+      if (onFieldBoundary(field, t, chord[1])) starts.push({ tile: t, chord: c, exitEnd: 0, pos: ringPos(chord[1]) });
+    }
+  }
+
+  starts.sort((a, b) => a.pos - b.pos);
+  return starts;
+}
+
+export function lineEndIndex(field: Field, table: ChordTable, starts: EdgeStart[], index: number): { endIndex: number, steps: readonly WalkStep[] } | null {
+  const start = starts[index];
+  if (!start) return null;
+  const out = walkStrand(field, table, start.tile, start.chord, start.exitEnd, 10000, o => o[0]);
+  if (out.closed || out.steps.length === 0) return null;
+  
+  const lastStep = out.steps[out.steps.length - 1];
+  const lastChord = tileChords(field, table, lastStep.tile)[lastStep.chord];
+  
+  if (!onFieldBoundary(field, lastStep.tile, lastStep.b)) return null;
+  
+  for (let i = 0; i < starts.length; i++) {
+    const s = starts[i];
+    if (s.tile === lastStep.tile && s.chord === lastStep.chord) {
+      const entryPt = s.exitEnd === 1 ? lastChord[0] : lastChord[1];
+      if (Math.abs(entryPt.x - lastStep.b.x) < 1e-4 && Math.abs(entryPt.y - lastStep.b.y) < 1e-4) {
+        return { endIndex: i, steps: out.steps };
+      }
+    }
+  }
+  return null;
+}
+
+export function isBridgeClosed(engine: Engine, playerId: string, startStep: WalkStep): boolean {
+  const p = engine.players.get(playerId);
+  if (!p) return false;
+  for (const q of p.paths) {
+    if (q.status === 'closed') {
+      if (q.steps.some(s => s.tile === startStep.tile && s.chord === startStep.chord)) return true;
+    }
+  }
+  return false;
 }
