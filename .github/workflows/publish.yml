@@ -1,5 +1,7 @@
 # Build the game image and push it to GitHub's container registry on every
-# push to main. The VM (deploy/gcp) watches that image and redeploys itself.
+# push to main, once that commit's CI has passed (wait-for-ci.yml; a manual
+# run isn't gated). The VM (deploy/gcp) watches that image and redeploys
+# itself, so this is a deploy too.
 name: Publish image
 
 on:
@@ -11,8 +13,22 @@ permissions:
   contents: read
   packages: write
 
+# One at a time, and a newer push's run waits its turn (replacing an older
+# one still waiting): waiting for CI makes finish times vary, and `latest`
+# must end up on the newest commit, not on whichever CI finished last.
+concurrency:
+  group: publish
+  cancel-in-progress: false
+
 jobs:
+  ci:
+    uses: ./.github/workflows/wait-for-ci.yml
+    permissions:
+      actions: read
+
   publish:
+    needs: ci
+    if: needs.ci.outputs.passed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4

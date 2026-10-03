@@ -1,0 +1,89 @@
+# The gate in front of every deploy: deploy-cloudrun.yml, publish.yml (the VM
+# path's Watchtower pulls that image) and pages.yml call this first and go on
+# only when `passed` is 'true'. Without it they ran beside CI, so a merge
+# whose tests failed still shipped (PR #83).
+#
+# On a push it waits for the CI workflow's run (ci.yml, by file name) on the
+# same commit and branch:
+# - success: passed=true.
+# - cancelled or skipped (CI's concurrency cancels a run a newer push
+#   supersedes): passed=false and the caller's run stays green, because that
+#   newer push's own run deploys everything, this commit included.
+# - anything else (failure, timed out, ...): this job fails, so the caller's
+#   run goes red. Re-running CI doesn't re-run the deploy: once CI is green,
+#   re-run the deploy's failed jobs (while it's still main's newest commit),
+#   dispatch it, or let the next push carry it.
+# - no CI run within 5 minutes, or CI not done within 30: fails.
+#
+# A manual run (workflow_dispatch) isn't gated: it's the operator's escape
+# hatch (redeploy to apply new variables, or ship while CI itself is broken).
+#
+# Only the callers' push and workflow_dispatch triggers reach this, so pull
+# requests (forks or not) never get near a deploy.
+name: Wait for CI
+
+on:
+  workflow_call:
+    outputs:
+      passed:
+        description: "'true' when this commit's CI passed (or the run is manual): the caller may deploy"
+        value: ${{ jobs.wait.outputs.passed }}
+
+jobs:
+  wait:
+    name: Wait for CI
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      actions: read
+    outputs:
+      passed: ${{ steps.wait.outputs.passed }}
+    steps:
+      - id: wait
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          EVENT: ${{ github.event_name }}
+          SHA: ${{ github.sha }}
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          if [ "$EVENT" != push ]; then
+            echo "A $EVENT run isn't gated on CI."
+            echo "passed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          appear_by=$((SECONDS + 5 * 60))
+          finish_by=$((SECONDS + 30 * 60))
+          while :; do
+            run=$(gh run list --workflow ci.yml --commit "$SHA" --event push --branch "$BRANCH" --limit 1 \
+                    --json status,url,conclusion --jq '.[0] // empty | "\(.status) \(.url) \(.conclusion)"') || run=
+            if [ -n "$run" ]; then
+              read -r status url conclusion <<< "$run"
+              if [ "$status" = completed ]; then
+                case $conclusion in
+                  success)
+                    echo "CI passed for $SHA: $url"
+                    echo "passed=true" >> "$GITHUB_OUTPUT"
+                    exit 0 ;;
+                  cancelled|skipped)
+                    echo "::notice::CI for $SHA was $conclusion (a newer push supersedes it, or someone stopped it): not deploying this commit. $url"
+                    echo "passed=false" >> "$GITHUB_OUTPUT"
+                    exit 0 ;;
+                  *)
+                    echo "::error::CI for $SHA concluded '$conclusion': not deploying. $url"
+                    exit 1 ;;
+                esac
+              fi
+              echo "CI is $status: $url"
+            elif [ "$SECONDS" -ge "$appear_by" ]; then
+              echo "::error::No CI run (ci.yml, push to $BRANCH) for $SHA after 5 minutes: not deploying."
+              exit 1
+            else
+              echo "No CI run for $SHA yet."
+            fi
+            if [ "$SECONDS" -ge "$finish_by" ]; then
+              echo "::error::CI for $SHA hasn't finished after 30 minutes: not deploying."
+              exit 1
+            fi
+            sleep 15
+          done

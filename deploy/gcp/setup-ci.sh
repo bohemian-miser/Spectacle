@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # One-time: let GitHub Actions deploy the online arena to Cloud Run on every
-# merge to main, so nobody (human or Claude) needs GCP credentials day to day.
+# merge to main whose CI passes, so nobody (human or Claude) needs GCP
+# credentials day to day.
 #
 # Creates an Artifact Registry repo, a deployer service account with just the
 # roles the workflow needs, and a Workload Identity Federation pool that lets
@@ -122,10 +123,10 @@ Or in one go:
   gh variable set GCP_BRAINS_BUCKET --body '$BUCKET'
   gh variable set GCP_FEEDBACK_BUCKET --body '$FEEDBACK_BUCKET'
 
-The "Deploy online arena to Cloud Run" workflow then runs on every push to
-main (and on demand from the Actions tab) — except a push that only touches
-shared/game/brains/: "Ship bot brains" uploads those to gs://$BUCKET and the
-running servers swap them in, no deploy. Run the deploy once after setting
+The "Deploy online arena to Cloud Run" workflow then deploys every push to
+main once its CI passes (and on demand from the Actions tab) — except a push
+that only touches shared/game/brains/: "Ship bot brains" uploads those to
+gs://$BUCKET and the running servers swap them in, no deploy. Run the deploy once after setting
 GCP_BRAINS_BUCKET or GCP_FEEDBACK_BUCKET so the servers know where to look
 (BOTS_URL, FEEDBACK_URL). Its output prints the service URL;
 put that in the SPECTACLE_ONLINE_URL variable so the Pages build links to it.
