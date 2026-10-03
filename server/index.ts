@@ -48,6 +48,8 @@
  *   STATS_FILE    (unset)    keep those pattern stats in this JSON file across restarts
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts);
  *                            wins over the live tuning (shared/game/brains/tuning.ts)
+ *   EXIT_WITH_PARENT (unset) tests only (tests/server.ts): 1 = exit when stdin
+ *                            closes, i.e. when the test run that started us ends
  *
  * Scaling past one instance: this process holds all its rooms in memory, so it
  * cannot share state with another instance — but it doesn't need to. Every
@@ -1027,15 +1029,17 @@ setInterval(() => guard('heartbeat', () => {
 }), 60_000);
 
 // Cloud Run and docker stop send SIGTERM: finish the running stints so they reach the log and the file.
-for (const sig of ['SIGTERM', 'SIGINT'] as const) {
-  process.once(sig, () => {
-    guard('final stats', () => {
-      logStints(patternStats.finishAll(Date.now()));
-      saveStats();
-    });
-    process.exit(0);
+function shutdown(): void {
+  guard('final stats', () => {
+    logStints(patternStats.finishAll(Date.now()));
+    saveStats();
   });
+  process.exit(0);
 }
+for (const sig of ['SIGTERM', 'SIGINT'] as const) process.once(sig, shutdown);
+// Tests only: tests/server.ts holds the other end of our stdin, and it closes
+// however that test run ends — even a SIGKILL, which leaves no afterAll to stop us.
+if (process.env.EXIT_WITH_PARENT === '1') process.stdin.on('end', shutdown).resume();
 
 // --- hot-loaded brains ------------------------------------------------------------
 

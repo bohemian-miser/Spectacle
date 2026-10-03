@@ -29,7 +29,7 @@ export interface ArenaProps {
   onNewRule(): void;
   /** Leave the arena for the lobby (mode, online or solo, …). */
   onLeave(): void;
-  /** Online, disconnected, and reconnecting hasn't worked for a while. */
+  /** Online, disconnected, and reconnecting hasn't worked for a while (or the server stopped answering). */
   readonly struggling: boolean;
   /** Give up on the online arena and switch to solo. */
   onGiveUp(): void;
@@ -478,13 +478,15 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
         ))}
       </div>
 
-      {!store.connected && (
-        <div className="overlay">
+      {(!store.connected || store.stale) && (
+        // Online only: solo never goes stale. "Not responding" is an open
+        // socket gone quiet (heartbeat.ts): taps would vanish, so say so.
+        <div className="overlay" role="status">
           <div>
-            Reconnecting…
-            {struggling && (
+            {store.connected ? 'Server not responding…' : 'Reconnecting…'}
+            {(struggling || store.stale) && (
               <div className="overlay-fallback">
-                Still trying —{' '}
+                {store.connected ? 'Waiting for it to answer' : 'Still trying'} —{' '}
                 <button type="button" className="btn-link" onClick={onGiveUp}>
                   play bots instead
                 </button>

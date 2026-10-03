@@ -3,29 +3,16 @@
  * ROOM_SIZE humans and the next joiner of that mode opens another. Spawns the
  * real server on a free port.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { GameMode } from '../shared/game/knobs';
 import type { ServerMessage } from '../shared/game/protocol';
 import { defaultRule } from '../shared/game/rule';
+import { startServer, type TestServer } from './server';
 
 const PORT = 19000 + Math.floor(Math.random() * 1000);
 const STATS_KEY = 'test-key';
-let server: ChildProcess;
-
-async function waitForHealth(): Promise<void> {
-  for (let i = 0; i < 100; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/health`);
-      if (r.ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error('server did not come up');
-}
+let server: TestServer;
 
 const sockets: WebSocket[] = [];
 
@@ -45,16 +32,12 @@ async function join(mode?: GameMode, room?: string): Promise<Extract<ServerMessa
 }
 
 beforeAll(async () => {
-  server = spawn('npx', ['tsx', 'server/index.ts'], {
-    env: { ...process.env, PORT: String(PORT), BOTS: '1', FIELD_LEVEL: '3', ROOM_SIZE: '2', STATS_KEY },
-    stdio: 'ignore',
-  });
-  await waitForHealth();
+  server = await startServer(PORT, { BOTS: '1', FIELD_LEVEL: '3', ROOM_SIZE: '2', STATS_KEY });
 }, 30_000);
 
-afterAll(() => {
+afterAll(async () => {
   for (const ws of sockets) ws.close();
-  server?.kill();
+  await server?.stop();
 });
 
 describe('rooms', () => {
@@ -147,5 +130,33 @@ describe('rooms', () => {
     expect(people.reduce((n, row) => n + row.live, 0)).toBeGreaterThan(0);
     const page = await fetch(`http://127.0.0.1:${PORT}/patterns?key=${STATS_KEY}`);
     expect(await page.text()).toContain('Spectacle patterns');
+  });
+});
+
+describe('heartbeat', () => {
+  /** Send a ping on `ws` and wait for its pong (the client's heartbeat counts any message, but this is the one it can count on). */
+  async function ping(ws: WebSocket, n: number): Promise<ServerMessage> {
+    const pong = new Promise<ServerMessage>((resolve) => {
+      const on = (d: WebSocket.RawData): void => {
+        const m = JSON.parse(String(d)) as ServerMessage;
+        if (m.t === 'pong') {
+          ws.off('message', on);
+          resolve(m);
+        }
+      };
+      ws.on('message', on);
+    });
+    ws.send(JSON.stringify({ t: 'ping', n }));
+    return pong;
+  }
+
+  it('answers a ping at once with its number, in the lobby and in a room', async () => {
+    const lobby = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    sockets.push(lobby);
+    await new Promise((r) => lobby.once('open', r));
+    expect(await ping(lobby, 7)).toEqual({ t: 'pong', n: 7 });
+    const { ws } = await join('normal');
+    expect(await ping(ws, 1)).toEqual({ t: 'pong', n: 1 });
+    expect(await ping(ws, 2)).toEqual({ t: 'pong', n: 2 });
   });
 });

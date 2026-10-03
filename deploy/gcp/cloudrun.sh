@@ -24,6 +24,12 @@ MAX_INSTANCES="${MAX_INSTANCES:-30}"
 MEMORY="${MEMORY:-1Gi}"
 MAX_INSTANCE_PLAYERS="${MAX_INSTANCE_PLAYERS:-400}"
 CONCURRENCY="${CONCURRENCY:-500}"
+# Probes on /health, the same as .github/workflows/deploy-cloudrun.yml (the
+# reasons are there): up to 240 s to start, then restarted after ~30 s of not
+# answering. /health, not /healthz: Cloud Run's front end keeps paths ending
+# in z for itself.
+STARTUP_PROBE="httpGet.path=/health,periodSeconds=2,timeoutSeconds=1,failureThreshold=120"
+LIVENESS_PROBE="httpGet.path=/health,periodSeconds=10,timeoutSeconds=5,failureThreshold=3"
 cd "$(dirname "$0")/../.."
 
 gcloud run deploy "$NAME" \
@@ -36,6 +42,8 @@ gcloud run deploy "$NAME" \
   --cpu 1 --memory "$MEMORY" \
   --cpu-boost \
   --session-affinity \
+  --startup-probe "$STARTUP_PROBE" \
+  --liveness-probe "$LIVENESS_PROBE" \
   --set-env-vars "BOTS=$BOTS,FIELD_FAMILY=${FIELD_FAMILY:-hex},FIELD_LEVEL=${FIELD_LEVEL:-5},MAX_INSTANCE_PLAYERS=$MAX_INSTANCE_PLAYERS${KNOBS:+,$KNOBS}"
 
 echo
