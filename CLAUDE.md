@@ -136,11 +136,21 @@ scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
-                  solo), publish.yml (GHCR image), pages.yml (solo build),
-                  deploy-cloudrun.yml (skipped until GCP_PROJECT var is set;
-                  skips itself when a push touches nothing in the image:
-                  brains/, .github/, .gemini/, docs/, *.md), brains.yml
-                  (ships brains/ to GCS; skipped until GCP_BRAINS_BUCKET),
+                  solo). The three deploys, publish.yml (GHCR image; the VM's
+                  Watchtower pulls it), pages.yml (solo build) and
+                  deploy-cloudrun.yml, each start with wait-for-ci.yml: on a
+                  push it waits for ci.yml's push run on the same commit and
+                  deploys only if it passed (#83 shipped a failing build when
+                  they ran beside CI). CI failed: the run goes red; cancelled
+                  (a newer push supersedes it): no deploy, the run stays
+                  green. A manual run isn't gated. deploy-cloudrun.yml is
+                  skipped until the GCP_PROJECT var is set, and skips itself
+                  when nothing in the image changed since the live commit (the
+                  newest successful online-arena deployment, not the push's
+                  `before`): brains/ once hot, tests/, scripts/, .github/ but
+                  itself, .gemini/, docs/, *.md. brains.yml (ships brains/ to
+                  GCS after its own typecheck and tests; skipped until
+                  GCP_BRAINS_BUCKET),
                   feedback-triage.yml (feedback → issues, every 5 min;
                   skipped until GCP_FEEDBACK_BUCKET), gemini-agent.yml
                   (owner labels an issue agent-ready → Gemini PR; trusted
@@ -166,7 +176,8 @@ npm run servers          # who is on which instance (gcloud login); --url for on
 ```
 
 Push to a `claude/...` branch, open a PR; CI must be green. Merging to main
-publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
+publishes the image, deploys Pages, and (once configured) deploys Cloud Run,
+each only after CI passes on that merge commit (wait-for-ci.yml).
 
 ## Settled decisions (don't relitigate without the owner)
 
