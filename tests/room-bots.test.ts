@@ -2,12 +2,12 @@
  * Players choose a room's bots (the arena's Bots panel → `bots` message):
  * anyone in the room may, it applies to everyone, and the server caps it.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import { cleanBotMix } from '../shared/game/bots';
 import type { GameEvent, ServerMessage } from '../shared/game/protocol';
 import { defaultRule } from '../shared/game/rule';
+import { startServer, type TestServer } from './server';
 
 describe('cleanBotMix', () => {
   const kinds = ['wanderer', 'hunter'];
@@ -25,28 +25,16 @@ describe('cleanBotMix', () => {
 
 describe('a room’s bots, set by its players', () => {
   const PORT = 22000 + Math.floor(Math.random() * 1000);
-  let server: ChildProcess;
+  let server: TestServer;
   const sockets: WebSocket[] = [];
 
   beforeAll(async () => {
-    server = spawn('npx', ['tsx', 'server/index.ts'], {
-      env: { ...process.env, PORT: String(PORT), BOTS: '1', FIELD_LEVEL: '3', ROOM_MAX_BOTS: '4', ROOM_MAX_BOTS_PER_KIND: '2' },
-      stdio: 'ignore',
-    });
-    for (let i = 0; i < 100; i++) {
-      try {
-        if ((await fetch(`http://127.0.0.1:${PORT}/healthz`)).ok) return;
-      } catch {
-        /* not up yet */
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    throw new Error('server did not come up');
+    server = await startServer(PORT, { BOTS: '1', FIELD_LEVEL: '3', ROOM_MAX_BOTS: '4', ROOM_MAX_BOTS_PER_KIND: '2' });
   }, 30_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     for (const ws of sockets) ws.close();
-    server?.kill();
+    await server?.stop();
   });
 
   async function join(name: string) {

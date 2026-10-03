@@ -279,7 +279,9 @@ flowchart LR
   B1 <-- "WebSocket /ws<br/>events + resume tokens" --> CR
   PG -. static files .-> B2
   CI --> PUB
-  DEP -- "build + deploy on merge to main" --> CR
+  CI --> DEP
+  CI --> PG
+  DEP -- "build + deploy on merge to main,<br/>once CI passes" --> CR
 ```
 
 - **One authoritative server.** Node + [`ws`](https://github.com/websockets/ws)
@@ -293,9 +295,9 @@ flowchart LR
   reconnects and resumes the same player with a single-use token (kept for 5
   minutes). With several instances that resume, and `?room=` invite links,
   depend on reaching the same one — see the caveat below.
-- **Keyless CI.** Every merge to `main` builds the image and deploys it through
-  Workload Identity Federation pinned to this repository — there is no
-  service-account key anywhere.
+- **Keyless CI.** Every merge to `main` whose CI passes builds the image and
+  deploys it through Workload Identity Federation pinned to this repository —
+  there is no service-account key anywhere.
 - **Pages.** The same engine and bots compiled into a static, solo-only build.
 - **Feedback.** The in-game Feedback button lands reports in a private
   bucket; every five minutes a Gemini agent files them as GitHub issues, and
@@ -436,7 +438,8 @@ once; it creates a deployer service account, a Workload Identity pool that only
 this repo may use, and prints the GitHub variables to add. Nothing it prints is
 secret — GitHub's OIDC token is swapped for a short-lived GCP one at deploy
 time, so there is no key to leak or rotate. From then on every merge to `main`
-builds the image and deploys it (`.github/workflows/deploy-cloudrun.yml`) —
+builds the image and deploys it once that commit's CI has passed
+(`.github/workflows/deploy-cloudrun.yml`) —
 nobody needs GCP credentials day to day, and the workflow is skipped until
 `GCP_PROJECT` is set.
 `./deploy/gcp/cloudrun.sh` does the same by hand from a laptop. Either way:
@@ -459,6 +462,16 @@ and the recent log (the same lines go to Cloud Run's logs). Every merge to
 board, so merge when nobody is playing. The exception is a merge that only
 changes bot brains, which goes live without a redeploy (see "Bots without a
 deploy").
+
+*If an instance freezes.* Cloud Run asks every instance for `/health`, which
+is answered on the same thread that runs the game. A startup probe gives a
+new instance up to four minutes to build its field (about ten seconds), then
+a liveness probe asks every ten seconds and restarts the instance after
+three misses in a row, about half a minute of no answer. Everyone on it is
+dropped and reconnects as a new player (the rooms went with the instance),
+which beats an instance that holds on to its players while answering
+nothing. A pause of a few seconds, or even twenty, doesn't trip it. Both
+deploy paths set the same probes.
 
 *Which patterns people play.* Set `STATS_KEY` and `/patterns?key=…` shows, per
 rule and mode, how many stints (one player on one rule) it had, the time spent
@@ -487,8 +500,9 @@ through; Firebase Hosting in front would not. Finally set
 anyway and there is nothing to scale down; it just keeps the arena warm.
 
 1. Merges to `main` publish the image to `ghcr.io/bohemian-miser/spectacle`
-   (`.github/workflows/publish.yml`). Make that package **public** once in the
-   repo's Packages settings so the VM can pull it without credentials.
+   once their CI passes (`.github/workflows/publish.yml`). Make that package
+   **public** once in the repo's Packages settings so the VM can pull it
+   without credentials.
 2. With `gcloud` logged in and a project selected:
    ```bash
    ./deploy/gcp/create-vm.sh                                  # HTTP on the VM's IP

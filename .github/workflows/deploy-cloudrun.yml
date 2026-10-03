@@ -1,4 +1,6 @@
-# Deploy the online arena to Cloud Run on every merge to main.
+# Deploy the online arena to Cloud Run on every merge to main, once that
+# commit's CI has passed (wait-for-ci.yml: a push whose CI fails deploys
+# nothing; a manual run isn't gated).
 # Needs the variables that deploy/gcp/setup-ci.sh prints; until GCP_PROJECT
 # is set the job is skipped, so the workflow is harmless.
 #
@@ -23,14 +25,31 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci:
+    uses: ./.github/workflows/wait-for-ci.yml
+    permissions:
+      actions: read
+
   # A push that changes nothing the servers run needs no deploy, which would
   # start fresh instances (every board reset) for nothing: agent briefs and
-  # workflows (.github/, .gemini/; this file excepted), docs/ and top-level
-  # Markdown aren't in the image. Nor is shared/game/brains/ once hot brains
-  # are set up (GCP_BRAINS_BUCKET): the "Ship bot brains" workflow hands
-  # those to the running servers. A manual run always deploys.
+  # workflows (.github/, .gemini/; this file excepted), docs/, tests/,
+  # scripts/ and top-level Markdown aren't in the image (the Dockerfile's
+  # final stage holds dist/ built from client/ and shared/, plus shared/,
+  # server/, tsconfig.json and package*.json). Nor is shared/game/brains/ once
+  # hot brains are set up (GCP_BRAINS_BUCKET): the "Ship bot brains" workflow
+  # hands those to the running servers. A manual run always deploys.
+  #
+  # "Changed" is measured from what is live: the commit of the newest
+  # online-arena deployment that succeeded (the deploy job's `environment`
+  # records one per deploy), not the push's `before`. A commit whose CI failed
+  # or was cancelled isn't deployed, so `before` may never have gone out, and
+  # a docs-only push after it would skip what it carried. Can't tell what is
+  # live (no deployment, API error, commit not fetched): deploy.
   changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      deployments: read
     outputs:
       deploy: ${{ steps.diff.outputs.deploy }}
     steps:
@@ -39,24 +58,36 @@ jobs:
           fetch-depth: 0
       - id: diff
         env:
-          BEFORE: ${{ github.event.before }}
+          GH_TOKEN: ${{ github.token }}
           HOT: ${{ vars.GCP_BRAINS_BUCKET != '' }}
         run: |
           deploy=true
-          if [ "$GITHUB_EVENT_NAME" = push ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
-            outside='^(\.github/|\.gemini/|docs/|[^/]+\.md$)'
-            [ "$HOT" = true ] && outside='^(shared/game/brains/|\.github/|\.gemini/|docs/|[^/]+\.md$)'
-            files=$(git diff --name-only "$BEFORE" "$GITHUB_SHA")
-            if ! echo "$files" | grep -Evq "$outside" && ! echo "$files" | grep -q '^\.github/workflows/deploy-cloudrun\.yml$'; then
-              deploy=false
-              echo "Nothing the servers run changed (brains go live through Ship bot brains): no deploy."
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            # Deployments come newest first, and so do each one's statuses.
+            live=$(gh api "repos/$GITHUB_REPOSITORY/deployments?environment=online-arena&per_page=50" \
+                     --jq '.[] | "\(.id) \(.sha)"' |
+                   while read -r id sha; do
+                     state=$(gh api "repos/$GITHUB_REPOSITORY/deployments/$id/statuses?per_page=1" --jq '.[0].state')
+                     if [ "$state" = success ]; then echo "$sha"; break; fi
+                   done) || live=
+            if [ -n "$live" ] && git cat-file -e "$live^{commit}" 2>/dev/null; then
+              echo "Live: $live"
+              outside='^(\.github/|\.gemini/|docs/|tests/|scripts/|[^/]+\.md$)'
+              [ "$HOT" = true ] && outside='^(shared/game/brains/|\.github/|\.gemini/|docs/|tests/|scripts/|[^/]+\.md$)'
+              files=$(git diff --name-only "$live" "$GITHUB_SHA")
+              if ! echo "$files" | grep -Evq "$outside" && ! echo "$files" | grep -q '^\.github/workflows/deploy-cloudrun\.yml$'; then
+                deploy=false
+                echo "Nothing the servers run changed since $live (brains go live through Ship bot brains): no deploy."
+              fi
+            else
+              echo "Can't tell which commit is live ('$live'): deploying."
             fi
           fi
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
 
   deploy:
-    needs: changes
-    if: vars.GCP_PROJECT != '' && needs.changes.outputs.deploy == 'true'
+    needs: [ci, changes]
+    if: vars.GCP_PROJECT != '' && needs.ci.outputs.passed == 'true' && needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     environment:
       name: online-arena
@@ -98,6 +129,15 @@ jobs:
           # concurrency is open sockets per instance: a little above
           # MAX_INSTANCE_PLAYERS (lobby sockets count too), so Cloud Run
           # sends new connections elsewhere before the cap has to refuse them.
+          # The probes restart an instance whose event loop is stuck: /health
+          # runs on the game's loop, so a frozen process (a bot brain once
+          # blocked one for minutes while session affinity kept sending
+          # players to it) stops answering. Startup: every 2 s for up to
+          # 240 s, as long as Cloud Run's default TCP probe allowed (the port
+          # opens only once the field is built, ~10 s at level 6). Liveness:
+          # every 10 s, 5 s timeout, killed after 3 misses in a row, so ~30 s
+          # frozen; a stall under ~25 s never trips it. deploy/gcp/cloudrun.sh
+          # sets the same.
           flags: >-
             --allow-unauthenticated
             --min-instances=${{ vars.SPECTACLE_MIN_INSTANCES || '0' }}
@@ -106,6 +146,8 @@ jobs:
             --cpu=1 --memory=${{ vars.SPECTACLE_MEMORY || '1Gi' }}
             --cpu-boost
             --session-affinity
+            --startup-probe=httpGet.path=/health,periodSeconds=2,timeoutSeconds=1,failureThreshold=120
+            --liveness-probe=httpGet.path=/health,periodSeconds=10,timeoutSeconds=5,failureThreshold=3
           env_vars: |
             BOTS=${{ vars.SPECTACLE_BOTS || '1' }}
             FIELD_FAMILY=${{ vars.SPECTACLE_FIELD_FAMILY || 'hex' }}

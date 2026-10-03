@@ -138,11 +138,21 @@ scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
                   (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
-                  solo), publish.yml (GHCR image), pages.yml (solo build),
-                  deploy-cloudrun.yml (skipped until GCP_PROJECT var is set;
-                  skips itself when a push touches nothing in the image:
-                  brains/, .github/, .gemini/, docs/, *.md), brains.yml
-                  (ships brains/ to GCS; skipped until GCP_BRAINS_BUCKET),
+                  solo). The three deploys, publish.yml (GHCR image; the VM's
+                  Watchtower pulls it), pages.yml (solo build) and
+                  deploy-cloudrun.yml, each start with wait-for-ci.yml: on a
+                  push it waits for ci.yml's push run on the same commit and
+                  deploys only if it passed (#83 shipped a failing build when
+                  they ran beside CI). CI failed: the run goes red; cancelled
+                  (a newer push supersedes it): no deploy, the run stays
+                  green. A manual run isn't gated. deploy-cloudrun.yml is
+                  skipped until the GCP_PROJECT var is set, and skips itself
+                  when nothing in the image changed since the live commit (the
+                  newest successful online-arena deployment, not the push's
+                  `before`): brains/ once hot, tests/, scripts/, .github/ but
+                  itself, .gemini/, docs/, *.md. brains.yml (ships brains/ to
+                  GCS after its own typecheck and tests; skipped until
+                  GCP_BRAINS_BUCKET),
                   feedback-triage.yml (feedback → issues, every 5 min;
                   skipped until GCP_FEEDBACK_BUCKET), gemini-agent.yml
                   (owner labels an issue agent-ready → Gemini PR; trusted
@@ -168,7 +178,8 @@ npm run servers          # who is on which instance (gcloud login); --url for on
 ```
 
 Push to a `claude/...` branch, open a PR; CI must be green. Merging to main
-publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
+publishes the image, deploys Pages, and (once configured) deploys Cloud Run,
+each only after CI passes on that merge commit (wait-for-ci.yml).
 
 ## Settled decisions (don't relitigate without the owner)
 
@@ -545,7 +556,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
   and most players are in North America). Cloud Run (scale to zero) via CI is
   the intended path; the free e2-micro VM is the alternative. Session resume
-  covers Cloud Run's hourly WebSocket cap.
+  covers Cloud Run's hourly WebSocket cap. Cloud Run probes `/health` (set
+  in both deploy-cloudrun.yml's `flags` and cloudrun.sh; keep them in step):
+  a startup probe (every 2 s, up to 240 s, as long as the default TCP probe
+  gave; the port opens only after the field build, ~10 s at level 6 on the
+  Pi) and a liveness probe (every 10 s, 5 s timeout, 3 misses), so a process
+  whose event loop is stuck ~30 s is killed and replaced, dropping its rooms.
+  It exists because a bot brain once froze an instance for minutes and
+  session affinity kept sending players to it. So `/health` must stay cheap
+  and stay on the game's own loop (moving it off would hide a freeze); a
+  stall under ~25 s never trips it.
 - **Custom domain** = a Cloud Run domain mapping (`deploy/gcp/domain.sh`),
   bought from an outside registrar (Cloudflare suggested), records DNS-only.
   Not a load balancer (standing cost kills scale-to-zero), not Firebase
@@ -734,6 +754,14 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   reconnect fired straight after `ws.close()` legitimately got a new player.
   The test waits for the closing handshake and a round-trip now; keep that if
   you touch it.
+- **A test that needs the real server uses `tests/server.ts`** (`startServer`,
+  then `await server.stop()` in `afterAll`), never `spawn('npx', ['tsx', …])`:
+  `kill()` on that hits npx, and the server under it ran on under init — every
+  run leaked some (87 on the Pi at once, ~1.4 GB, other tests timing out "under
+  load"). The helper runs node itself (`--import tsx`), and a run killed
+  outright can't leak either: the server exits when its stdin from the worker
+  closes (`EXIT_WITH_PARENT`), and `tests/setup.ts` takes the worker down when
+  vitest goes (a fork worker otherwise spins on under init).
 
 ## Verification bar before pushing
 
