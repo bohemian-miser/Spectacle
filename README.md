@@ -363,9 +363,9 @@ its players' choice for as long as it lasts, even when new bot brains or a
 | **Rotator** | a wanderer that switches to a new rule every ~5 minutes (`BOT_ROTATE_MS`, ±25%) |
 | **Hunter** | picks on the leader: looks ~40 steps ahead from the tiles round their lines and taps where its line would hit theirs soonest |
 | **Farmer** | a rule that reliably closes small loops, a quiet corner of the board, and only taps where both ways round close without touching anyone |
-| **Bridge** | a rule that draws long thin lines; plans one through the busiest stretch of board and keeps tapping its middle — rebuilding what gets cut, cutting what's in the way, and turning a half that ran off the edge round so it can finish as an edge-to-edge claim |
+| **Bridge** | every edge class on, combination all zeros; edge-to-edge claims, nested: a short one across a corner first (under 20 steps), then the line that spans it, outwards — each tapped from its middle until it closes, turning a half that ran off the edge round. It plans from an index of the field's edge, traced a slice a tick |
 
-The farmer's and bridge's rules come from a scout that tries a spread of
+The farmer's rule comes from a scout that tries a spread of
 clean rules on the field once (~0.2 s at hex level 6, at startup).
 `npx tsx scripts/bot-arena.ts bridge,hunter:2 5 5` plays bots against each
 other headless for 5 simulated minutes and prints scores, circuits,

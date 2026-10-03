@@ -27,9 +27,10 @@
 
 import type { BotContext, BotMix, BrainSet } from '../bots';
 import type { Field } from '../field';
-import { BOT_INFO, BOT_KINDS, botName, makeBot, type BotKind } from './kinds';
+import { chordTableFor } from '../strand';
+import { BOT_INFO, BOT_KINDS, botName, bridgeRule, makeBot, type BotKind } from './kinds';
 import { LIVE_MIX } from './mix';
-import { fieldFrame, scoutFor } from './sense';
+import { edgeIndexFor, fieldFrame, scoutFor } from './sense';
 import { BOT_TUNING, TUNING } from './tuning';
 
 export { BOT_INFO, BOT_KINDS, BOT_TUNING, TUNING, type BotKind };
@@ -53,6 +54,8 @@ export const brains: BrainSet = {
     return makeBot(kind, id, ctx);
   },
   prepare(field: Field, mix: BotMix) {
+    // A bridge's edge index (well under a second at hex level 6); bridges added later trace it a slice a tick.
+    if (mix.bridge) edgeIndexFor(field, chordTableFor(field, bridgeRule(field.family))).work(Infinity);
     if (!(mix.farmer || mix.bridge)) return;
     fieldFrame(field);
     const scout = scoutFor(field);

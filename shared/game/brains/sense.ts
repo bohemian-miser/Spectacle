@@ -8,10 +8,10 @@
 
 import { validEdgeSubsets, type Pt } from '../../tiles';
 import type { Engine, Path } from '../engine';
-import { tileAt, tileCenter, type Field, fieldOutline, pointSegDist2, onFieldBoundary } from '../field';
+import { onFieldBoundary, pointSegDist2, tileAt, tileCenter, tileNeighbours, tilePolygon, type Field } from '../field';
 import { isInfiniteLineRule, randomMatching, ruleKey, type PlayerRule } from '../rule';
 import { mulberry32, type Rng } from '../rng';
-import { chordTableFor, chordsConflict, randomJunctionPicker, startStep, stepForward, tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
+import { chordTableFor, chordsConflict, continuations, randomJunctionPicker, startStep, stepForward, tileChords, walkStrand, worldChord, type ChordTable, type WalkStep } from '../strand';
 
 export { isInfiniteLineRule };
 
@@ -257,82 +257,249 @@ export function probe(engine: Engine, me: string, table: ChordTable, tile: numbe
   }
 }
 
-// --- edge indices for bridges ----------------------------------------------------
+// --- the field's edge, for bridges -------------------------------------------------
 
+/**
+ * A chord end on the field's edge with nothing behind it: a line started
+ * there runs inward, leaving by `exitEnd`, and a line that reaches it has run
+ * off the board — the engine's edge-to-edge claim (`startsAtEdge`).
+ */
 export interface EdgeStart {
   readonly tile: number;
   readonly chord: number;
   readonly exitEnd: 0 | 1;
-  readonly pos: number;
 }
 
-export function edgeStarts(field: Field, table: ChordTable): EdgeStart[] {
-  const ring = fieldOutline(field);
-  const n = ring.length;
-  const starts: EdgeStart[] = [];
+/** What tracing one tile edge of the field's outline costs, in walk steps. */
+const EDGE_COST = 8;
+/** And starting a walk, in steps. */
+export const WALK_COST = 4;
 
-  const ringPos = (p: Pt): number => {
-    let best = -1;
-    let bestD = 1e-4;
-    for (let k = 0; k < n; k++) {
-      const d = pointSegDist2(p, ring[k], ring[(k + 1) % n]);
-      if (d < bestD) {
-        bestD = d;
-        best = k;
-      }
-    }
-    if (best < 0) return 0;
-    const a = ring[best];
-    const b = ring[(best + 1) % n];
-    const len2 = (b.x - a.x) ** 2 + (b.y - a.y) ** 2;
-    if (len2 < 1e-6) return best;
-    const t = ((p.x - a.x) * (b.x - a.x) + (p.y - a.y) * (b.y - a.y)) / len2;
-    return best + Math.max(0, Math.min(1, t));
-  };
+function samePt(a: Pt, b: Pt): boolean {
+  return Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4;
+}
 
-  for (let t = 0; t < field.count; t++) {
-    const chords = tileChords(field, table, t);
-    for (let c = 0; c < chords.length; c++) {
-      const chord = chords[c];
-      if (onFieldBoundary(field, t, chord[0])) starts.push({ tile: t, chord: c, exitEnd: 1, pos: ringPos(chord[0]) });
-      if (onFieldBoundary(field, t, chord[1])) starts.push({ tile: t, chord: c, exitEnd: 0, pos: ringPos(chord[1]) });
-    }
+interface EdgeAt {
+  readonly tile: number;
+  /** Edge `k` of the tile's polygon, traced from `from` to `to`. */
+  readonly k: number;
+  readonly from: Pt;
+  readonly to: Pt;
+}
+
+/**
+ * The edge index: every edge start of one rule, numbered in order round the
+ * field's edge, and the number of a chord end (`numberOf`). Traced along the
+ * outline a tile edge at a time, `work(budget)` a slice — a level-6 board's
+ * edge is ~29k tile edges, a second or more all told, so no tick pays for it
+ * (and nothing here leans on `fieldOutline`, whose cache a hot-loaded build
+ * can't share). One per field and rule: every bot shares it (`edgeIndexFor`).
+ */
+export class EdgeIndex {
+  readonly starts: EdgeStart[] = [];
+  private readonly numbers = new Map<number, number>();
+  private first: EdgeAt | null = null;
+  private cur: EdgeAt | null = null;
+  private traced = 0;
+  private finished = false;
+  /** Outlines of the tiles round the last few edges traced: the next edge's are mostly the same. */
+  private readonly polys = new Map<number, readonly Pt[]>();
+
+  constructor(
+    readonly field: Field,
+    readonly table: ChordTable,
+  ) {}
+
+  get done(): boolean {
+    return this.finished;
   }
 
-  starts.sort((a, b) => a.pos - b.pos);
-  return starts;
-}
+  /** The number of the start at end `end` of chord `chord` of `tile`, or -1 (that end isn't on the edge). */
+  numberOf(tile: number, chord: number, end: 0 | 1): number {
+    return this.numbers.get((tile * 64 + chord) * 2 + end) ?? -1;
+  }
 
-export function lineEndIndex(field: Field, table: ChordTable, starts: EdgeStart[], index: number): { endIndex: number, steps: readonly WalkStep[] } | null {
-  const start = starts[index];
-  if (!start) return null;
-  const out = walkStrand(field, table, start.tile, start.chord, start.exitEnd, 10000, o => o[0]);
-  if (out.closed || out.steps.length === 0) return null;
-  
-  const lastStep = out.steps[out.steps.length - 1];
-  const lastChord = tileChords(field, table, lastStep.tile)[lastStep.chord];
-  
-  if (!onFieldBoundary(field, lastStep.tile, lastStep.b)) return null;
-  
-  for (let i = 0; i < starts.length; i++) {
-    const s = starts[i];
-    if (s.tile === lastStep.tile && s.chord === lastStep.chord) {
-      const entryPt = s.exitEnd === 1 ? lastChord[0] : lastChord[1];
-      if (Math.abs(entryPt.x - lastStep.b.x) < 1e-4 && Math.abs(entryPt.y - lastStep.b.y) < 1e-4) {
-        return { endIndex: i, steps: out.steps };
+  /** Trace about `budget` walk steps' worth more. True once the whole edge is indexed. */
+  work(budget: number): boolean {
+    while (budget > 0 && !this.finished) {
+      if (!this.cur) {
+        this.cur = this.first = this.firstEdge();
+        budget -= this.field.count >> 10;
+        if (!this.cur) this.finished = true;
+        continue;
+      }
+      this.collect(this.cur);
+      budget -= EDGE_COST;
+      const next = this.nextEdge(this.cur);
+      if (!next || (next.tile === this.first!.tile && next.k === this.first!.k) || ++this.traced > this.field.count * 8) {
+        this.finished = true;
+        this.cur = null;
+      } else this.cur = next;
+    }
+    return this.finished;
+  }
+
+  /** An outline edge of the leftmost tile (nothing lies left of it). */
+  private firstEdge(): EdgeAt | null {
+    const field = this.field;
+    let left = -1;
+    let minX = Infinity;
+    for (let i = 0; i < field.count; i++) {
+      const x = field.centers[i * 2];
+      if (x < minX) {
+        minX = x;
+        left = i;
       }
     }
+    if (left < 0) return null;
+    const poly = tilePolygon(field, left);
+    for (let k = 0; k < poly.length; k++) {
+      const next = this.edgeFrom(left, poly[k], -1);
+      if (next) return next;
+    }
+    return null;
   }
-  return null;
+
+  /** The outline edge that carries on from `e`'s far end. */
+  private nextEdge(e: EdgeAt): EdgeAt | null {
+    return this.edgeFrom(e.tile, e.to, e.k);
+  }
+
+  /**
+   * An outline edge at corner `q` of tile `tile` other than that tile's edge
+   * `skip` — one no other tile shares — the same way round as the tile's
+   * own edges where there's a choice. Every tile at `q` is `tile` or a
+   * (vertex) neighbour of it.
+   */
+  private edgeFrom(tile: number, q: Pt, skip: number): EdgeAt | null {
+    const field = this.field;
+    const at: { tile: number; k: number; other: Pt; forward: boolean }[] = [];
+    if (this.polys.size > 256) this.polys.clear();
+    const scan = (t: number): void => {
+      let poly = this.polys.get(t);
+      if (!poly) this.polys.set(t, (poly = tilePolygon(field, t)));
+      const m = poly.length;
+      for (let k = 0; k < m; k++) {
+        const u = poly[k];
+        const v = poly[(k + 1) % m];
+        if (samePt(u, q)) at.push({ tile: t, k, other: v, forward: true });
+        else if (samePt(v, q)) at.push({ tile: t, k, other: u, forward: false });
+      }
+    };
+    scan(tile);
+    for (const n of tileNeighbours(field, tile)) scan(n);
+    let fallback: EdgeAt | null = null;
+    for (const x of at) {
+      if (x.tile === tile && x.k === skip) continue;
+      if (at.some((y) => y.tile !== x.tile && samePt(y.other, x.other))) continue;
+      const next = { tile: x.tile, k: x.k, from: q, to: x.other };
+      if (x.forward) return next;
+      fallback ??= next;
+    }
+    return fallback;
+  }
+
+  /** Number the edge starts on `e`, in order along it. */
+  private collect(e: EdgeAt): void {
+    const { field, table } = this;
+    const found: { key: number; along: number; start: EdgeStart }[] = [];
+    const dx = e.to.x - e.from.x;
+    const dy = e.to.y - e.from.y;
+    const chords = tileChords(field, table, e.tile).length;
+    for (let c = 0; c < chords; c++) {
+      const w = worldChord(field, table, e.tile, c);
+      for (const end of [0, 1] as const) {
+        const p = w[end];
+        const key = (e.tile * 64 + c) * 2 + end;
+        if (this.numbers.has(key) || pointSegDist2(p, e.from, e.to) > 1e-6) continue;
+        if (!onFieldBoundary(field, e.tile, p) || continuations(field, table, e.tile, c, p).length > 0) continue;
+        found.push({ key, along: (p.x - e.from.x) * dx + (p.y - e.from.y) * dy, start: { tile: e.tile, chord: c, exitEnd: end === 0 ? 1 : 0 } });
+      }
+    }
+    found.sort((a, b) => a.along - b.along);
+    for (const f of found) {
+      this.numbers.set(f.key, this.starts.length);
+      this.starts.push(f.start);
+    }
+  }
 }
 
-export function isBridgeClosed(engine: Engine, playerId: string, startStep: WalkStep): boolean {
-  const p = engine.players.get(playerId);
-  if (!p) return false;
-  for (const q of p.paths) {
-    if (q.status === 'closed') {
-      if (q.steps.some(s => s.tile === startStep.tile && s.chord === startStep.chord)) return true;
+const edgeIndexes = new WeakMap<Field, Map<string, EdgeIndex>>();
+
+/** The field's edge index for `table` (shared; it may not be `done` yet — `work` it). */
+export function edgeIndexFor(field: Field, table: ChordTable): EdgeIndex {
+  let byRule = edgeIndexes.get(field);
+  if (!byRule) edgeIndexes.set(field, (byRule = new Map()));
+  let index = byRule.get(table.key);
+  if (!index) byRule.set(table.key, (index = new EdgeIndex(field, table)));
+  return index;
+}
+
+/**
+ * The line from edge start `from` walked to where it meets the edge again, a
+ * slice at a time (`work`). `end` is that start's number in the index; null
+ * when the line isn't a bridge (it closes on itself, forks, or runs past
+ * `limit` steps); undefined while still walking.
+ */
+export class EdgeWalk {
+  readonly steps: WalkStep[] = [];
+  end: number | null | undefined = undefined;
+  private readonly seen = new Set<number>();
+
+  constructor(
+    private readonly index: EdgeIndex,
+    readonly from: number,
+    private readonly limit: number,
+  ) {
+    const s = index.starts[from];
+    if (!s) {
+      this.end = null;
+      return;
     }
+    this.steps.push(startStep(index.field, index.table, s.tile, s.chord, s.exitEnd));
+    this.seen.add(s.tile * 64 + s.chord);
+  }
+
+  /** Walk up to `budget` more steps; returns how many it took. */
+  work(budget: number): number {
+    const { field, table } = this.index;
+    let n = 0;
+    while (this.end === undefined && n < budget) {
+      n++;
+      const cur = this.steps[this.steps.length - 1];
+      const out = stepForward(field, table, cur);
+      if (out.kind === 'dead') {
+        const w = worldChord(field, table, cur.tile, cur.chord);
+        const at = this.index.numberOf(cur.tile, cur.chord, samePt(w[0], cur.b) ? 0 : 1);
+        this.end = at >= 0 && at !== this.from ? at : null;
+      } else if (out.kind === 'junction' || this.steps.length >= this.limit) this.end = null;
+      else {
+        const k = out.step.tile * 64 + out.step.chord;
+        if (this.seen.has(k)) this.end = null;
+        else {
+          this.seen.add(k);
+          this.steps.push(out.step);
+        }
+      }
+    }
+    return n;
+  }
+}
+
+/** Has `me` closed a line along the whole of `steps` (it holds both its end chords)? */
+export function isBridgeClosed(engine: Engine, me: string, steps: readonly WalkStep[]): boolean {
+  if (steps.length === 0) return false;
+  const first = steps[0];
+  const last = steps[steps.length - 1];
+  for (const q of engine.pathsOn(first.tile)) {
+    if (q.owner !== me || q.status !== 'closed') continue;
+    let a = false;
+    let b = false;
+    for (const s of q.steps) {
+      if (s.tile === first.tile && s.chord === first.chord) a = true;
+      if (s.tile === last.tile && s.chord === last.chord) b = true;
+    }
+    if (a && b) return true;
   }
   return false;
 }
