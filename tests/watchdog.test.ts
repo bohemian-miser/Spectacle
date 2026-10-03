@@ -9,7 +9,7 @@
  * tests neither busy-wait nor depend on the machine's speed — except the
  * live server's, which busy-waits for real: that is what it is there to see.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
+import { startServer, type TestServer } from './server';
 import { mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -269,8 +269,8 @@ function serve(dir: string): Server {
 }
 
 describe('a live server with a brain that hogs the loop', () => {
-  const PORT = 23000 + Math.floor(Math.random() * 1000);
-  let server: ChildProcess;
+  const PORT = 25000 + Math.floor(Math.random() * 1000); // a band of its own (tests/*.test.ts)
+  let server: TestServer;
   let http: Server;
   let dir: string;
   let ws: WebSocket;
@@ -280,26 +280,12 @@ describe('a live server with a brain that hogs the loop', () => {
     http = serve(dir);
     await new Promise<void>((r) => http.listen(0, '127.0.0.1', r));
     const bucket = `http://127.0.0.1:${(http.address() as { port: number }).port}/`;
-    // Node itself (not npx), so killing it stops the server.
-    server = spawn(process.execPath, ['--import', 'tsx', 'server/index.ts'], {
-      cwd: ROOT,
-      env: { ...process.env, PORT: String(PORT), BOTS: '1', FIELD_LEVEL: '3', BOTS_URL: bucket, BOTS_POLL_MS: '200', BOT_WATCHDOG_HARD_MS: '100' },
-      stdio: 'ignore',
-    });
-    for (let i = 0; i < 150; i++) {
-      try {
-        if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) return;
-      } catch {
-        /* not up yet */
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    throw new Error('server did not come up');
+    server = await startServer(PORT, { BOTS: '1', FIELD_LEVEL: '3', BOTS_URL: bucket, BOTS_POLL_MS: '200', BOT_WATCHDOG_HARD_MS: '100' });
   }, 30_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     ws?.close();
-    server?.kill();
+    await server?.stop();
     http?.close();
     rmSync(dir, { recursive: true, force: true });
   });
