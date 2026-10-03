@@ -4,7 +4,7 @@
  * shouldn't), and the triage CLI's pull → mark → apply round. Spawns the real
  * server and the real CLI against a directory store.
  */
-import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
+import { spawnSync } from 'node:child_process';
 import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +21,7 @@ import {
   toTriageItem,
   type FeedbackRecord,
 } from '../server/feedback';
+import { startServer, type TestServer } from './server';
 
 const noToken = async (): Promise<string | null> => null;
 
@@ -174,27 +175,15 @@ describe('POST /feedback on the real server', () => {
   const PORT = 21000 + Math.floor(Math.random() * 1000);
   const url = `http://127.0.0.1:${PORT}/feedback`;
   let dir: string;
-  let server: ChildProcess;
+  let server: TestServer;
 
   beforeAll(async () => {
     dir = mkdtempSync(join(tmpdir(), 'feedback-server-'));
-    server = spawn('npx', ['tsx', 'server/index.ts'], {
-      env: { ...process.env, PORT: String(PORT), BOTS: '0', FIELD_LEVEL: '3', FEEDBACK_URL: dir, FEEDBACK_PER_ADDRESS: '2' },
-      stdio: 'ignore',
-    });
-    for (let i = 0; i < 100; i++) {
-      try {
-        if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) return;
-      } catch {
-        /* not up yet */
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
-    throw new Error('server did not come up');
+    server = await startServer(PORT, { BOTS: '0', FIELD_LEVEL: '3', FEEDBACK_URL: dir, FEEDBACK_PER_ADDRESS: '2' });
   }, 30_000);
 
-  afterAll(() => {
-    server?.kill();
+  afterAll(async () => {
+    await server?.stop();
     rmSync(dir, { recursive: true, force: true });
   });
 
