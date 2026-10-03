@@ -1,4 +1,6 @@
 # Static solo build on GitHub Pages: the whole game runs in the tab, no server.
+# Deployed on every push to main once that commit's CI has passed
+# (wait-for-ci.yml; a manual run isn't gated).
 # Enable Pages with source "GitHub Actions" once in the repo settings. Set the
 # repository variable SPECTACLE_ONLINE_URL to link to the live arena.
 name: Deploy solo build to Pages
@@ -18,7 +20,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  ci:
+    uses: ./.github/workflows/wait-for-ci.yml
+    permissions:
+      actions: read
+
   deploy:
+    needs: ci
+    if: needs.ci.outputs.passed == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}

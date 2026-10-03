@@ -1,12 +1,13 @@
 import { describe, expect, it } from 'vitest';
-import { isInfiniteLineRule, scoutFor } from '../shared/game/brains/sense';
+import { BRIDGE_BUDGET, bridgeRule } from '../shared/game/brains/kinds';
+import { EdgeIndex, EdgeWalk, edgeIndexFor, isInfiniteLineRule, scoutFor } from '../shared/game/brains/sense';
 import { BOT_KINDS, Bots, formatBotMix, parseBotMix, prepareBots, type BotMix } from '../shared/game/bots';
 import { Engine } from '../shared/game/engine';
 import { buildField, fieldOutline } from '../shared/game/field';
 import { DEFAULT_KNOBS, knobsForMode } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
-import { fassRule, ruleKey, ruleFromCombo } from '../shared/game/rule';
-import { validEdgeSubsets } from '../shared/tiles';
+import { describeRule, fassRule, ruleKey } from '../shared/game/rule';
+import { chordTableFor } from '../shared/game/strand';
 import { mulberry32 } from '../shared/game/rng';
 
 const field = buildField({ family: 'hex', level: 4, rootTile: 'Delta' });
@@ -111,15 +112,73 @@ describe('bots at play', () => {
     expect(cuts).toBeGreaterThan(3);
   });
 
-  it('a bridge plays a fixed all-edges all-zeros rule and taps its nesting plan', () => {
+  it('a bridge plays every edge class with combination all zeros, and lays edge-to-edge claims: a short one, then wider', () => {
     const { engine, events, byName } = play({ bridge: 1, wanderer: 2 }, 4 * 60_000, 6);
     const bridge = byName('Bridge');
-    const valid = validEdgeSubsets(engine.field.family);
-    const maxSubset = valid.reduce((a, b) => a.edges.length > b.edges.length ? a : b);
-    const expectedRule = ruleFromCombo(engine.field.family, maxSubset.edges.join(''), '0'.repeat(20));
-    expect(ruleKey(bridge.rule)).toBe(ruleKey(expectedRule));
+    expect(describeRule(bridge.rule)).toBe('01234568 · 000000000');
+    expect(ruleKey(bridge.rule)).toBe(ruleKey(bridgeRule('hex')));
     const steps = events.filter((e) => e.t === 'step' && e.owner === bridge.id).length;
-    expect(steps).toBeGreaterThan(40);
+    expect(steps).toBeGreaterThan(300);
+    // Claims against the edge, the first short (#81) and later ones round it.
+    const claims = events.flatMap((e) => (e.t === 'circuit' && e.owner === bridge.id && e.region ? [e.length] : []));
+    expect(claims.length).toBeGreaterThanOrEqual(4);
+    expect(claims[0]).toBeLessThan(20);
+    expect(Math.max(...claims)).toBeGreaterThan(2 * claims[0]);
     expect(engine.players.size).toBe(3);
   });
+
+  it("a bridge's planning keeps to its budget every tick (and lays lines on the spectre board too)", () => {
+    // A board no other test has traced, so the edge index is built here, a slice a tick.
+    const spectre = buildField({ family: 'spectre', level: 4, rootTile: 'Delta' });
+    const rng = mulberry32(4);
+    const engine = new Engine(spectre, knobsForMode(DEFAULT_KNOBS, 'normal'), rng);
+    const bots = new Bots(engine, rng);
+    bots.add({ bridge: 2 }, 0);
+    let walked = 0;
+    let traces = 0;
+    let traceBudget = 0;
+    const walk = EdgeWalk.prototype.work;
+    const trace = EdgeIndex.prototype.work;
+    EdgeWalk.prototype.work = function (budget: number) {
+      const n = walk.call(this, budget);
+      walked += n;
+      return n;
+    };
+    EdgeIndex.prototype.work = function (budget: number) {
+      traces++;
+      traceBudget = Math.max(traceBudget, budget);
+      return trace.call(this, budget);
+    };
+    let mostWalked = 0;
+    let mostTraces = 0;
+    let slowest = 0;
+    let total = 0;
+    const dt = engine.knobs.tickMs;
+    const ticks = (2 * 60_000) / dt;
+    try {
+      for (let now = 0; now < ticks * dt; now += dt) {
+        const ev = engine.tick(dt);
+        walked = traces = 0;
+        const t0 = performance.now();
+        bots.update(now, ev);
+        const took = performance.now() - t0;
+        slowest = Math.max(slowest, took);
+        total += took;
+        mostWalked = Math.max(mostWalked, walked);
+        mostTraces = Math.max(mostTraces, traces);
+      }
+    } finally {
+      EdgeWalk.prototype.work = walk;
+      EdgeIndex.prototype.work = trace;
+    }
+    // Each bridge: at most one slice of tracing or BRIDGE_BUDGET steps of walking a tick.
+    expect(mostWalked).toBeLessThanOrEqual(2 * BRIDGE_BUDGET);
+    expect(mostTraces).toBeLessThanOrEqual(2);
+    expect(traceBudget).toBeLessThanOrEqual(BRIDGE_BUDGET);
+    expect(edgeIndexFor(spectre, chordTableFor(spectre, bridgeRule('spectre'))).done).toBe(true);
+    // Wall clock, loosely (a loaded CI box): the bug this pins took ~25 s in one tick on a board this size.
+    expect(slowest).toBeLessThan(250);
+    expect(total / ticks).toBeLessThan(5);
+    for (const p of engine.players.values()) expect(p.paths.reduce((n, q) => n + q.steps.length, 0)).toBeGreaterThan(20);
+  }, 30_000);
 });
