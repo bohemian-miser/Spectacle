@@ -82,6 +82,8 @@ client/src/       Vite + React.
                   once-per-browser help flag (localStorage).
   net.ts          WebSocket GameConnection. local.ts: LocalConnection = the
                   same engine + bots inside the tab (solo mode / Pages build).
+  heartbeat.ts    Online liveness: ping, "not responding", give up (see
+                  "Client fallback").
   store.ts        Applies events into plain mutable state; version counters.
   Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
                   numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
@@ -312,7 +314,21 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   `changeMode`, which clears `notice` — a stale "arena full" banner must not
   survive into solo. `retry.current` keeps backing off and retrying in the
   background regardless, so it still recovers on its own if the server
-  comes back.
+  comes back. (3) **A frozen server is not a closed socket** (2026-10-03: a
+  bot brain held one process's single loop for minutes; the socket stayed
+  open, taps vanished, nothing said why). Online only, `Connection` runs a
+  `Heartbeat` (heartbeat.ts, pure, injected clock; `tests/heartbeat.test.ts`)
+  from socket creation: `ping` every `PING_MS` (5 s), answered by the server
+  straight from its message handler (`pong`), and *any* message counts as
+  heard. Silent `STALE_MS` (9 s): `store.stale`, and the arena's overlay
+  says "Server not responding…" with the play-bots link (the lobby shows its
+  can't-reach notice); the next message clears it. Silent `DEAD_MS` (25 s,
+  also bounds a connect that never opens): the socket is unhooked, closed
+  with `STALE_CLOSE` (4002, in the server's log) and reported to `onClose`
+  at once — a frozen server never finishes the closing handshake — so the
+  usual reconnect resumes on the ticket, `struggling` already on. A check
+  more than `ASLEEP_MS` late (background tab, sleep) restarts the clock
+  instead of blaming the server. Solo (`LocalConnection`) has none.
 - **Speed** in tiles/s: `(1000 / baseStepMs)(1 + score·speedPerPoint) /
   speedDivisor + speedOffset` (÷10, +5), capped at `maxSpeedFor` (500 at the
   242k-tile reference, log-scaled). `speedFor` / `stepIntervalMs`.

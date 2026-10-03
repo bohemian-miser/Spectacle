@@ -207,6 +207,11 @@ export class Store {
   /** …and the end state it grows towards (the `rule` event's `outline`, walked out). */
   private readonly ghosts = new Map<string, Ghost[]>();
   connected = false;
+  /**
+   * Online: the server has said nothing for `STALE_MS` (heartbeat.ts), open
+   * socket or not. The arena says so and offers solo; cleared when it speaks.
+   */
+  stale = false;
   version = 0;
   /** Bumped whenever geometry changed (paths), for the renderer's dirty flag. */
   geometryVersion = 0;
@@ -315,6 +320,12 @@ export class Store {
   toast(text: string, tone: Toast['tone'] = 'info'): void {
     const rest = this.toasts.filter((t) => t.text !== text);
     this.toasts = [...rest.slice(-1), { id: this.nextToast++, text, tone, at: Date.now() }];
+    this.emit();
+  }
+
+  setStale(stale: boolean): void {
+    if (stale === this.stale) return;
+    this.stale = stale;
     this.emit();
   }
 

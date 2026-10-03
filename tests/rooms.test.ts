@@ -132,3 +132,31 @@ describe('rooms', () => {
     expect(await page.text()).toContain('Spectacle patterns');
   });
 });
+
+describe('heartbeat', () => {
+  /** Send a ping on `ws` and wait for its pong (the client's heartbeat counts any message, but this is the one it can count on). */
+  async function ping(ws: WebSocket, n: number): Promise<ServerMessage> {
+    const pong = new Promise<ServerMessage>((resolve) => {
+      const on = (d: WebSocket.RawData): void => {
+        const m = JSON.parse(String(d)) as ServerMessage;
+        if (m.t === 'pong') {
+          ws.off('message', on);
+          resolve(m);
+        }
+      };
+      ws.on('message', on);
+    });
+    ws.send(JSON.stringify({ t: 'ping', n }));
+    return pong;
+  }
+
+  it('answers a ping at once with its number, in the lobby and in a room', async () => {
+    const lobby = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    sockets.push(lobby);
+    await new Promise((r) => lobby.once('open', r));
+    expect(await ping(lobby, 7)).toEqual({ t: 'pong', n: 7 });
+    const { ws } = await join('normal');
+    expect(await ping(ws, 1)).toEqual({ t: 'pong', n: 1 });
+    expect(await ping(ws, 2)).toEqual({ t: 'pong', n: 2 });
+  });
+});
