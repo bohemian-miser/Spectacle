@@ -463,6 +463,16 @@ board, so merge when nobody is playing. The exception is a merge that only
 changes bot brains, which goes live without a redeploy (see "Bots without a
 deploy").
 
+*If an instance freezes.* Cloud Run asks every instance for `/health`, which
+is answered on the same thread that runs the game. A startup probe gives a
+new instance up to four minutes to build its field (about ten seconds), then
+a liveness probe asks every ten seconds and restarts the instance after
+three misses in a row, about half a minute of no answer. Everyone on it is
+dropped and reconnects as a new player (the rooms went with the instance),
+which beats an instance that holds on to its players while answering
+nothing. A pause of a few seconds, or even twenty, doesn't trip it. Both
+deploy paths set the same probes.
+
 *Which patterns people play.* Set `STATS_KEY` and `/patterns?key=…` shows, per
 rule and mode, how many stints (one player on one rule) it had, the time spent
 on it, best and mean final score, and circuits — people and bots apart. It is

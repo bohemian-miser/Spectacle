@@ -129,6 +129,15 @@ jobs:
           # concurrency is open sockets per instance: a little above
           # MAX_INSTANCE_PLAYERS (lobby sockets count too), so Cloud Run
           # sends new connections elsewhere before the cap has to refuse them.
+          # The probes restart an instance whose event loop is stuck: /health
+          # runs on the game's loop, so a frozen process (a bot brain once
+          # blocked one for minutes while session affinity kept sending
+          # players to it) stops answering. Startup: every 2 s for up to
+          # 240 s, as long as Cloud Run's default TCP probe allowed (the port
+          # opens only once the field is built, ~10 s at level 6). Liveness:
+          # every 10 s, 5 s timeout, killed after 3 misses in a row, so ~30 s
+          # frozen; a stall under ~25 s never trips it. deploy/gcp/cloudrun.sh
+          # sets the same.
           flags: >-
             --allow-unauthenticated
             --min-instances=${{ vars.SPECTACLE_MIN_INSTANCES || '0' }}
@@ -137,6 +146,8 @@ jobs:
             --cpu=1 --memory=${{ vars.SPECTACLE_MEMORY || '1Gi' }}
             --cpu-boost
             --session-affinity
+            --startup-probe=httpGet.path=/health,periodSeconds=2,timeoutSeconds=1,failureThreshold=120
+            --liveness-probe=httpGet.path=/health,periodSeconds=10,timeoutSeconds=5,failureThreshold=3
           env_vars: |
             BOTS=${{ vars.SPECTACLE_BOTS || '1' }}
             FIELD_FAMILY=${{ vars.SPECTACLE_FIELD_FAMILY || 'hex' }}
