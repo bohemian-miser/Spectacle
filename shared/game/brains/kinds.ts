@@ -10,14 +10,15 @@
  *    theirs soonest (collisions are mutual: it trades its line for theirs).
  *  - farmer: plays a rule that closes small loops, settles in a quiet corner
  *    and only taps where both ways round would close without touching anyone.
- *  - bridge: plays a rule that draws long thin lines, plans one across the
- *    busiest stretch of board it can find, and keeps tapping the middle of it
- *    — rebuilding whatever gets cut, and cutting whatever is in the way. When
- *    a half runs off the edge it taps the same spot again to turn it round,
- *    so a finished bridge is an edge-to-edge claim.
+ *  - bridge: plays every edge class with combination all zeros (#81) and
+ *    lays edge-to-edge claims, nested: a short one across a corner first,
+ *    then the line that spans it, and so on outwards — each tapped from the
+ *    middle until it closes (a half that runs off the edge is tapped at its
+ *    start to turn it round). It plans with the field's edge index
+ *    (`sense.ts`), a slice per tick.
  *
- * The long-line and short-loop rules come from a scout (`sense.ts`) that
- * tries a spread of clean rules on the field once, a slice per tick. No bot
+ * The farmer's short-loop rule comes from a scout (`sense.ts`) that tries a
+ * spread of clean rules on the field once, a slice per tick. No bot
  * plays an infinite-line (FASS) rule unless `infiniteLines` says it may —
  * those are for players to find.
  *
@@ -27,14 +28,14 @@
  */
 
 import type { Brain, BotContext } from '../bots';
-import type { Engine, Player } from '../engine';
+import type { Engine, Path, Player } from '../engine';
 import { onFieldBoundary, tileCenter, tileNeighbours } from '../field';
 import type { GameEvent } from '../protocol';
 import { isInfiniteLineRule, randomCleanRule, ruleFromCombo, ruleKey, type PlayerRule } from '../rule';
 import type { Rng } from '../rng';
 import { tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
-import { edgeStarts, fieldFrame, isBridgeClosed, lineEndIndex, probe, randomTileWithLine, scoutFor, stepMid, tileNear, type EdgeStart, type Probe } from './sense';
-import { validEdgeSubsets, type Pt } from '../../tiles';
+import { EdgeWalk, WALK_COST, edgeIndexFor, fieldFrame, isBridgeClosed, probe, randomTileWithLine, scoutFor, stepMid, tileNear, type Probe } from './sense';
+import { leafOrder, validEdgeSubsets, type Pt, type TileFamilyId } from '../../tiles';
 
 export type BotKind = 'wanderer' | 'rotator' | 'hunter' | 'farmer' | 'bridge';
 
@@ -45,7 +46,7 @@ export const BOT_INFO: Readonly<Record<BotKind, { readonly label: string; readon
   rotator: { label: 'Rotator', blurb: 'a new rule every few minutes, starting over each time' },
   hunter: { label: 'Hunter', blurb: 'goes after the leader and cuts their lines' },
   farmer: { label: 'Farmer', blurb: 'small safe loops in a quiet corner' },
-  bridge: { label: 'Bridge', blurb: 'long lines across the busy middle, rebuilt whenever cut' },
+  bridge: { label: 'Bridge', blurb: 'edge-to-edge claims, small first, then each one round the last' },
 };
 
 const NAMES = [
@@ -404,66 +405,73 @@ class Farmer extends Bot {
   }
 }
 
-class Bridge extends Bot {
-  private ready = false;
-  private starts: EdgeStart[] = [];
-  private startEnds: ({ endIndex: number, steps: readonly WalkStep[] } | null)[] = [];
-  private currentStartIdx = -1;
-  private currentPath: readonly WalkStep[] = [];
-  
-  override get needsScout(): boolean {
-    return false;
-  }
+/** The bridge's rule (#81): every edge class on that keeps the rule clean (all of them, on hex), every combination digit 0. */
+export function bridgeRule(family: TileFamilyId): PlayerRule {
+  const widest = validEdgeSubsets(family).reduce((a, b) => (b.edges.length > a.edges.length ? b : a));
+  return ruleFromCombo(family, widest.edges.join(''), '0'.repeat(leafOrder(family).length));
+}
 
-  override start(now: number, resumed: boolean): void {
-    super.start(now, resumed);
-    if (resumed) this.ready = true;
+/** A bridge's planning per tick, in walk steps (3–15 µs each): a few ms at most, at any board size. */
+export const BRIDGE_BUDGET = 300;
+/** The first bridge is a line from edge to edge shorter than this (#81)… */
+const FIRST_BRIDGE = 20;
+/** …unless none turns up in this many tries; then any length will do. */
+const FIRST_BRIDGE_TRIES = 400;
+/** No bridge is planned longer than this. */
+const BRIDGE_LIMIT = 20_000;
+/** A bridge still open after this long (someone's line in the way) is passed over for the next one out. */
+const BRIDGE_GIVE_UP_MS = 3 * 60_000;
+
+interface BridgePlan {
+  readonly steps: readonly WalkStep[];
+  /** Edge-index numbers: the bridge runs from one to the other, enclosing the arc of edge from `a` on round to `b`. */
+  readonly a: number;
+  readonly b: number;
+  readonly since: number;
+}
+
+/**
+ * Bridges from edge to edge, nested outwards (#81). The first is a short
+ * line across a corner of the board; once it closes, the next is the line
+ * that spans it: from the bridge's far end B the bot walks the edge index on
+ * (start C), following each start's line to where it comes out (D), and takes
+ * the first whose D lands nearer the near end A than B. Each is tapped until
+ * it closes: the gap nearest its middle, and a half that ran off the edge
+ * tapped at its start to turn it round, so a finished bridge claims all
+ * inside it. Every search runs a slice a tick (`BRIDGE_BUDGET`).
+ */
+class Bridge extends Bot {
+  private plan: BridgePlan | null = null;
+  /** The line being walked, as a candidate for the next plan. */
+  private walk: EdgeWalk | null = null;
+  /** Looking for the line round the last bridge (its a, b), at start `next`; null: looking for a short first one. */
+  private nest: { a: number; b: number; next: number } | null = null;
+  private tries = 0;
+
+  override firstRule(): PlayerRule {
+    return bridgeRule(this.engine.field.family);
   }
 
   override update(now: number, p: Player, ev: GameEvent[]): void {
-    if (!this.ready) {
-      this.ready = true;
-      const family = this.engine.field.family;
-      const valid = validEdgeSubsets(family);
-      const maxSubset = valid.reduce((a, b) => a.edges.length > b.edges.length ? a : b);
-      const rule = ruleFromCombo(family, maxSubset.edges.join(''), '0'.repeat(20));
-      ev.push(...this.engine.setRule(this.id, rule));
-      return;
-    }
-    if (this.starts.length === 0 && p.table) {
-      this.starts = edgeStarts(this.engine.field, p.table);
-      
-    }
+    // Planning runs whether or not a head is free.
+    if (!this.plan) this.search(now, p, BRIDGE_BUDGET);
     super.update(now, p, ev);
   }
 
   protected think(now: number, p: Player, ev: GameEvent[]): void {
     this.nextTapAt = now + 400 + this.rng.int(600);
-    if (this.starts.length === 0) return;
-    
+    const plan = this.plan;
+    if (!plan) return;
+    if (isBridgeClosed(this.engine, this.id, plan.steps) || now - plan.since > BRIDGE_GIVE_UP_MS) {
+      // Done (or hopeless): the next one out spans it.
+      this.plan = null;
+      this.nest = { a: plan.a, b: plan.b, next: plan.b + 1 };
+      return;
+    }
     ev.push(...this.engine.setActive(this.id, 0));
-
-    if (this.currentPath.length > 0) {
-      if (isBridgeClosed(this.engine, this.id, this.currentPath[0])) {
-        this.nextNestingPath(p);
-      }
-    }
-    
-    if (this.currentPath.length === 0) {
-      this.pickRandomShortPath(p);
-    }
-    
-    if (this.currentPath.length > 0) {
-      this.tapCurrentPath(p, ev);
-    }
-  }
-
-  private tapCurrentPath(p: Player, ev: GameEvent[]): void {
-    const mine = new Set<number>();
-    for (const q of p.paths) if (q.table === p.table) for (const s of q.steps) mine.add(s.tile * 64 + s.chord);
-    
-    const onPlan = new Set(this.currentPath.map((s) => s.tile * 64 + s.chord));
     const field = this.engine.field;
+    const onPlan = new Set(plan.steps.map((s) => s.tile * 64 + s.chord));
+    // A half that ran off the edge: tap its start (the same spot) to turn it round.
     for (const q of p.paths) {
       if (q.status !== 'stuck' || q.table !== p.table) continue;
       const first = q.steps[0];
@@ -471,63 +479,68 @@ class Bridge extends Bot {
       if (!onPlan.has(first.tile * 64 + first.chord) || !onFieldBoundary(field, last.tile, last.b)) continue;
       if (this.tapStep(first, ev)) return;
     }
-
-    const mid = this.currentPath.length >> 1;
-    const order = this.currentPath.map((_, i) => i).sort((a, b) => Math.abs(a - mid) - Math.abs(b - mid));
+    // Otherwise the gap nearest the middle: a chord of the plan none of its lines holds yet.
+    const steps = plan.steps;
+    const crossing = new Set<Path>();
+    for (const s of steps) for (const q of this.engine.pathsOn(s.tile)) if (q.owner === this.id) crossing.add(q);
+    const mine = new Set<number>();
+    for (const q of crossing) for (const s of q.steps) mine.add(s.tile * 64 + s.chord);
+    const mid = steps.length >> 1;
     let tries = 0;
-    for (const i of order) {
-      const s = this.currentPath[i];
-      if (mine.has(s.tile * 64 + s.chord)) continue;
-      if (this.tapStep(s, ev) || ++tries >= 6) return;
-    }
-  }
-
-  private getStartEnd(idx: number, p: Player): { endIndex: number, steps: readonly WalkStep[] } | null {
-    if (this.startEnds[idx] !== undefined) return this.startEnds[idx];
-    const res = lineEndIndex(this.engine.field, p.table, this.starts, idx);
-    this.startEnds[idx] = res;
-    return res;
-  }
-
-  private pickRandomShortPath(p: Player): void {
-    for (let k = 0; k < 50; k++) {
-      const idx = this.rng.int(this.starts.length);
-      const res = this.getStartEnd(idx, p);
-      if (res && res.steps.length > 0 && res.steps.length < 20) {
-        this.currentStartIdx = idx;
-        this.currentPath = res.steps;
-        return;
+    for (let d = 0; d <= mid + 1; d++) {
+      for (const i of d === 0 ? [mid] : [mid - d, mid + d]) {
+        const s = steps[i];
+        if (!s || mine.has(s.tile * 64 + s.chord)) continue;
+        if (this.tapStep(s, ev) || ++tries >= 6) return;
       }
     }
   }
 
-  private nextNestingPath(p: Player): void {
-    const res = this.getStartEnd(this.currentStartIdx, p);
-    if (!res) {
-      this.currentPath = [];
+  /** Spend about `budget` steps on the edge index, then on finding the next bridge. */
+  private search(now: number, p: Player, budget: number): void {
+    const index = edgeIndexFor(this.engine.field, p.table);
+    if (!index.done) {
+      index.work(budget);
       return;
     }
-    const idx1 = this.currentStartIdx;
-    const idx2 = res.endIndex;
-    const A = Math.min(idx1, idx2);
-    const B = Math.max(idx1, idx2);
-    const n = this.starts.length;
-    
-    for (let i = 1; i < n; i++) {
-      const C = (B + i) % n;
-      const nRes = this.getStartEnd(C, p);
-      if (nRes && nRes.steps.length > 0) {
-        const D = nRes.endIndex;
-        const distToA = Math.min((D - A + n) % n, (A - D + n) % n);
-        const distToB = Math.min((D - B + n) % n, (B - D + n) % n);
-        
-        if (distToA < distToB) {
-          this.currentStartIdx = C;
-          this.currentPath = nRes.steps;
-          return;
+    const n = index.starts.length;
+    if (n < 2) return;
+    while (budget > 0 && !this.plan) {
+      if (!this.walk) {
+        if (this.nest) {
+          // On round from B; back at A, there's nothing left to span: start again small.
+          const c = ((this.nest.next % n) + n) % n;
+          if (c === this.nest.a) {
+            this.nest = null;
+            continue;
+          }
+          this.nest.next = c + 1;
+          this.walk = new EdgeWalk(index, c, BRIDGE_LIMIT);
+        } else {
+          const limit = this.tries++ < FIRST_BRIDGE_TRIES ? FIRST_BRIDGE : BRIDGE_LIMIT;
+          this.walk = new EdgeWalk(index, this.rng.int(n), limit);
         }
+        budget -= WALK_COST;
       }
+      const w = this.walk;
+      budget -= w.work(budget);
+      if (w.end === undefined) return;
+      this.walk = null;
+      if (w.end === null) continue;
+      const c = w.from;
+      const d = w.end;
+      if (this.nest) {
+        const { a, b } = this.nest;
+        const dist = (x: number, y: number): number => Math.min((x - y + n) % n, (y - x + n) % n);
+        if (dist(d, a) >= dist(d, b)) continue;
+        // It spans the last one: its inside runs from D on round past A and B to C.
+        this.plan = { steps: w.steps, a: d, b: c, since: now };
+      } else {
+        // The first: its inside is the short way round between its ends.
+        const short = (d - c + n) % n <= n >> 1;
+        this.plan = { steps: w.steps, a: short ? c : d, b: short ? d : c, since: now };
+      }
+      this.tries = 0;
     }
-    this.currentPath = [];
   }
 }
