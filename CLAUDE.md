@@ -529,7 +529,16 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
   and most players are in North America). Cloud Run (scale to zero) via CI is
   the intended path; the free e2-micro VM is the alternative. Session resume
-  covers Cloud Run's hourly WebSocket cap.
+  covers Cloud Run's hourly WebSocket cap. Cloud Run probes `/health` (set
+  in both deploy-cloudrun.yml's `flags` and cloudrun.sh; keep them in step):
+  a startup probe (every 2 s, up to 240 s, as long as the default TCP probe
+  gave; the port opens only after the field build, ~10 s at level 6 on the
+  Pi) and a liveness probe (every 10 s, 5 s timeout, 3 misses), so a process
+  whose event loop is stuck ~30 s is killed and replaced, dropping its rooms.
+  It exists because a bot brain once froze an instance for minutes and
+  session affinity kept sending players to it. So `/health` must stay cheap
+  and stay on the game's own loop (moving it off would hide a freeze); a
+  stall under ~25 s never trips it.
 - **Custom domain** = a Cloud Run domain mapping (`deploy/gcp/domain.sh`),
   bought from an outside registrar (Cloudflare suggested), records DNS-only.
   Not a load balancer (standing cost kills scale-to-zero), not Firebase
