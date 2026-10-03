@@ -1,0 +1,250 @@
+# The Gemini agent: fixes issues and answers feedback on its own PRs.
+# Brief: GEMINI.md, .gemini/agents/orchestrator.md, .gemini/commands/
+# (resolve-issue, address-comment). See docs/feedback-agent.md.
+#
+# What wakes it, and what it does:
+#   - the owner labels an issue `agent-ready`, or a manual run names one
+#       → fix that issue with tests, open a PR (agent:gemini), CI green;
+#   - a trusted comment on an `agent-ready` issue
+#       → the issue's open agent PR, if it has one: address the comment
+#         there; otherwise work the issue again with the comment in hand
+#         (e.g. the owner answering a question the agent asked);
+#   - a trusted comment on an agent:gemini PR, or a trusted review that
+#     isn't an approval → address it on that PR.
+# Trusted means the repo owner or an invited collaborator (author
+# association OWNER, MEMBER or COLLABORATOR). Nobody else's comment wakes
+# the agent, and nobody else's comment reaches it: this workflow hands it
+# files of trusted comments only (.agent-input/), and the brief forbids
+# fetching the threads itself.
+#
+# Safety, because issues often start as anonymous player feedback:
+# - It won't run unless a ruleset makes main take a reviewed pull request: a
+#   push to main deploys (deploy-cloudrun.yml) and ships bot code that runs
+#   inside the game servers (brains.yml).
+# - Its GitHub token is a one-hour GitHub App installation token for this
+#   repo only (contents, pull requests, issues; not workflows), minted just
+#   before the agent starts. No refresher keeps the app's key around, and no
+#   Google credentials are on this runner.
+# - Not GITHUB_TOKEN: a PR opened with it triggers no CI, and the agent must
+#   see CI go green.
+#
+# Config: GEMINI_API_KEY (secret); AGENT_APP_ID (variable) and
+# AGENT_APP_PRIVATE_KEY (secret) for a GitHub App installed on this repo with
+# Contents, Pull requests and Issues read/write; GEMINI_MODEL (variable,
+# optional, default gemini-pro-latest: the newest Pro release).
+name: Gemini agent
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  pull_request_review:
+    types: [submitted]
+  workflow_dispatch:
+    inputs:
+      issue_number:
+        description: Issue to work on (it must be labelled agent-ready)
+        required: true
+        type: string
+
+# One Gemini agent job at a time. GitHub keeps one queued run per group, so
+# a burst of comments during a run collapses into the next run, which reads
+# them all.
+concurrency:
+  group: gemini-agent
+  cancel-in-progress: false
+
+jobs:
+  agent:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' &&
+       github.event.label.name == 'agent-ready' &&
+       github.event.sender.login == github.repository_owner) ||
+      (github.event_name == 'issue_comment' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association) &&
+       !contains(github.event.comment.body, '<!-- gemini-agent -->') &&
+       ((github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'agent:gemini')) ||
+        (!github.event.issue.pull_request && contains(github.event.issue.labels.*.name, 'agent-ready')))) ||
+      (github.event_name == 'pull_request_review' &&
+       contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.review.author_association) &&
+       contains(github.event.pull_request.labels.*.name, 'agent:gemini') &&
+       github.event.review.state != 'approved')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      issues: read
+      pull-requests: read
+    steps:
+      - name: main takes reviewed pull requests only
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          n=$(gh api "repos/$GITHUB_REPOSITORY/rules/branches/main" --jq '[.[] | select(.type == "pull_request") | .parameters.required_approving_review_count] | max // 0')
+          if [ "${n:-0}" -lt 1 ]; then
+            echo "::error::No ruleset makes main take a reviewed pull request, so the agent could push straight to production. Add one first (docs/feedback-agent.md, 'Setup')."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      # Which job this is (an issue to work, or a PR to answer on), and the
+      # trusted comments the agent gets. An issue whose agent PR is already
+      # open has its comments answered on that PR.
+      - name: Route, and gather trusted comments
+        id: route
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          ISSUE: ${{ github.event.issue.number || inputs.issue_number }}
+          ON_PR: ${{ github.event.issue.pull_request != null }}
+          REVIEWED_PR: ${{ github.event.pull_request.number }}
+        run: |
+          echo "since=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_OUTPUT"
+          issue=""; pr=""
+          case "$EVENT" in
+            pull_request_review) pr=$REVIEWED_PR ;;
+            issue_comment) if [ "$ON_PR" = true ]; then pr=$ISSUE; else issue=$ISSUE; fi ;;
+            *) issue=$ISSUE ;;
+          esac
+          if [ -n "$issue" ] && [ "$EVENT" = issue_comment ]; then
+            pr=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --label agent:gemini --json number,body \
+              --jq ".[] | select(.body | test(\"#$issue([^0-9]|\$)\")) | .number" | head -1)
+          fi
+          if [ -n "$pr" ] && [ -z "$issue" ]; then
+            issue=$(gh pr view "$pr" -R "$GITHUB_REPOSITORY" --json body -q .body | grep -oiE 'closes #[0-9]+' | head -1 | grep -oE '[0-9]+' || true)
+          fi
+          mode=$([ -n "$pr" ] && echo pr || echo issue)
+          echo "mode=$mode" >> "$GITHUB_OUTPUT"
+          echo "issue=$issue" >> "$GITHUB_OUTPUT"
+          echo "pr=$pr" >> "$GITHUB_OUTPUT"
+          echo "Mode: $mode · issue: ${issue:-none} · PR: ${pr:-none}"
+
+          # Owner and invited collaborators only; never the agent's own posts.
+          TRUSTED='select(.author_association == "OWNER" or .author_association == "MEMBER" or .author_association == "COLLABORATOR")
+            | select((.body // "") | contains("<!-- gemini-agent -->") | not) | select((.body // "") != "")'
+          mkdir -p .agent-input
+          echo '[]' > .agent-input/issue-comments.json
+          if [ -n "$issue" ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$issue/comments?per_page=100" \
+              --jq ".[] | $TRUSTED | {author: .user.login, created_at, body}" | jq -s . > .agent-input/issue-comments.json
+          fi
+          if [ "$mode" = pr ]; then
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$pr/comments?per_page=100" \
+              --jq ".[] | $TRUSTED | {author: .user.login, created_at, body}" | jq -s . > .agent-input/pr-comments.json
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/comments?per_page=100" \
+              --jq ".[] | $TRUSTED | {author: .user.login, path, line, created_at, body}" | jq -s . > .agent-input/review-comments.json
+            gh api --paginate "repos/$GITHUB_REPOSITORY/pulls/$pr/reviews?per_page=100" \
+              --jq ".[] | $TRUSTED | {author: .user.login, state, submitted_at, body}" | jq -s . > .agent-input/reviews.json
+          fi
+          for f in .agent-input/*.json; do echo "$f: $(jq length "$f") trusted comments"; done
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Gemini CLI, ripgrep, and Chromium for the smoke rounds
+        run: |
+          npm install -g @google/gemini-cli --silent
+          sudo apt-get install -y --no-install-recommends ripgrep
+          npx playwright install --with-deps chromium
+
+      - id: app
+        if: vars.AGENT_APP_ID != ''
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.AGENT_APP_ID }}
+          private-key: ${{ secrets.AGENT_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+          permission-issues: write
+      # Gemini CLI strips token-like variables from the shells it starts, so
+      # gh (and git, through gh) is logged in through gh's config file.
+      - name: Log the agent in
+        env:
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          if [ -z "$TOKEN" ]; then
+            echo "::error::No agent token: set AGENT_APP_ID and AGENT_APP_PRIVATE_KEY (docs/feedback-agent.md). GITHUB_TOKEN won't do: its pull requests trigger no CI."
+            exit 1
+          fi
+          printf '%s' "$TOKEN" | gh auth login --with-token
+          gh auth setup-git
+          git config --global user.name "gemini-agent"
+          git config --global user.email "gemini-agent@users.noreply.github.com"
+
+      - name: Run the agent
+        timeout-minutes: 50
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GEMINI_CLI_TRUST_WORKSPACE: 'true'
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-pro-latest' }}
+          MODE: ${{ steps.route.outputs.mode }}
+          ISSUE: ${{ steps.route.outputs.issue }}
+          PR: ${{ steps.route.outputs.pr }}
+        run: |
+          set -o pipefail
+          if [ "$MODE" = pr ]; then prompt="/address-comment $PR .agent-input"; else prompt="/resolve-issue $ISSUE"; fi
+          echo "Model: $GEMINI_MODEL · $prompt"
+          gemini --approval-mode=yolo -p "$prompt" 2>&1 | tee "$RUNNER_TEMP/gemini-run.log"
+
+      # Gemini CLI exits 0 even when the agent didn't deliver. Delivered means:
+      # the issue closed, an open PR that closes it, or (answering, or asking
+      # the owner something) a reply from the agent posted during this run.
+      - name: Check the outcome
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MODE: ${{ steps.route.outputs.mode }}
+          ISSUE: ${{ steps.route.outputs.issue }}
+          PR: ${{ steps.route.outputs.pr }}
+          SINCE: ${{ steps.route.outputs.since }}
+        run: |
+          replied() {
+            gh api --paginate "repos/$GITHUB_REPOSITORY/issues/$1/comments?per_page=100&since=$SINCE" \
+              --jq '.[] | select(.body | contains("<!-- gemini-agent -->")) | .id' | grep -q .
+          }
+          if [ "$MODE" = pr ]; then
+            if replied "$PR"; then echo "The agent replied on PR #$PR."; exit 0; fi
+            # Fine when an earlier run already answered everything queued.
+            echo "::warning::No reply on PR #$PR this run: nothing new to address, or see the gemini-logs artifact."
+            exit 0
+          fi
+          if [ "$(gh issue view "$ISSUE" -R "$GITHUB_REPOSITORY" --json state -q .state)" = CLOSED ]; then
+            echo "Issue #$ISSUE is closed."; exit 0
+          fi
+          pr=$(gh pr list -R "$GITHUB_REPOSITORY" --state open --label agent:gemini --json number,body \
+            --jq ".[] | select(.body | test(\"#$ISSUE([^0-9]|\$)\")) | .number" | head -1)
+          if [ -n "$pr" ]; then echo "PR #$pr is open for issue #$ISSUE."; exit 0; fi
+          if replied "$ISSUE"; then echo "The agent replied on issue #$ISSUE (a question, or why it stopped)."; exit 0; fi
+          echo "::error::The run ended without a PR, a reply, or closing issue #$ISSUE: see the gemini-logs artifact."
+          exit 1
+
+      - name: Collect and scrub agent logs
+        if: always()
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          TOKEN: ${{ steps.app.outputs.token }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/gemini-logs"
+          cp "$RUNNER_TEMP/gemini-run.log" "$RUNNER_TEMP/gemini-logs/" 2>/dev/null || true
+          cp -r "$HOME/.gemini/tmp" "$RUNNER_TEMP/gemini-logs/sessions" 2>/dev/null || true
+          cp smoke*.png "$RUNNER_TEMP/gemini-logs/" 2>/dev/null || true
+          # Artifacts on a public repo can be downloaded: scrub credentials.
+          find "$RUNNER_TEMP/gemini-logs" -type f ! -name '*.png' | while read -r f; do
+            for s in "$GEMINI_API_KEY" "$TOKEN"; do
+              [ -n "$s" ] && sed -i "s|$s|***|g" "$f" || true
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: gemini-logs-${{ github.run_id }}
+          path: ${{ runner.temp }}/gemini-logs/
+          if-no-files-found: ignore
+          retention-days: 30

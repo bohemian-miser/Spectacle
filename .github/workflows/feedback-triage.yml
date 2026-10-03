@@ -14,7 +14,7 @@
 #           failed halfway, so nothing is filed twice.
 #
 # The owner then hands an issue to the Gemini fixer by labelling it
-# `agent-ready` (gemini-issue-solver.yml); anyone else's coding agent can pick
+# `agent-ready` (gemini-agent.yml); anyone else's coding agent can pick
 # it up too. See docs/feedback-agent.md.
 #
 # Skipped until GCP_FEEDBACK_BUCKET is set (deploy/gcp/setup-ci.sh); the
@@ -122,7 +122,7 @@ jobs:
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
           GEMINI_CLI_TRUST_WORKSPACE: 'true'
-          GEMINI_MODEL: gemini-3.1-pro-preview
+          GEMINI_MODEL: ${{ vars.GEMINI_MODEL || 'gemini-pro-latest' }}
         run: |
           if [ -z "$GEMINI_API_KEY" ]; then
             echo "::error::Set the GEMINI_API_KEY secret (docs/feedback-agent.md)."

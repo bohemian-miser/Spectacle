@@ -3,9 +3,9 @@
 A player presses **Feedback** in the game, writes what went wrong, and sends
 it. Within about ten minutes a Gemini agent has read it against the code and
 filed it as a GitHub issue (or added it to one that already covers it). The
-owner hands an issue to the Gemini fixer by labelling it `agent-ready`; the
-fixer opens a PR with tests and waits for CI to go green, and answers the
-owner's comments and reviews on that PR. The issues are
+owner hands an issue to the Gemini agent by labelling it `agent-ready`; it
+opens a PR with tests and waits for CI to go green, and answers the owner's
+and invited collaborators' comments on the issue and the PR. The issues are
 public and written to stand alone, so a player's own coding agent can pick
 one up too, which the modal invites them to do.
 
@@ -19,10 +19,10 @@ game client ──POST /feedback──▶ game server ──▶ gs://…-spectac
                            GitHub issue (label: feedback)
                                      │  owner adds `agent-ready`
                                      ▼
-               gemini-issue-solver.yml: branch, fix + tests, PR (agent:gemini), CI green
-                                     │
+               gemini-agent.yml: branch, fix + tests, PR (agent:gemini), CI green
+                                     │   (or a question on the issue)
                                      ▼
-            owner comments / reviews ──▶ gemini-comment-responder.yml: answer, push, CI
+   owner / collaborator comments on the issue or PR, reviews ──▶ gemini-agent.yml: answer, push, CI
                                      │
                                      ▼
                               owner approves and merges
@@ -41,8 +41,7 @@ five minutes rather than daily; and both agents run with less within reach
 | `server/feedback.ts`, `POST /feedback` in `server/index.ts` | Validates (message ≤ 4000 chars, context fields whitelisted and capped, the rule checked by `validateRule`), rate-limits, and stores one JSON object per report under `FEEDBACK_URL`. CORS is open: there are no cookies to protect. |
 | `scripts/feedback.ts` (`npm run feedback -- …`) | `pull`: the untriaged reports as the agent may see them. `mark`: the agent records a decision in `.triage/ledger.jsonl`. `apply`: moves decided reports to `triaged/`. |
 | `.github/workflows/feedback-triage.yml` + `.github/gemini/feedback-triage.md` | The triage run and the agent's brief. |
-| `.github/workflows/gemini-issue-solver.yml` + `GEMINI.md`, `.gemini/agents/orchestrator.md`, `.gemini/commands/resolve-issue.toml` | The fixer and its brief. |
-| `.github/workflows/gemini-comment-responder.yml` + `.gemini/commands/address-comment.toml` | Wakes the fixer when the owner comments on or reviews (anything but an approval) one of its PRs. The thread is filtered to the owner's comments before the agent sees it. |
+| `.github/workflows/gemini-agent.yml` + `GEMINI.md`, `.gemini/agents/orchestrator.md`, `.gemini/commands/` | The agent and its brief. Woken by the owner's `agent-ready` label, a manual run, or a trusted comment: on an `agent-ready` issue (answered on the issue's open agent PR if it has one, else the issue is worked again) or on an agent PR, and a trusted review that isn't an approval. Model: `GEMINI_MODEL` variable, default `gemini-pro-latest`. |
 
 ### Storage
 
@@ -82,11 +81,14 @@ injection.
   requests, issues; not workflows), minted just before it starts. Unlike
   Recipe Lanes, no background refresher keeps the app's private key in a
   process the agent could read. No Google credentials are on its runner.
-- **Only the owner's label starts the fixer** (`github.event.sender.login ==
-  github.repository_owner`), and only the owner's comments wake the
-  responder, which is handed a queue of the owner's comments alone (filtered
-  in the workflow, outside the model). The owner's comments on an issue
-  override its body; nobody else's text is treated as instructions.
+- **Only trusted people steer it.** Only the owner's label starts it. Only
+  comments by the owner and invited collaborators (author association
+  `OWNER`, `MEMBER` or `COLLABORATOR`) wake it, and only theirs reach it:
+  the workflow writes them to `.agent-input/` and the brief forbids fetching
+  comment threads, so a stranger's comment never enters the agent's context.
+  Trusted comments override the issue body; the body (often the triage
+  agent's write-up of a player's report) is treated as data, never
+  instructions.
 - **Logs are scrubbed** of the Gemini key and the GitHub token before upload:
   artifacts on a public repo can be downloaded.
 - What the agents *can* still do if subverted: the triage agent can file,
@@ -98,8 +100,8 @@ injection.
 | Label | On | Meaning |
 |---|---|---|
 | `feedback` | issue | Filed by the triage agent from a player report. |
-| `agent-ready` | issue | Owner: hand this to the Gemini fixer. Applying it starts a run. |
-| `agent:gemini` | PR | Opened by the Gemini fixer; the owner's comments on it wake the responder. |
+| `agent-ready` | issue | Owner: hand this to the Gemini agent. Applying it starts a run; trusted comments on it wake the agent again. |
+| `agent:gemini` | PR | Opened by the Gemini agent; trusted comments and reviews on it wake the agent. |
 
 The triage workflow creates the labels if they are missing. Everything the
 agents write ends with `<!-- gemini-agent -->`.
@@ -162,10 +164,15 @@ agents write ends with `<!-- gemini-agent -->`.
 
 - **Triage now:** Actions → *Feedback triage* → Run workflow. Most scheduled
   runs stop after one quick look at the bucket.
-- **Fix an issue:** add `agent-ready` to it. Or Actions → *Gemini issue
-  solver* → Run workflow, with a number or blank for the oldest eligible.
-- **Ask for changes:** comment on the agent's PR, or submit a review with
+- **Fix an issue:** add `agent-ready` to it. Or Actions → *Gemini agent* →
+  Run workflow, with the issue's number (it must carry `agent-ready`).
+- **Answer it, or redirect it:** comment on the `agent-ready` issue. With no
+  agent PR open yet, it works the issue again with your comment (e.g. after
+  it asked you something); with one open, it updates that PR.
+- **Ask for changes on its PR:** comment on the PR, or submit a review with
   inline comments. An approval doesn't wake it.
+- **Change the model:** set the `GEMINI_MODEL` repo variable (default
+  `gemini-pro-latest`, which follows Google's newest Pro release).
 - **Who sent a report?** The issue carries its feedback id; the contact (if
   any) is only in the bucket:
   `gcloud storage cat gs://spectacle-game-spectacle-feedback/triaged/<id>.json`.
