@@ -7,7 +7,9 @@
  *   npm run brains -- check [dir]   load that build the way a server does and
  *                                   play it: a bots-only game, then a live
  *                                   swap from the built-in brains onto it
- *                                   mid-game. Exits 1 if anything throws.
+ *                                   mid-game. Exits 1 if anything throws, or
+ *                                   if a bot trips the server's watchdog
+ *                                   (too slow for its shared loop, at hex 4).
  *
  * CI runs both on every PR, and uploads on a push to main (.github/workflows/brains.yml).
  */
@@ -18,7 +20,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
-import { Bots, botTuningOf, BUILTIN_BRAINS, formatBotMix, type BotMix, type BrainSet } from '../shared/game/bots';
+import { Bots, botTuningOf, BUILTIN_BRAINS, DEFAULT_WATCHDOG, formatBotMix, type BotMix, type BotTrip, type BrainSet } from '../shared/game/bots';
 import { Engine } from '../shared/game/engine';
 import { buildField, fieldOutline } from '../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, GAME_MODES, knobsForMode } from '../shared/game/knobs';
@@ -96,10 +98,20 @@ export function trial(set: BrainSet, log: (s: string) => void = () => {}): void 
   fieldOutline(field);
   const everyKind = (kinds: readonly string[]): BotMix => Object.fromEntries(kinds.map((k) => [k, 1]));
 
+  // The server's watchdog: a brain this slow on a small board (hex 4) would stall a server's every room
+  // at hex 6 — as the bridge of 2026-10-03 did (2 s an update here, minutes for its first there).
+  const watch = (bots: Bots): Bots => {
+    bots.watchdog = DEFAULT_WATCHDOG;
+    return bots;
+  };
+
   const play = (engine: Engine, bots: Bots, from: number, ms: number): number => {
     const dt = engine.knobs.tickMs;
+    const trips: BotTrip[] = [];
+    bots.onSlow = (t) => trips.push(t);
     let now = from;
     for (; now < from + ms; now += dt) bots.update(now, engine.tick(dt));
+    if (trips.length) throw new Error(`too slow for a server: the watchdog benched ${trips.map((t) => `${t.kind} (${t.source} took ${Math.round(t.ms)} ms, ${t.why} limit)`).join(', ')}`);
     return now;
   };
 
@@ -107,7 +119,7 @@ export function trial(set: BrainSet, log: (s: string) => void = () => {}): void 
   for (const mode of GAME_MODES) {
     const rng = mulberry32(7);
     const engine = new Engine(field, knobsForMode(tuned, mode), rng);
-    const bots = new Bots(engine, rng, undefined, botTuningOf(set), set);
+    const bots = watch(new Bots(engine, rng, undefined, botTuningOf(set), set));
     bots.add(everyKind(set.kinds), 0);
     play(engine, bots, 0, 2 * 60_000);
     const lines = [...engine.players.values()].reduce((n, p) => n + p.paths.length, 0);
@@ -118,7 +130,7 @@ export function trial(set: BrainSet, log: (s: string) => void = () => {}): void 
   // 2. A live swap: built-in bots play a while, then get the new brains.
   const rng = mulberry32(11);
   const engine = new Engine(field, knobsForMode(DEFAULT_KNOBS, 'normal'), rng);
-  const bots = new Bots(engine, rng);
+  const bots = watch(new Bots(engine, rng));
   bots.add(everyKind(BUILTIN_BRAINS.kinds), 0);
   let now = play(engine, bots, 0, 60_000);
   const before = bots.list();

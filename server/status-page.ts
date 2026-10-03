@@ -1,7 +1,8 @@
 /**
  * /status: a read-only look at the running server — rooms, who is in them,
- * memory, how long a loop pass takes, and the recent log (joins, drops,
- * errors). The page polls /status.json every few seconds. Nothing on it can
+ * memory, how long a loop pass takes (and the worst pass and longest gap
+ * between passes in the last minute), and the recent log (joins, drops,
+ * errors, slow bots the watchdog benched). The page polls /status.json every few seconds. Nothing on it can
  * change the game, and nothing in it (no ids, no tokens) lets anyone act as
  * a player.
  */
@@ -21,9 +22,15 @@ export interface StatusReport {
   readonly instance: { readonly id: string; readonly revision: string | null };
   readonly field: FieldSpec & { readonly tiles: number };
   readonly memory: { readonly rssMb: number; readonly heapMb: number };
-  readonly tick: { readonly everyMs: number; readonly avgMs: number; readonly maxMs: number };
+  /**
+   * The loop: how often it runs, a pass's average, the worst pass in the
+   * last minute, and the longest gap between two passes in the last minute
+   * (anything that held the thread, a slow message included).
+   */
+  readonly tick: { readonly everyMs: number; readonly avgMs: number; readonly maxMs: number; readonly gapMs: number };
   readonly sockets: number;
-  readonly counters: { readonly joins: number; readonly resumes: number; readonly leaves: number; readonly dropped: number; readonly errors: number };
+  /** `watchdog`: bot kinds benched in a room for taking too long (shared/game/bots.ts). */
+  readonly counters: { readonly joins: number; readonly resumes: number; readonly leaves: number; readonly dropped: number; readonly errors: number; readonly watchdog: number };
   readonly limits: { readonly roomSize: number; readonly maxRooms: number; readonly botsPerRoom: number; readonly bots: string };
   /** Which bot brains are playing: the built-in ones or a hot-loaded build (`server/brains.ts`), and why the last build was refused. */
   readonly brains: { readonly source: 'built-in' | 'hot'; readonly brains: string; readonly commit?: string; readonly loadedAt: number; readonly refused: string | null };
@@ -33,6 +40,8 @@ export interface StatusReport {
     readonly named: boolean;
     readonly emptySince: number | null;
     readonly steps: number;
+    /** Bot kinds the watchdog took out of this room. */
+    readonly benched: readonly string[];
     readonly players: readonly {
       readonly name: string;
       readonly bot: boolean;
@@ -124,16 +133,19 @@ export const STATUS_PAGE = `<!doctype html>
     const held = humans.length - online;
     $('state').innerHTML = '<span class="dot"></span>instance ' + esc(r.instance.id) + (r.instance.revision ? ' (' + esc(r.instance.revision) + ')' : '') + ' · up ' + esc(ago(r.now - r.startedAt)) + ' · ' + esc(r.field.family) + ' level ' + esc(r.field.level) + ' · ' + esc(r.field.tiles.toLocaleString()) + ' tiles · bots: ' + esc(r.limits.bots) + ' · brains: ' + esc(r.brains.source) + ' ' + esc(r.brains.brains.slice(0, 8)) + (r.brains.commit ? ' (' + esc(r.brains.commit.slice(0, 7)) + ', ' + esc(ago(r.now - r.brains.loadedAt)) + ')' : '') + (r.brains.refused ? ' · last build refused: ' + esc(r.brains.refused) : '');
     const tickCls = r.tick.maxMs > r.tick.everyMs ? 'is-bad' : r.tick.maxMs > r.tick.everyMs / 2 ? 'is-warn' : '';
+    const gapCls = r.tick.gapMs > 4 * r.tick.everyMs ? 'is-bad' : r.tick.gapMs > 2 * r.tick.everyMs ? 'is-warn' : '';
     const memCls = r.memory.rssMb > 900 ? 'is-bad' : r.memory.rssMb > 750 ? 'is-warn' : '';
     $('stats').innerHTML = [
       stat(online, 'playing now' + (held ? ' · ' + held + ' reconnecting' : '')),
       stat(r.rooms.length + ' / ' + r.limits.maxRooms, 'rooms'),
       stat(r.sockets, 'open sockets'),
       stat(r.memory.rssMb + ' MB', 'memory (heap ' + r.memory.heapMb + ' MB)', memCls),
-      stat(r.tick.avgMs + ' / ' + r.tick.maxMs + ' ms', 'loop avg / worst, of ' + r.tick.everyMs, tickCls),
+      stat(r.tick.avgMs + ' / ' + r.tick.maxMs + ' ms', 'loop avg / worst in the last min, of ' + r.tick.everyMs, tickCls),
+      stat(r.tick.gapMs + ' ms', 'longest gap between loop passes, last min', gapCls),
       stat(r.counters.joins, 'joins · ' + r.counters.resumes + ' resumes'),
       stat(r.counters.dropped, 'dropped (too far behind)', r.counters.dropped ? 'is-warn' : ''),
       stat(r.counters.errors, 'errors', r.counters.errors ? 'is-bad' : ''),
+      stat(r.counters.watchdog, 'slow bots benched (watchdog)', r.counters.watchdog ? 'is-warn' : ''),
     ].join('');
     $('rooms').innerHTML = r.rooms.map((room) => {
       const people = room.players.filter((p) => !p.bot);
@@ -144,7 +156,8 @@ export const STATUS_PAGE = `<!doctype html>
       return '<div class="room"><div class="room-head"><a href="' + esc(link) + '" title="Join this room">' + esc(room.id) + '</a>' +
         '<span><span class="tag">' + esc(room.mode) + '</span>' + (room.named ? ' <span class="tag">link</span>' : '') + '</span></div>' +
         '<div class="muted">' + people.length + ' / ' + r.limits.roomSize + ' people · ' + room.steps.toLocaleString() + ' steps on the board' +
-        (room.emptySince ? ' · empty ' + esc(ago(r.now - room.emptySince)) : '') + '</div>' +
+        (room.emptySince ? ' · empty ' + esc(ago(r.now - room.emptySince)) : '') +
+        (room.benched && room.benched.length ? ' · <span class="is-warn">benched as too slow: ' + esc(room.benched.join(', ')) + '</span>' : '') + '</div>' +
         '<table>' + rows + '</table></div>';
     }).join('') || '<p class="muted">No rooms.</p>';
     $('log').innerHTML = r.recent.map((l) =>

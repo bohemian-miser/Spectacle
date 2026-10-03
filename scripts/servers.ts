@@ -348,11 +348,12 @@ function printDirect(url: string, r: StatusReport): void {
   lines.push(`${bold(url)}  ${dim(clock(r.now))}`);
   lines.push(
     `${green('●')} instance ${bold(cyan(r.instance?.id ?? '?'))}${r.instance?.revision ? ` (${r.instance.revision})` : ''} · up ${ago(r.now - r.startedAt)} · ${r.field.family} level ${r.field.level}` +
-      ` · rss ${r.memory.rssMb} MB · tick ${r.tick.avgMs}/${r.tick.maxMs} ms (every ${r.tick.everyMs})`,
+      ` · rss ${r.memory.rssMb} MB · tick ${r.tick.avgMs}/${r.tick.maxMs} ms (every ${r.tick.everyMs})${r.tick.gapMs !== undefined ? `, longest gap ${r.tick.gapMs} ms` : ''}`,
   );
   lines.push(
     `sockets ${r.sockets} · players ${bold(online)} online${humans.length > online ? `, ${humans.length - online} held for resume` : ''}` +
-      ` · joins ${r.counters.joins} resumes ${r.counters.resumes} leaves ${r.counters.leaves} dropped ${r.counters.dropped} errors ${r.counters.errors ? red(r.counters.errors) : 0}`,
+      ` · joins ${r.counters.joins} resumes ${r.counters.resumes} leaves ${r.counters.leaves} dropped ${r.counters.dropped} errors ${r.counters.errors ? red(r.counters.errors) : 0}` +
+      (r.counters.watchdog ? ` watchdog ${red(r.counters.watchdog)}` : ''),
   );
   lines.push('');
   lines.push(`${bold('ROOMS')} ${r.rooms.length}`);
