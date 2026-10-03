@@ -3,7 +3,6 @@
  * swapped into running rooms without a restart — bot players keep their
  * lines and scores, only their brains change.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
 import { mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -20,6 +19,7 @@ import type { ServerMessage } from '../shared/game/protocol';
 import { defaultRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import type { StatusReport } from '../server/status-page';
+import { startServer, type TestServer } from './server';
 
 const ROOT = join(__dirname, '..');
 const field = buildField({ family: 'hex', level: 4, rootTile: 'Delta' });
@@ -207,7 +207,7 @@ function serve(dir: string): Server {
 
 describe('a live server', () => {
   const PORT = 21000 + Math.floor(Math.random() * 1000);
-  let server: ChildProcess;
+  let server: TestServer;
   let http: Server;
   let dir: string;
   let ws: WebSocket;
@@ -217,23 +217,12 @@ describe('a live server', () => {
     http = serve(dir);
     await new Promise<void>((r) => http.listen(0, '127.0.0.1', r));
     const bucket = `http://127.0.0.1:${(http.address() as { port: number }).port}/`;
-    server = spawn('npx', ['tsx', 'server/index.ts'], {
-      env: { ...process.env, PORT: String(PORT), BOTS: '1', FIELD_LEVEL: '3', BOTS_URL: bucket, BOTS_POLL_MS: '200' },
-      stdio: 'ignore',
-    });
-    for (let i = 0; i < 100; i++) {
-      try {
-        if ((await fetch(`http://127.0.0.1:${PORT}/health`)).ok) break;
-      } catch {
-        /* not up yet */
-      }
-      await new Promise((r) => setTimeout(r, 100));
-    }
+    server = await startServer(PORT, { BOTS: '1', FIELD_LEVEL: '3', BOTS_URL: bucket, BOTS_POLL_MS: '200' });
   }, 30_000);
 
-  afterAll(() => {
+  afterAll(async () => {
     ws?.close();
-    server?.kill();
+    await server?.stop();
     http?.close();
     rmSync(dir, { recursive: true, force: true });
   });

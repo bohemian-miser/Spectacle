@@ -3,30 +3,17 @@
  * the grace period, and cannot with a wrong token. Spawns the real server on a
  * free port.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { ClientMessage, ServerMessage } from '../shared/game/protocol';
 import { defaultRule, fassRule } from '../shared/game/rule';
+import { startServer, type TestServer } from './server';
 
 const PORT = 18000 + Math.floor(Math.random() * 1000);
 /** A second server, with short away timers. */
-const AWAY_PORT = PORT + 1000;
-let server: ChildProcess;
-let awayServer: ChildProcess;
-
-async function waitForHealth(port = PORT): Promise<void> {
-  for (let i = 0; i < 100; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${port}/health`);
-      if (r.ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error('server did not come up');
-}
+const AWAY_PORT = PORT + 5000; // 23000–23999: rooms.test.ts has 19000–19999
+let server: TestServer;
+let awayServer: TestServer;
 
 class Client {
   readonly ws: WebSocket;
@@ -74,20 +61,14 @@ async function awaitDrop(c: Client): Promise<void> {
 }
 
 beforeAll(async () => {
-  server = spawn('npx', ['tsx', 'server/index.ts'], {
-    env: { ...process.env, PORT: String(PORT), BOTS: '0', FIELD_LEVEL: '3', RESUME_GRACE_MS: '5000' },
-    stdio: 'ignore',
-  });
-  awayServer = spawn('npx', ['tsx', 'server/index.ts'], {
-    env: { ...process.env, PORT: String(AWAY_PORT), BOTS: '0', FIELD_LEVEL: '3', RESUME_GRACE_MS: '2500', AWAY_RULE_MS: '300' },
-    stdio: 'ignore',
-  });
-  await Promise.all([waitForHealth(), waitForHealth(AWAY_PORT)]);
+  [server, awayServer] = await Promise.all([
+    startServer(PORT, { BOTS: '0', FIELD_LEVEL: '3', RESUME_GRACE_MS: '5000' }),
+    startServer(AWAY_PORT, { BOTS: '0', FIELD_LEVEL: '3', RESUME_GRACE_MS: '2500', AWAY_RULE_MS: '300' }),
+  ]);
 }, 30_000);
 
-afterAll(() => {
-  server.kill();
-  awayServer.kill();
+afterAll(async () => {
+  await Promise.all([server?.stop(), awayServer?.stop()]);
 });
 
 describe('resume', () => {

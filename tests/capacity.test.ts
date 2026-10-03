@@ -4,28 +4,15 @@
  * server/index.ts's "Scaling past one instance". Spawns the real server on a
  * free port with a tiny cap.
  */
-import { spawn, type ChildProcess } from 'node:child_process';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import WebSocket from 'ws';
 import type { ServerMessage } from '../shared/game/protocol';
 import { defaultRule } from '../shared/game/rule';
+import { startServer, type TestServer } from './server';
 
 // Clear of rooms.test.ts (19000-19999) and resume.test.ts (18000-18999): vitest runs files in parallel.
 const PORT = 20000 + Math.floor(Math.random() * 1000);
-let server: ChildProcess;
-
-async function waitForHealth(): Promise<void> {
-  for (let i = 0; i < 100; i++) {
-    try {
-      const r = await fetch(`http://127.0.0.1:${PORT}/health`);
-      if (r.ok) return;
-    } catch {
-      /* not up yet */
-    }
-    await new Promise((r) => setTimeout(r, 100));
-  }
-  throw new Error('server did not come up');
-}
+let server: TestServer;
 
 const sockets: WebSocket[] = [];
 
@@ -49,16 +36,12 @@ async function join(ws: WebSocket, extra: Record<string, unknown> = {}): Promise
 }
 
 beforeAll(async () => {
-  server = spawn('npx', ['tsx', 'server/index.ts'], {
-    env: { ...process.env, PORT: String(PORT), BOTS: '0', FIELD_LEVEL: '3', ROOM_SIZE: '10', MAX_INSTANCE_PLAYERS: '2' },
-    stdio: 'ignore',
-  });
-  await waitForHealth();
+  server = await startServer(PORT, { BOTS: '0', FIELD_LEVEL: '3', ROOM_SIZE: '10', MAX_INSTANCE_PLAYERS: '2' });
 }, 30_000);
 
-afterAll(() => {
+afterAll(async () => {
   for (const ws of sockets) ws.close();
-  server?.kill();
+  await server?.stop();
 });
 
 describe('instance capacity', () => {

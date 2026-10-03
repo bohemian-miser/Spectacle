@@ -738,6 +738,14 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   reconnect fired straight after `ws.close()` legitimately got a new player.
   The test waits for the closing handshake and a round-trip now; keep that if
   you touch it.
+- **A test that needs the real server uses `tests/server.ts`** (`startServer`,
+  then `await server.stop()` in `afterAll`), never `spawn('npx', ['tsx', …])`:
+  `kill()` on that hits npx, and the server under it ran on under init — every
+  run leaked some (87 on the Pi at once, ~1.4 GB, other tests timing out "under
+  load"). The helper runs node itself (`--import tsx`), and a run killed
+  outright can't leak either: the server exits when its stdin from the worker
+  closes (`EXIT_WITH_PARENT`), and `tests/setup.ts` takes the worker down when
+  vitest goes (a fork worker otherwise spins on under init).
 
 ## Verification bar before pushing
 
