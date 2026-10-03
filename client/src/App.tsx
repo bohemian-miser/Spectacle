@@ -4,7 +4,7 @@ import { defaultRule, type PlayerRule } from '../../shared/game/rule';
 import { Arena } from './Arena';
 import { Lobby } from './Lobby';
 import { initialSolo, LocalConnection, saveSoloBots, type SoloOptions } from './local';
-import { Connection, type GameConnection } from './net';
+import { Connection, STALE_CLOSE, type GameConnection } from './net';
 import { answerTabs, clearSession, forgetSession, heldElsewhere, loadSession, saveSession, touchSession } from './session';
 import { Store } from './store';
 import { useStore } from './useStore';
@@ -125,8 +125,10 @@ export function App(): JSX.Element {
           store.reset();
           if (!rejoin.current) setScreen('lobby');
           // Still retrying in the background either way (below) — this only
-          // stops presenting it as a silent, endless spinner.
-          if (mode === 'online' && retry.current >= STRUGGLE_ATTEMPTS) setStruggling(true);
+          // stops presenting it as a silent, endless spinner. A server that
+          // stopped answering has already kept the player waiting
+          // `DEAD_MS`: offer the way out at once.
+          if (mode === 'online' && (retry.current >= STRUGGLE_ATTEMPTS || code === STALE_CLOSE)) setStruggling(true);
           const delay = Math.min(10_000, 500 * 2 ** retry.current++);
           timer = window.setTimeout(connect, delay);
         },
@@ -288,7 +290,7 @@ export function App(): JSX.Element {
       mode={mode}
       solo={solo}
       gameMode={gameMode}
-      struggling={mode === 'online' && struggling}
+      struggling={mode === 'online' && (struggling || store.stale)}
       onGiveUp={leaveToSolo}
       onGameMode={(m) => {
         setGameMode(m);
