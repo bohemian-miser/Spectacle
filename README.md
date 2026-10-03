@@ -334,6 +334,7 @@ Server environment:
 | `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules (off: those are for players to find) |
 | `BOTS_URL` | unset | where hot-loaded bot brains are published (`gs://bucket/brains`) — see "Bots without a deploy" |
 | `BOTS_POLL_MS` | `60000` | how often a server looks there for a new build |
+| `BOT_WATCHDOG_HARD_MS`, `BOT_WATCHDOG_SOFT_MS`, `BOT_WATCHDOG_STRIKES`, `BOT_WATCHDOG_WINDOW` | `200`, `20`, `10`, `200` | a bot whose update takes over the hard limit once, or over the soft one `STRIKES` times within `WINDOW` ticks, is taken out of its room with every bot of its kind — see "Safety" under "Bots without a deploy" |
 | `ROOM_MAX_BOTS`, `ROOM_MAX_BOTS_PER_KIND` | `6`, `3` | most bots players may put in a room with the Bots panel, in all and of one kind |
 | `ROOM_SIZE` | `10` | humans per room; the next joiner of that mode gets a new room |
 | `MAX_ROOMS` | `80` | rooms at most, all modes; past it joiners share the emptiest room of their mode |
@@ -369,7 +370,8 @@ The farmer's rule comes from a scout that tries a spread of
 clean rules on the field once (~0.2 s at hex level 6, at startup).
 `npx tsx scripts/bot-arena.ts bridge,hunter:2 5 5` plays bots against each
 other headless for 5 simulated minutes and prints scores, circuits,
-collisions and what the bots cost per tick.
+collisions, what the bots cost per tick, each kind's slowest update, and
+whether any of them tripped the watchdog.
 
 ### Bots without a deploy
 
@@ -407,10 +409,18 @@ and picks up the latest build within seconds.
   servers already carry the new brains.
 - **Safety:** a bot that throws skips its turn and nothing else. A build that
   throws 20 times in a minute is dropped for the server's own brains and
-  never retried. The build runs inside the server, so the bucket is private
-  and only CI can write to it. An infinite loop in a brain would still stall
-  that instance, so keep each tick's work small. `/status` shows which
-  brains are playing and why the last build was refused, if one was.
+  never retried. A bot whose update takes too long (over 200 ms once, or
+  over 20 ms ten times in ten seconds) is taken out of its room with every
+  bot of its kind, and the room won't add that kind again until new brains
+  arrive: every room on a server shares one loop, so one slow brain stalls
+  them all. A build whose bots do that three times in ten minutes is dropped
+  like one that throws, and `npm run brains -- check` fails a build that
+  does it at all. The watchdog can only act once a slow update has returned:
+  an infinite loop in a brain still stalls that instance, so keep each
+  tick's work small. The build runs inside the server, so the bucket is
+  private and only CI can write to it. `/status` shows which brains are
+  playing, why the last build was refused if one was, and which bot kinds
+  were taken out for being slow.
 
 Setting it up: `setup-ci.sh` makes the bucket (re-run it on an existing
 project). Add the `GCP_BRAINS_BUCKET` variable it prints, then run the
@@ -453,8 +463,9 @@ nobody notices. A page refresh does the same: the tab keeps its resume ticket
 in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
 
 *Watching it.* `/status` on the arena's address is a read-only page: rooms and
-who is in them, memory, how long a loop pass takes, joins, drops and errors,
-and the recent log (the same lines go to Cloud Run's logs). Every merge to
+who is in them, memory, how long a loop pass takes (and the worst pass and
+longest pause between passes in the last minute), joins, drops, errors and
+slow bots taken out, and the recent log (the same lines go to Cloud Run's logs). Every merge to
 `main` redeploys, and a redeploy drops everyone connected and starts an empty
 board, so merge when nobody is playing. The exception is a merge that only
 changes bot brains, which goes live without a redeploy (see "Bots without a
