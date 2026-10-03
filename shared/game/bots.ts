@@ -193,6 +193,78 @@ export function prepareBots(field: Field, mix: BotMix, set: BrainSet = BUILTIN_B
   set.prepare(field, mix);
 }
 
+// --- the watchdog ----------------------------------------------------------------
+//
+// The server ticks every room in one 50 ms loop on one thread, so a brain
+// that computes for half a second stalls every game on the server for half a
+// second (2026-10-03: a bridge bot's first decision ran for minutes, and each
+// one after it took ~0.5 s). JavaScript can't interrupt a synchronous call
+// from the thread it runs on, so the watchdog can't stop a slow update while
+// it runs: it times each one, and once it has returned too slow, makes sure
+// that brain doesn't get to do it again here. Its kind is *benched* in this
+// room — its bot players leave, and `add` / `reconcile` skip the kind until
+// new brains arrive (`setBrains`) — and reported (`Bots.onSlow`). An update
+// that never returns (an infinite loop) still hangs the process; only moving
+// the bots off the loop's thread (a worker) would fix that.
+//
+// Off unless set (`Bots.watchdog`): the server and solo play set it. With it
+// on, a game depends on how fast the machine is, so tests and benches that
+// want the same game everywhere leave it off (or give it a fake `clock`).
+//
+// An update in which the bot changed its rule is not held to `hardMs`: it
+// paid for the engine's regrow plan (`setRule`), as a human's switch does on
+// the message handler — a rotator's, at hex level 6 with a big score, takes
+// a second or more. It still counts as a strike when over `softMs`. The
+// brain set's shared scout (`BrainSet.work`) is the other way round: held to
+// `hardMs` only — it is finite (a few seconds of slices, once per field) and
+// budgeted at a few ms a slice, which a busy machine stretches past `softMs`.
+
+export interface WatchdogOptions {
+  /** One update (or scout slice) taking longer than this benches the kind at once, ms (a rule switch aside). */
+  readonly hardMs: number;
+  /** An update (not a scout slice) longer than this is a strike, ms… */
+  readonly softMs: number;
+  /** …and this many strikes by one bot within the last `window` ticks bench its kind. */
+  readonly strikes: number;
+  readonly window: number;
+}
+
+/**
+ * Bot work per tick is meant to stay in single-digit ms at hex level 6, and
+ * the loop has 50 ms for every room. So: one update over 200 ms — four ticks
+ * of every room on the server — or ten over 20 ms in ten seconds (200
+ * ticks), and the kind is benched. Measured at hex 6 on a Raspberry Pi 5 at
+ * load 13 (wall times ~3× CPU): built-in kinds' updates average 0.01–0.4 ms,
+ * the slowest single one was ~100 ms (a farmer), and none had more than five
+ * over 20 ms in any 200 ticks; a rotator's rule switch (regrow) took up to
+ * 2.6 s, which is why switches are held to the soft budget only.
+ */
+export const DEFAULT_WATCHDOG: WatchdogOptions = { hardMs: 200, softMs: 20, strikes: 10, window: 200 };
+
+/** What `Bots.onSlow` hears when the watchdog benches a kind. */
+export interface BotTrip {
+  readonly kind: string;
+  /** How long the call that tripped it took, ms. */
+  readonly ms: number;
+  /** `hard`: one call over `hardMs`; `soft`: `strikes` calls over `softMs` within `window` ticks. */
+  readonly why: 'hard' | 'soft';
+  /** Which call: a bot's `update`, or the brain set's shared `work` (the scout) its kind was waiting on. */
+  readonly source: 'update' | 'scout';
+  /** Bot players of the kind taken out of the game. */
+  readonly removed: number;
+}
+
+/** One bot's (or the scout's) record with the watchdog. */
+interface Watch {
+  /** Its slowest call so far, ms. */
+  worstMs: number;
+  /** The ticks of its recent strikes. */
+  strikes: number[];
+}
+
+/** The scout's record, beside the bots' (keyed by player id). */
+const SCOUT = '';
+
 // --- the manager -----------------------------------------------------------------
 
 export class Bots {
@@ -208,6 +280,20 @@ export class Bots {
    * log and to drop a hot-loaded build that keeps throwing.
    */
   onError: ((kind: string, e: unknown) => void) | null = null;
+  /** The watchdog's limits (`DEFAULT_WATCHDOG`, say), or null: off, nothing timed. */
+  watchdog: WatchdogOptions | null = null;
+  /**
+   * Told whenever the watchdog benches a kind, after its bots have left
+   * (their `leave` events are in that `update`'s events). The server logs
+   * and counts it, and drops a hot-loaded build that keeps tripping it.
+   */
+  onSlow: ((trip: BotTrip) => void) | null = null;
+  /** What the watchdog times calls with, ms (tests hand it a fake). */
+  clock: () => number = () => performance.now();
+  /** Kinds the watchdog has taken out of this game, until new brains come (`setBrains`). */
+  private readonly bench = new Map<string, BotTrip>();
+  private readonly watches = new Map<string, Watch>();
+  private ticks = 0;
 
   constructor(
     private readonly engine: Engine,
@@ -234,11 +320,12 @@ export class Bots {
     return { engine: this.engine, rng: this.rng, options: this.options };
   }
 
-  /** Add bots: a mix, or (as ever) a number of wanderers. Kinds the brains don't have are skipped. */
+  /** Add bots: a mix, or (as ever) a number of wanderers. Kinds the brains don't have, or the watchdog benched, are skipped. */
   add(mix: BotMix | number, now: number): GameEvent[] {
     const m: BotMix = typeof mix === 'number' ? { wanderer: mix } : mix;
     const ev: GameEvent[] = [];
     for (const kind of this.set.kinds) {
+      if (this.bench.has(kind)) continue;
       for (let k = 0; k < (m[kind] ?? 0); k++) {
         const id = `bot-${++this.made}`;
         const nth = (this.counts[kind] = (this.counts[kind] ?? 0) + 1);
@@ -251,9 +338,24 @@ export class Bots {
     return ev;
   }
 
-  /** What a room's players see of its bots (`welcome.bots`, the `bots` event). */
+  /** The kinds this game offers: the brains' own, less any the watchdog benched. */
+  kinds(): readonly string[] {
+    return this.bench.size ? this.set.kinds.filter((k) => !this.bench.has(k)) : this.set.kinds;
+  }
+
+  /** The kinds the watchdog benched, and why (for /status). */
+  benched(): BotTrip[] {
+    return [...this.bench.values()];
+  }
+
+  /** Each bot's slowest call so far, ms (`scripts/bot-arena.ts`). */
+  timings(): { id: string; kind: string; worstMs: number }[] {
+    return this.bots.map((b) => ({ id: b.id, kind: b.kind, worstMs: this.watches.get(b.id)?.worstMs ?? 0 }));
+  }
+
+  /** What a room's players see of its bots (`welcome.bots`, the `bots` event): benched kinds aren't offered. */
   roomBots(maxPerKind: number, max: number): RoomBots {
-    const kinds = this.set.kinds.map((kind) => ({ kind, label: this.set.info[kind]?.label ?? kind, blurb: this.set.info[kind]?.blurb ?? '' }));
+    const kinds = this.kinds().map((kind) => ({ kind, label: this.set.info[kind]?.label ?? kind, blurb: this.set.info[kind]?.blurb ?? '' }));
     return { kinds, mix: this.mix(), maxPerKind, max };
   }
 
@@ -274,7 +376,8 @@ export class Bots {
    * the board as it is (lines, score, patterns, rule) and plays on under a
    * new brain of its kind. A bot whose kind `set` lacks leaves the game
    * (its lines go, as when any player leaves). Then, given a `mix`, bots are
-   * added or dropped to match it (`reconcile`).
+   * added or dropped to match it (`reconcile`). New brains start with a
+   * clean slate: kinds the watchdog benched may play again.
    */
   setBrains(set: BrainSet, now: number, mix?: BotMix): GameEvent[] {
     const ev: GameEvent[] = [];
@@ -290,21 +393,21 @@ export class Bots {
     }
     this.bots.splice(0, this.bots.length, ...kept);
     this.set = set;
+    this.bench.clear();
+    this.watches.clear();
     if (mix) ev.push(...this.reconcile(mix, now));
     return ev;
   }
 
-  /** Add or drop bots (newest first) until the room has exactly `mix`. */
+  /** Add or drop bots (newest first) until the room has exactly `mix` — less any kind the watchdog benched. */
   reconcile(mix: BotMix, now: number): GameEvent[] {
     const ev: GameEvent[] = [];
     const have = this.mix();
     for (const kind of Object.keys(have)) {
       let extra = have[kind] - (mix[kind] ?? 0);
       for (let i = this.bots.length - 1; i >= 0 && extra > 0; i--) {
-        const b = this.bots[i];
-        if (b.kind !== kind) continue;
-        ev.push(...this.engine.removePlayer(b.id));
-        this.bots.splice(i, 1);
+        if (this.bots[i].kind !== kind) continue;
+        ev.push(...this.remove(i));
         extra--;
       }
     }
@@ -314,21 +417,79 @@ export class Bots {
     return ev;
   }
 
-  /** Called once per server tick. */
+  /** Called once per server tick. With the watchdog on, each brain's call is timed (see `WatchdogOptions`). */
   update(now: number, ev: GameEvent[]): void {
-    if (this.bots.some((b) => b.needsScout)) this.guard('scout', () => this.set.work(this.engine.field));
-    for (const bot of this.bots) {
-      const p = this.engine.players.get(bot.id);
-      if (p) this.guard(bot.kind, () => bot.update(now, p, ev));
+    this.ticks++;
+    // Made only when something trips: the usual tick allocates nothing here.
+    let trips: { kind: string; ms: number; why: 'hard' | 'soft'; source: 'update' | 'scout' }[] | null = null;
+    const tripped = (kind: string): boolean => trips !== null && trips.some((t) => t.kind === kind);
+    if (this.bots.some((b) => b.needsScout)) {
+      const ms = this.timed('scout', () => this.set.work(this.engine.field));
+      const why = this.judge(SCOUT, ms, false, true);
+      // The shared work is no one bot's: the kinds waiting on it go.
+      if (why) for (const b of this.bots) if (b.needsScout && !tripped(b.kind)) (trips ??= []).push({ kind: b.kind, ms, why, source: 'scout' });
     }
+    for (const bot of this.bots) {
+      if (tripped(bot.kind)) continue;
+      const p = this.engine.players.get(bot.id);
+      if (!p) continue;
+      const rule = p.rule;
+      const ms = this.timed(bot.kind, () => bot.update(now, p, ev));
+      const why = this.judge(bot.id, ms, p.rule !== rule);
+      if (why) (trips ??= []).push({ kind: bot.kind, ms, why, source: 'update' });
+    }
+    if (trips === null) return;
+    // Every bot of a tripped kind leaves, before anyone is told: `onSlow` may swap the brains.
+    const report: BotTrip[] = [];
+    for (const t of trips) {
+      let removed = 0;
+      for (let i = this.bots.length - 1; i >= 0; i--) {
+        if (this.bots[i].kind !== t.kind) continue;
+        ev.push(...this.remove(i));
+        removed++;
+      }
+      const trip: BotTrip = { ...t, removed };
+      this.bench.set(t.kind, trip);
+      report.push(trip);
+    }
+    for (const trip of report) this.onSlow?.(trip);
   }
 
-  private guard(kind: string, f: () => void): void {
-    if (!this.onError) return f();
-    try {
-      f();
-    } catch (e) {
-      this.onError(kind, e);
+  /** Take the `i`th bot out of the game. */
+  private remove(i: number): GameEvent[] {
+    const [b] = this.bots.splice(i, 1);
+    this.watches.delete(b.id);
+    return this.engine.removePlayer(b.id);
+  }
+
+  /** Run a brain's call (through `onError`, if set) and say how long it took, ms (0 with the watchdog off). */
+  private timed(kind: string, f: () => void): number {
+    const t0 = this.watchdog ? this.clock() : 0;
+    if (!this.onError) f();
+    else {
+      try {
+        f();
+      } catch (e) {
+        this.onError(kind, e);
+      }
     }
+    return this.watchdog ? this.clock() - t0 : 0;
+  }
+
+  /**
+   * Note a call that took `ms` (`switched`: the bot changed its rule in it;
+   * `hardOnly`: the scout); was it too slow, once or once too often?
+   */
+  private judge(key: string, ms: number, switched = false, hardOnly = false): 'hard' | 'soft' | null {
+    if (!this.watchdog) return null;
+    let w = this.watches.get(key);
+    if (!w) this.watches.set(key, (w = { worstMs: 0, strikes: [] }));
+    if (ms > w.worstMs) w.worstMs = ms;
+    const { hardMs, softMs, strikes, window } = this.watchdog;
+    if (ms > hardMs && !switched) return 'hard';
+    if (ms <= softMs || hardOnly) return null;
+    w.strikes = w.strikes.filter((t) => t > this.ticks - window);
+    w.strikes.push(this.ticks);
+    return w.strikes.length >= strikes ? 'soft' : null;
   }
 }

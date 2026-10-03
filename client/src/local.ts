@@ -7,7 +7,7 @@
  * what lets the static GitHub Pages build play without a server.
  */
 
-import { BOT_KINDS, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, parseBotMix, prepareBots, type BotMix } from '../../shared/game/bots';
+import { BOT_KINDS, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, parseBotMix, prepareBots, type BotMix, type WatchdogOptions } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
 import { buildField, fieldOutline, type FieldSpec } from '../../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
@@ -60,6 +60,15 @@ export function saveSoloBots(bots: BotMix): void {
   }
 }
 
+/**
+ * Solo's bot watchdog, looser than a server's (`DEFAULT_WATCHDOG`): a slow
+ * bot here only lags this tab, a phone runs the same brains two or three
+ * times slower, and the player picked these bots. So only what makes the
+ * game unplayable: one update over a second, or ten over 100 ms in ten
+ * seconds.
+ */
+export const SOLO_WATCHDOG: WatchdogOptions = { hardMs: 1000, softMs: 100, strikes: 10, window: 200 };
+
 /** Levels offered in the solo lobby (6 is ~250k tiles: playable, but slow to build on a phone). */
 export const SOLO_LEVELS: readonly number[] = [3, 4, 5, 6];
 
@@ -93,6 +102,15 @@ export class LocalConnection implements GameConnection {
     this.engine = new Engine(field, this.knobs, rng);
     prepareBots(field, this.opts.bots);
     this.bots = new Bots(this.engine, rng, undefined, botTuningOf(BUILTIN_BRAINS));
+    // A brain far too slow for the tab's tick is benched, as on a server
+    // (looser limits): its bots leave and the Bots panel stops offering the
+    // kind for this game.
+    this.bots.watchdog = SOLO_WATCHDOG;
+    this.bots.onSlow = (trip) => {
+      console.warn(`[spectacle] ${trip.kind} bot's ${trip.source} took ${Math.round(trip.ms)} ms (${trip.why} limit): benched for this game`);
+      const bots = this.roomBots();
+      if (bots) this.pending.push({ t: 'bots', bots });
+    };
     const ev = this.bots.add(this.opts.bots, Date.now());
     this.store.connected = true;
     this.deliver({ t: 'hello', field: spec, knobs: this.knobs, tiles: field.count, players: this.engine.players.size });
@@ -169,7 +187,7 @@ export class LocalConnection implements GameConnection {
       case 'bots': {
         const b = this.bots;
         if (!b) return;
-        const asked = cleanBotMix(msg.mix, b.brains.kinds, SOLO_MAX_PER_KIND, SOLO_MAX_PER_KIND * b.brains.kinds.length);
+        const asked = cleanBotMix(msg.mix, b.kinds(), SOLO_MAX_PER_KIND, SOLO_MAX_PER_KIND * b.brains.kinds.length);
         if ('refused' in asked) {
           this.deliver({ t: 'events', ev: [{ t: 'refused', reason: asked.refused }] });
           return;

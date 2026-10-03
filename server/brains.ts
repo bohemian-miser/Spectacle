@@ -13,8 +13,10 @@
  * source outside `brains/` (`sourceKey`), so the engine, protocol and types
  * it was compiled against are this server's. Anything else — a server
  * change — is a full deploy, and its build waits for that deploy's servers.
- * A build that keeps throwing (`failed`) is dropped for the one the server
- * shipped with, and not loaded again.
+ * A build that keeps throwing (`failed`), or whose bots keep tripping the
+ * bot watchdog (`slow`: an update too long for the shared loop, see
+ * shared/game/bots.ts), is dropped for the one the server shipped with, and
+ * not loaded again.
  *
  * What a build can do is what any code in this process can do, so it must
  * only ever come from somewhere CI alone can write: on Cloud Run a private
@@ -134,6 +136,12 @@ export interface WatcherOptions {
   /** Exceptions from a hot build, within `failWindowMs`, before it is dropped. */
   readonly maxFailures?: number;
   readonly failWindowMs?: number;
+  /**
+   * Kinds of a hot build benched by the bot watchdog, within `slowWindowMs`,
+   * before it is dropped (3 in 10 min: each one cost a room a stalled tick).
+   */
+  readonly maxSlow?: number;
+  readonly slowWindowMs?: number;
   readonly read?: (name: string) => Promise<Buffer>;
 }
 
@@ -146,6 +154,7 @@ export class BrainsWatcher {
   /** Builds never to load again (they threw too often, or wouldn't load). */
   private readonly bad = new Set<string>();
   private failures: number[] = [];
+  private slowTrips: number[] = [];
   private busy = false;
   private timer: ReturnType<typeof setInterval> | null = null;
 
@@ -216,6 +225,7 @@ export class BrainsWatcher {
     this.version = version;
     this.sha = sha;
     this.failures = [];
+    this.slowTrips = [];
     this.refused = null;
     this.opts.log('info', `brains: now ${version.source} ${version.brains}${version.commit ? ` (${version.commit.slice(0, 7)})` : ''}, kinds ${set.kinds.join(', ')}`);
   }
@@ -228,13 +238,25 @@ export class BrainsWatcher {
 
   /** A hot brain threw. Too often, and the server goes back to its own. */
   failed(now: number): void {
+    this.strike(this.failures, now, this.opts.maxFailures ?? 20, this.opts.failWindowMs ?? 60_000, 'threw');
+  }
+
+  /**
+   * The bot watchdog benched a kind of a hot build in some room (it took too
+   * long for the shared loop). Too often, and the server goes back to its own.
+   */
+  slow(now: number): void {
+    this.strike(this.slowTrips, now, this.opts.maxSlow ?? 3, this.opts.slowWindowMs ?? 10 * 60_000, 'tripped the bot watchdog');
+  }
+
+  private strike(times: number[], now: number, max: number, windowMs: number, what: string): void {
     if (this.version.source !== 'hot') return;
-    const windowMs = this.opts.failWindowMs ?? 60_000;
-    this.failures = this.failures.filter((t) => now - t < windowMs);
-    this.failures.push(now);
-    if (this.failures.length < (this.opts.maxFailures ?? 20)) return;
+    const recent = times.filter((t) => now - t < windowMs);
+    recent.push(now);
+    times.splice(0, times.length, ...recent);
+    if (recent.length < max) return;
     const was = this.version;
-    const reason = `threw ${this.failures.length} times in ${windowMs / 1000} s`;
+    const reason = `${what} ${recent.length} times in ${windowMs / 1000} s`;
     if (this.sha) this.bad.add(this.sha);
     this.opts.log('error', `brains: ${was.brains} ${reason} — back to the built-in brains`);
     this.swap(this.opts.builtinSet, { source: 'built-in', brains: this.opts.builtin, loadedAt: now });

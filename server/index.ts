@@ -20,6 +20,13 @@
  *                            new bot code goes live without a deploy — see
  *                            server/brains.ts. Unset = the built-in brains only
  *   BOTS_POLL_MS  (60000)    how often to look there for a new build
+ *   BOT_WATCHDOG_HARD_MS (200), BOT_WATCHDOG_SOFT_MS (20), BOT_WATCHDOG_STRIKES (10),
+ *   BOT_WATCHDOG_WINDOW (200)  a bot whose update takes over HARD_MS once, or
+ *                            over SOFT_MS STRIKES times within WINDOW ticks, is
+ *                            benched in its room with every bot of its kind
+ *                            (shared/game/bots.ts, `DEFAULT_WATCHDOG`; an
+ *                            update that switched the bot's rule counts only
+ *                            as a strike)
  *   ROOM_MAX_BOTS (6)        most bots players may put in a room (the arena's
  *                            Bots panel: anyone in the room sets them)
  *   ROOM_MAX_BOTS_PER_KIND (3)  most of one kind
@@ -76,10 +83,11 @@ import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import { packEvents } from '../shared/game/wire';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
-import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_OPTIONS, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet } from '../shared/game/bots';
+import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_OPTIONS, DEFAULT_WATCHDOG, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet, type WatchdogOptions } from '../shared/game/bots';
 import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
 import { clientAddress, FeedbackLimiter, feedbackId, feedbackStore, MAX_BODY, parseFeedback, type FeedbackRecord } from './feedback';
 import { metadataTokens } from './gcp';
+import { WindowMax } from './loop-stats';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 
@@ -107,7 +115,7 @@ function fieldSpecFromEnv(): FieldSpec {
 /** The last few hundred things worth knowing, for /status. */
 const recent: LogLine[] = [];
 const RECENT_MAX = 300;
-const counters = { joins: 0, resumes: 0, leaves: 0, dropped: 0, errors: 0 };
+const counters = { joins: 0, resumes: 0, leaves: 0, dropped: 0, errors: 0, watchdog: 0 };
 
 /** Log to stdout (Cloud Run keeps it) and to the /status page's list. */
 function note(level: LogLine['level'], text: string, detail?: string): void {
@@ -193,6 +201,16 @@ const ROOM_MAX_BOTS = positiveInt(process.env.ROOM_MAX_BOTS, 6);
 const ROOM_MAX_BOTS_PER_KIND = positiveInt(process.env.ROOM_MAX_BOTS_PER_KIND, 3);
 /** A player may change a room's bots this often at most. */
 const BOTS_CHANGE_MS = 1000;
+/**
+ * The bot watchdog's limits (`Bots.watchdog`): every room shares this one
+ * loop, so a brain too slow for it has its kind benched in that room.
+ */
+const BOT_WATCHDOG: WatchdogOptions = {
+  hardMs: positiveInt(process.env.BOT_WATCHDOG_HARD_MS, DEFAULT_WATCHDOG.hardMs),
+  softMs: positiveInt(process.env.BOT_WATCHDOG_SOFT_MS, DEFAULT_WATCHDOG.softMs),
+  strikes: positiveInt(process.env.BOT_WATCHDOG_STRIKES, DEFAULT_WATCHDOG.strikes),
+  window: positiveInt(process.env.BOT_WATCHDOG_WINDOW, DEFAULT_WATCHDOG.window),
+};
 /**
  * Humans this one process will hold before it refuses new joins (existing
  * players reconnecting via `join.resume` are exempt — they add no new load).
@@ -491,6 +509,16 @@ class Room {
       guard(`bot ${kind} in ${this.id}`, () => {
         throw e;
       });
+    };
+    // One bot's brain hogging the loop stalls every room: once a call has
+    // come back too slow, its kind leaves this room (it can't be cut short).
+    this.bots.watchdog = BOT_WATCHDOG;
+    this.bots.onSlow = (trip) => {
+      counters.watchdog++;
+      const limit = trip.why === 'hard' ? `over ${BOT_WATCHDOG.hardMs} ms` : `over ${BOT_WATCHDOG.softMs} ms ${BOT_WATCHDOG.strikes} times in ${BOT_WATCHDOG.window} ticks`;
+      note('warn', `watchdog: a ${trip.kind} bot's ${trip.source === 'scout' ? 'scouting' : 'update'} took ${Math.round(trip.ms)} ms in ${this.id} (${limit}) — ${trip.removed} removed, no ${trip.kind} bots here until new brains`);
+      this.pending.push({ t: 'bots', bots: this.roomBots() });
+      brainsWatcher?.slow(Date.now());
     };
     this.pending.push(...this.bots.add(botMix(mode), Date.now()));
   }
@@ -909,7 +937,7 @@ wss.on('connection', (ws) => {
           send(ws, { t: 'events', ev: [{ t: 'refused', reason: 'one bot change a second' }] });
           return;
         }
-        const asked = cleanBotMix(msg.mix, room.bots.brains.kinds, ROOM_MAX_BOTS_PER_KIND, ROOM_MAX_BOTS);
+        const asked = cleanBotMix(msg.mix, room.bots.kinds(), ROOM_MAX_BOTS_PER_KIND, ROOM_MAX_BOTS);
         if ('refused' in asked) {
           send(ws, { t: 'events', ev: [{ t: 'refused', reason: asked.refused }] });
           return;
@@ -944,13 +972,19 @@ wss.on('connection', (ws) => {
 
 // --- simulation loop -----------------------------------------------------------
 
-/** How long a loop pass takes: over `tickMs` and the game falls behind. */
-const tickStats = { avgMs: 0, maxMs: 0, maxSince: Date.now() };
+/**
+ * How long a loop pass takes (over `tickMs` and the game falls behind), and
+ * the worst in the last minute; and the longest gap between two passes in
+ * the last minute, which shows anything holding the thread — a slow message
+ * handler as much as a slow tick.
+ */
+const tickStats = { avgMs: 0, worst: new WindowMax(60_000), gap: new WindowMax(60_000) };
 
 let last = Date.now();
 setInterval(() => {
   const now = Date.now();
   const dt = Math.min(1000, now - last);
+  tickStats.gap.record(now, now - last);
   last = now;
   const t = performance.now();
   for (const room of rooms.values()) guard(`tick ${room.id}`, () => room.tick(now, dt));
@@ -958,12 +992,8 @@ setInterval(() => {
   guard('reap', () => reapRooms(now));
   const took = performance.now() - t;
   tickStats.avgMs = tickStats.avgMs * 0.98 + took * 0.02;
-  // The worst pass in the last minute or so.
-  if (now - tickStats.maxSince > 60_000) {
-    tickStats.maxMs = 0;
-    tickStats.maxSince = now;
-  }
-  tickStats.maxMs = Math.max(tickStats.maxMs, took);
+  // Stamped when the pass ends, so even a pass longer than a minute is still shown after it.
+  tickStats.worst.record(Date.now(), took);
 }, baseKnobs.tickMs);
 
 /**
@@ -1058,13 +1088,14 @@ function brainsVersion(): BrainsVersion {
 /** Everything /status shows. Read-only, and nothing in it lets anyone act as a player. */
 function statusReport(): StatusReport {
   const mem = process.memoryUsage();
+  const at = Date.now();
   return {
-    now: Date.now(),
+    now: at,
     startedAt,
     instance: INSTANCE,
     field: { ...spec, tiles: field.count },
     memory: { rssMb: Math.round(mem.rss / 1e6), heapMb: Math.round(mem.heapUsed / 1e6) },
-    tick: { everyMs: baseKnobs.tickMs, avgMs: +tickStats.avgMs.toFixed(2), maxMs: +tickStats.maxMs.toFixed(1) },
+    tick: { everyMs: baseKnobs.tickMs, avgMs: +tickStats.avgMs.toFixed(2), maxMs: +tickStats.worst.max(at).toFixed(1), gapMs: tickStats.gap.max(at) },
     sockets: wss.clients.size,
     counters,
     limits: { roomSize: ROOM_SIZE, maxRooms: MAX_ROOMS, botsPerRoom: Math.max(...GAME_MODES.map((m) => botTotal(botMix(m)))), bots: botSummary() },
@@ -1081,7 +1112,7 @@ function statusReport(): StatusReport {
       players.sort((a, b) => b.score - a.score);
       let steps = 0;
       for (const p of r.engine.players.values()) for (const path of p.paths) steps += path.steps.length;
-      return { id: r.id, mode: r.mode, named: r.named, emptySince: r.emptySince || null, steps, players };
+      return { id: r.id, mode: r.mode, named: r.named, emptySince: r.emptySince || null, steps, players, benched: r.bots.benched().map((t) => t.kind) };
     }),
     recent: recent.slice(-150).reverse(),
   };

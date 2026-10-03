@@ -37,7 +37,8 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
   bots.ts         Bots, host half: `BotMix` (`parseBotMix` reads `BOTS`),
                   the `Brain`/`BrainSet` interface, and `Bots` — a room's
                   bot players, driving their brains; `setBrains` swaps
-                  brains live (players kept), `reconcile` matches a mix.
+                  brains live (players kept), `reconcile` matches a mix;
+                  the watchdog (`Bots.watchdog`, see "settled").
   brains/         HOT-LOADED (see "settled"): how bots play. kinds.ts (five
                   kinds: wanderer, rotator, hunter, farmer, bridge),
                   sense.ts (rule scout, sliced per tick or `prepareBots` up
@@ -63,9 +64,13 @@ server/index.ts   Node + ws. Rooms per game mode (`Room`: engine + bots +
 server/brains.ts  Hot-loaded brains: `sourceKey`/`brainsHash`, reads
                   `BOTS_URL` (gs:// with the instance's token, or http),
                   `BrainsWatcher` polls the manifest, checks key + SHA-256,
-                  imports, applies; reverts a build that keeps throwing.
+                  imports, applies; reverts a build that keeps throwing
+                  (`failed`) or tripping the bot watchdog (`slow`).
 server/status-page.ts  /status (HTML, polls /status.json): rooms, players,
-                  memory, loop time, joins/drops/errors, the recent log.
+                  memory, loop time (worst pass and longest gap in the last
+                  minute), joins/drops/errors/watchdog, the recent log.
+server/loop-stats.ts  `WindowMax`: the worst of a value over a sliding
+                  minute (5 s buckets), for /status.
 server/pattern-stats.ts  Which rules people play and how they score: a
                   stint per (player, rule), sampled once a second; rows per
                   (mode, rule, bot). /patterns(.json)?key=STATS_KEY, a JSON
@@ -215,7 +220,8 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   default. 
   (Before this, wanderers drew from every clean rule, the FASS subset included.)
   Bot work per tick stays in single-digit ms at hex level 6 —
-  `scripts/bot-arena.ts` prints it; keep it there.
+  `scripts/bot-arena.ts` prints it (and each kind's slowest update, and any
+  watchdog trips); keep it there. The watchdog (below) enforces a bound.
 - **Feedback → issues → agent PRs** (docs/feedback-agent.md). The Feedback
   button posts to `POST /feedback`; the server keeps each report in the
   `FEEDBACK_URL` bucket (it can only create there); `feedback-triage.yml`
@@ -253,7 +259,37 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   `DEFAULT_KNOBS`, not `TUNING`, so a tuning push can't break them; the two
   may drift. `tests/knobs.test.ts`, `tests/brains.test.ts`. The bucket must
   stay CI-write-only — a build runs in-process. An infinite loop is not
-  caught. `tests/brains.test.ts` swaps a build into a spawned server.
+  caught (nor is any slow call until it returns: see the watchdog).
+  `tests/brains.test.ts` swaps a build into a spawned server.
+- **A bot brain too slow for the loop is benched** (`Bots.watchdog`). On
+  2026-10-03 a bridge brain's first decision ran for minutes inside the one
+  50 ms loop that ticks every room, then ~0.5 s per decision: the whole
+  process froze (`/health` too), and nothing showed it — `guard()` only
+  catches exceptions. Now `Bots.update` times each bot's `update` and the
+  set's shared scout (`work`). One over `hardMs` (200), or `strikes` (10)
+  over `softMs` (20) within `window` (200) ticks, and that kind is *benched
+  in that room*: all its bots leave, `add`/`reconcile` skip it (so
+  `botChoice` and `LIVE_MIX` can't bring it back), `kinds()`/`roomBots()`
+  stop offering it (the `bots` message refuses it), until `setBrains` gives
+  new brains a clean slate. Two exceptions, both from measurements at hex 6:
+  an update in which the bot switched rule is held to the soft budget only
+  (it paid the engine's regrow plan — a rotator's took 1–2.6 s with a big
+  score, as a human's switch does on the message handler), and the scout to
+  the hard limit only (finite slices of a few ms that a busy machine
+  stretches past 20). `onSlow` → the server logs a `watchdog:` warn line,
+  counts `counters.watchdog`, sends the room a `bots` event, and calls
+  `BrainsWatcher.slow`: 3 trips of a hot build within 10 min revert to the
+  built-in brains and blacklist it, as `failed` does for exceptions. **It
+  acts only after a slow call returns**: a synchronous call can't be cut
+  short on its own thread, so an infinite loop — or a minutes-long first
+  call — still hangs everything; bots on a worker thread would be the cure.
+  Off unless set, because with it a game depends on the machine's speed
+  (tests that want it give it a fake `clock`): the server sets it
+  (`BOT_WATCHDOG_HARD_MS`/`_SOFT_MS`/`_STRIKES`/`_WINDOW`), solo uses the
+  looser `SOLO_WATCHDOG` (1 s, or 10 × 100 ms: a phone is slower and only
+  that tab lags), and `npm run brains -- check` fails a build that trips it
+  at hex 4 (the 10-03 bridge took ~2 s an update there).
+  `tests/watchdog.test.ts`, incl. a spawned server running a hogging build.
 - **Two game modes** (`knobs.mode`, per room): **Normal** (default in the
   lobby and on the server) and **Conquest (beta)** — everything described
   under "Captured patterns" below. In normal mode a rival line wholly inside
@@ -513,7 +549,11 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   process holds every room, so `guard()` logs an exception (every 10 s at
   most per source) instead. The welcome snapshot doesn't count towards
   `MAX_BUFFERED` (a client's `allowance`): on a busy board it alone can be
-  bigger. `/status` is read-only and public — no ids or tokens on it.
+  bigger. `/status` is read-only and public — no ids or tokens on it. Its
+  worst loop pass and longest gap between passes (which catches a slow
+  message handler too) are the worst of the last minute (`WindowMax`), held
+  the whole minute; a pass is stamped when it ends, so one longer than a
+  minute still shows. (The old figure was zeroed every 60 s.)
 - **Pattern stats are private.** A table of rules by score is kept private, so it never goes on `/status`: `/patterns` 404s
   unless `STATS_KEY` is set and `?key=` matches. On Cloud Run the durable
   record is the log — one JSON line `{"message":"stint","stint":{…}}` per
