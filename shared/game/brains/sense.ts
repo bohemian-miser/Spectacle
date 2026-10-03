@@ -298,6 +298,8 @@ interface EdgeAt {
 export class EdgeIndex {
   readonly starts: EdgeStart[] = [];
   private readonly numbers = new Map<number, number>();
+  /** Every line walked from a start so far (`EdgeWalk`), by its start: the rule's lines never change. */
+  private readonly lines = new Map<number, EdgeLine>();
   private first: EdgeAt | null = null;
   private cur: EdgeAt | null = null;
   private traced = 0;
@@ -317,6 +319,27 @@ export class EdgeIndex {
   /** The number of the start at end `end` of chord `chord` of `tile`, or -1 (that end isn't on the edge). */
   numberOf(tile: number, chord: number, end: 0 | 1): number {
     return this.numbers.get((tile * 64 + chord) * 2 + end) ?? -1;
+  }
+
+  /**
+   * The line from start `from` if one walked it before, or undefined: then
+   * walk it (`EdgeWalk`). Past `limit` steps it counts as no bridge (`end`
+   * null), as a walk with that limit would.
+   */
+  lineFrom(from: number, limit: number): EdgeLine | undefined {
+    const line = this.lines.get(from);
+    if (!line) return undefined;
+    if (line.capped) return limit <= line.length ? line : undefined;
+    return line.length <= limit ? line : { ...line, end: null };
+  }
+
+  /** What a walk found (both ways round, for a bridge). */
+  noteLine(from: number, line: EdgeLine): void {
+    const had = this.lines.get(from);
+    if (had && !had.capped) return;
+    if (this.lines.size > 4 * this.starts.length + 64) this.lines.clear();
+    this.lines.set(from, line);
+    if (line.end !== null) this.lines.set(line.end, { ...line, end: from, first: line.last, last: line.first });
   }
 
   /** Trace about `budget` walk steps' worth more. True once the whole edge is indexed. */
@@ -441,6 +464,18 @@ export function edgeIndexFor(field: Field, table: ChordTable): EdgeIndex {
  * when the line isn't a bridge (it closes on itself, forks, or runs past
  * `limit` steps); undefined while still walking.
  */
+/** A line from an edge start, as walked: where it comes out, and three of its steps (enough to judge it by). */
+export interface EdgeLine {
+  /** The start it comes out at; null: no bridge (it closes, forks, or ran past the walk's limit). */
+  readonly end: number | null;
+  readonly length: number;
+  /** It ran past the walk's limit: a longer walk may still find its end. */
+  readonly capped: boolean;
+  readonly first: WalkStep;
+  readonly mid: WalkStep;
+  readonly last: WalkStep;
+}
+
 export class EdgeWalk {
   readonly steps: WalkStep[] = [];
   end: number | null | undefined = undefined;
@@ -471,11 +506,12 @@ export class EdgeWalk {
       if (out.kind === 'dead') {
         const w = worldChord(field, table, cur.tile, cur.chord);
         const at = this.index.numberOf(cur.tile, cur.chord, samePt(w[0], cur.b) ? 0 : 1);
-        this.end = at >= 0 && at !== this.from ? at : null;
-      } else if (out.kind === 'junction' || this.steps.length >= this.limit) this.end = null;
+        this.finish(at >= 0 && at !== this.from ? at : null, false);
+      } else if (out.kind === 'junction') this.finish(null, false);
+      else if (this.steps.length >= this.limit) this.finish(null, true);
       else {
         const k = out.step.tile * 64 + out.step.chord;
-        if (this.seen.has(k)) this.end = null;
+        if (this.seen.has(k)) this.finish(null, false);
         else {
           this.seen.add(k);
           this.steps.push(out.step);
@@ -483,6 +519,12 @@ export class EdgeWalk {
       }
     }
     return n;
+  }
+
+  private finish(end: number | null, capped: boolean): void {
+    this.end = end;
+    const steps = this.steps;
+    this.index.noteLine(this.from, { end, length: steps.length, capped, first: steps[0], mid: steps[steps.length >> 1], last: steps[steps.length - 1] });
   }
 }
 
