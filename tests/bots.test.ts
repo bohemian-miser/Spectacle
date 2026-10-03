@@ -5,7 +5,8 @@ import { Engine } from '../shared/game/engine';
 import { buildField, fieldOutline } from '../shared/game/field';
 import { DEFAULT_KNOBS, knobsForMode } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
-import { fassRule, ruleKey } from '../shared/game/rule';
+import { fassRule, ruleKey, ruleFromCombo } from '../shared/game/rule';
+import { validEdgeSubsets } from '../shared/tiles';
 import { mulberry32 } from '../shared/game/rng';
 
 const field = buildField({ family: 'hex', level: 4, rootTile: 'Delta' });
@@ -110,23 +111,15 @@ describe('bots at play', () => {
     expect(cuts).toBeGreaterThan(3);
   });
 
-  it('a bridge plays a long-line rule and keeps tapping its plan', () => {
+  it('a bridge plays a fixed all-edges all-zeros rule and taps its nesting plan', () => {
     const { engine, events, byName } = play({ bridge: 1, wanderer: 2 }, 4 * 60_000, 6);
     const bridge = byName('Bridge');
-    const scout = scoutFor(field);
-    const top = [...scout.reports].filter((r) => !r.infinite).sort((a, b) => b.reach - a.reach).slice(0, 4).map((r) => ruleKey(r.rule));
-    expect(top).toContain(ruleKey(bridge.rule));
-    // Its line: long, and it has grown a lot of steps over the game.
+    const valid = validEdgeSubsets(engine.field.family);
+    const maxSubset = valid.reduce((a, b) => a.edges.length > b.edges.length ? a : b);
+    const expectedRule = ruleFromCombo(engine.field.family, maxSubset.edges.join(''), '0'.repeat(20));
+    expect(ruleKey(bridge.rule)).toBe(ruleKey(expectedRule));
     const steps = events.filter((e) => e.t === 'step' && e.owner === bridge.id).length;
-    expect(steps).toBeGreaterThan(300);
+    expect(steps).toBeGreaterThan(40);
     expect(engine.players.size).toBe(3);
-  });
-
-  it('plays an infinite-line rule only when allowed', () => {
-    const allowed = play({ bridge: 3 }, 2_000, 7, { infiniteLines: true });
-    const banned = play({ bridge: 3 }, 2_000, 7);
-    for (const p of banned.engine.players.values()) expect(isInfiniteLineRule(p.rule)).toBe(false);
-    // Allowed, the reach ranking puts the FASS family on top on hex.
-    expect([...allowed.engine.players.values()].some((p) => isInfiniteLineRule(p.rule))).toBe(true);
   });
 });

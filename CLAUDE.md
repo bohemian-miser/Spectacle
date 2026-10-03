@@ -170,8 +170,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
 
 ## Settled decisions (don't relitigate without the owner)
 
-- **No FASS preset, no hint.** The infinite-line rules (hex `128`, spectre
-  `1278`) are for players to discover. `fassRule()` exists for tests and the away switch (see "Resume window") only; the
+- **No FASS preset, no hint.** `fassRule()` exists for tests and the away switch (see "Resume window") only; the
   README must not name them. Default rule is selection `15`.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
@@ -200,9 +199,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the same message (`LocalConnection`, caps as the lobby's picker) and saves
   it as the picker's choice. `tests/room-bots.test.ts`. Solo picks per kind in
   the lobby (localStorage `spectacle.soloBots`, `?bots=`), one of each by
-  default. **No bot plays an infinite-line rule** (the whole hex `128` /
-  spectre `1278` subset, any matching — `isInfiniteLineRule`) unless
-  `BOT_INFINITE_LINES=1`: a bot on one would show everyone the discovery.
+  default. 
   (Before this, wanderers drew from every clean rule, the FASS subset included.)
   Bot work per tick stays in single-digit ms at hex level 6 —
   `scripts/bot-arena.ts` prints it; keep it there.
@@ -215,7 +212,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   the workflow before the agent sees anything) wake it again.
   Reports are untrusted, so: the triage agent's job holds no Google
   credentials (pull and apply are separate jobs); `toTriageItem` drops the
-  contact and hides an infinite-line rule; the solver refuses to run unless
+  contact the solver refuses to run unless
   a ruleset makes `main` take a reviewed PR, and gets a one-hour app token,
   no long-lived key. Keep all of that if you touch it.
 - **Bot brains hot-load; everything else deploys.** Bot *players* live in the
@@ -448,8 +445,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   with capture on, only above it. Stopping at opponents also
   keeps plans cheap on a live board — at hex 5 with one rival on ~3% of
   the tiles, the worst plan fell from 88 ms to 2.6 ms; only a near-empty
-  board still walks the huge strands. The infinite-line rules are eligible
-  like any other (owner's call: finding one should pay). The old lines are wiped (points leave), then
+  board still walks the huge strands. The old lines are wiped (points leave), then
   `sprout` (with `only` and `regrow`) lays the bought circuits' chords on
   the held tiles alone, each scoring a tile's points. From there they grow
   as flip pieces, and `regrow` paths close at `comboStart` without feeding
@@ -491,8 +487,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   most per source) instead. The welcome snapshot doesn't count towards
   `MAX_BUFFERED` (a client's `allowance`): on a busy board it alone can be
   bigger. `/status` is read-only and public — no ids or tokens on it.
-- **Pattern stats are private.** A table of rules by score would give away
-  the infinite-line rules, so it never goes on `/status`: `/patterns` 404s
+- **Pattern stats are private.** A table of rules by score is kept private, so it never goes on `/status`: `/patterns` 404s
   unless `STATS_KEY` is set and `?key=` matches. On Cloud Run the durable
   record is the log — one JSON line `{"message":"stint","stint":{…}}` per
   finished stint (rule in `describeRule` form, mode, bot, ms, final and peak
@@ -522,7 +517,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   restarts the clock whenever it moves — lines still growing (a room with
   others in it ticks) keep an absent player in. A player away
   `AWAY_RULE_MS` (10 min, -1 = never) is switched by the server to the
-  infinite-line rule — the owner's design: the game is for checking in
+  default rule — the owner's design: the game is for checking in
   between meetings, and not checking in leaves you exposed. It goes
   through `fassRule` and `setRule` (so it regrows) and is kept on resume;
   the one place outside tests `fassRule` is used, and the README doesn't
@@ -612,7 +607,7 @@ publishes the image, deploys Pages, and (once configured) deploys Cloud Run.
   last or on its own.
 - **Event order matters** for the resume test: `wipe` then `score` then `leave`.
 - **`tapOntoOthers` defaults false** — tests that tap onto a rival must set it.
-- **Bots compound.** Speed ∝ score and lines multiply; bots on the FASS rule
+- **Bots compound.** Speed ∝ score and lines multiply; bots on the default rule
   can run away. That's tuning, not a bug — see knobs.
 - **Point-in-polygon on the circuit's `a` points** decides "inside" in the
   engine (taps, captures). The client's washes instead fill in from the line
