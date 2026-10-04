@@ -5,26 +5,41 @@
  * A quarter of a million tiles is ~10 draw calls and no per-frame JS work,
  * which is what a level-6 arena needs. Strands are drawn by the Canvas2D
  * overlay on top; this layer is tiles only.
+ *
+ * The Spectre view of a hexagon board (`spectre-view.ts`) is a second set of
+ * batches, one per Spectre leaf type, whose instances carry two transforms —
+ * the piece's own and its hex parent's — and whose vertices carry two
+ * positions — the Spectre's and its home in the hexagon. The shader mixes
+ * the two by `u_t`, so the morph between the shapes is the same single
+ * instanced pass, and the plain hexagon batches are the degenerate case
+ * (both transforms the tile's, both positions the vertex's, `u_t` 0).
  */
 
 import type { Field } from '../../shared/game/field';
 import { leafPts, type Pt } from '../../shared/tiles';
 import type { Camera } from './camera';
+import { VIEW_FAMILY, hexTypeOf, type SpectreView } from './spectre-view';
 import type { BoardTheme } from './theme';
 import { ARROW_MIN_SCALE, directionArrow, type Rgb01, type TileLayer } from './tiles-layer';
 
 const VS = `#version 300 es
 precision highp float;
 in vec2 a_local;
+in vec2 a_home;
 in vec3 a_m0;
 in vec3 a_m1;
+in vec3 a_h0;
+in vec3 a_h1;
 in vec4 a_tint;
 uniform vec2 u_cam;
 uniform float u_scale;
 uniform vec2 u_half;
+uniform float u_t;
 out vec4 v_tint;
 void main() {
-  vec2 w = vec2(dot(a_m0.xy, a_local) + a_m0.z, dot(a_m1.xy, a_local) + a_m1.z);
+  vec2 ws = vec2(dot(a_m0.xy, a_local) + a_m0.z, dot(a_m1.xy, a_local) + a_m1.z);
+  vec2 wh = vec2(dot(a_h0.xy, a_home) + a_h0.z, dot(a_h1.xy, a_home) + a_h1.z);
+  vec2 w = mix(wh, ws, u_t);
   vec2 s = (w - u_cam) * u_scale;
   gl_Position = vec4(s.x / u_half.x, -s.y / u_half.y, 0.0, 1.0);
   v_tint = a_tint;
@@ -102,8 +117,21 @@ interface TypeBatch {
   readonly vertexCount: number;
   readonly first: number;
   readonly count: number;
-  /** Index into the fills array, which the theme can swap out under us. */
-  readonly type: number;
+  /** Index into the fills array (a hex leaf type), which the theme can swap out under us. */
+  readonly fill: number;
+}
+
+/** A set of batches over one instance buffer: the hexagons, or the Spectre view's pieces. */
+interface Geometry {
+  readonly batches: readonly TypeBatch[];
+  readonly instBuf: WebGLBuffer;
+  readonly tintBuf: WebGLBuffer;
+  readonly tints: Uint8Array;
+  /** Instance → sorted slot. */
+  readonly slotOf: Int32Array;
+  readonly buffers: readonly WebGLBuffer[];
+  readonly vaos: readonly WebGLVertexArrayObject[];
+  tintsDirty: boolean;
 }
 
 /**
@@ -155,125 +183,204 @@ export function createGlTiles(
   if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog) ?? 'link');
   const loc = {
     local: gl.getAttribLocation(prog, 'a_local'),
+    home: gl.getAttribLocation(prog, 'a_home'),
     m0: gl.getAttribLocation(prog, 'a_m0'),
     m1: gl.getAttribLocation(prog, 'a_m1'),
+    h0: gl.getAttribLocation(prog, 'a_h0'),
+    h1: gl.getAttribLocation(prog, 'a_h1'),
     tint: gl.getAttribLocation(prog, 'a_tint'),
     cam: gl.getUniformLocation(prog, 'u_cam'),
     scale: gl.getUniformLocation(prog, 'u_scale'),
     half: gl.getUniformLocation(prog, 'u_half'),
+    t: gl.getUniformLocation(prog, 'u_t'),
     fill: gl.getUniformLocation(prog, 'u_fill'),
     useTint: gl.getUniformLocation(prog, 'u_useTint'),
   };
 
-  // Instances sorted by type so each type is one contiguous instanced draw.
-  const n = field.count;
-  const types = field.leafTypes.length;
-  const perType: number[] = new Array(types).fill(0);
-  for (let i = 0; i < n; i++) perType[field.types[i]]++;
-  const firstOf: number[] = [];
-  let acc = 0;
-  for (let t = 0; t < types; t++) {
-    firstOf.push(acc);
-    acc += perType[t];
-  }
-  const slotOf = new Int32Array(n);
-  const cursor = [...firstOf];
-  const inst = new Float32Array(n * 6);
-  for (let i = 0; i < n; i++) {
-    const s = cursor[field.types[i]]++;
-    slotOf[i] = s;
-    for (let k = 0; k < 6; k++) inst[s * 6 + k] = field.xforms[i * 6 + k];
-  }
-  const tints = new Uint8Array(n * 4);
-
-  const instBuf = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, inst, gl.STATIC_DRAW);
-  const tintBuf = gl.createBuffer()!;
-  gl.bindBuffer(gl.ARRAY_BUFFER, tintBuf);
-  gl.bufferData(gl.ARRAY_BUFFER, tints, gl.DYNAMIC_DRAW);
-
-  const batches: TypeBatch[] = [];
-  for (let t = 0; t < types; t++) {
-    if (perType[t] === 0) continue;
-    const pts = leafPts(field.family, field.leafTypes[t]);
-    const verts = new Float32Array(pts.length * 2);
-    pts.forEach((p, i) => {
-      verts[i * 2] = p.x;
-      verts[i * 2 + 1] = p.y;
-    });
-    const tri = new Uint16Array(triangulate(pts));
+  /**
+   * The vertex attributes of one shape: `verts` holds `[local, home]` pairs
+   * (`home` the same as `local` for a plain tile); the instance buffer holds
+   * `[m0, m1, h0, h1]` per instance (12 floats), `h` the same as `m` for a
+   * plain tile. One VAO per shape, its instances a contiguous run.
+   */
+  const shapeVao = (
+    verts: Float32Array,
+    tri: Uint16Array | null,
+    instBuf: WebGLBuffer,
+    firstSlot: number,
+    tintBuf: WebGLBuffer | null,
+    buffers: WebGLBuffer[],
+  ): WebGLVertexArrayObject => {
     const vao = gl.createVertexArray()!;
     gl.bindVertexArray(vao);
     const vbo = gl.createBuffer()!;
+    buffers.push(vbo);
     gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
     gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
     gl.enableVertexAttribArray(loc.local);
-    gl.vertexAttribPointer(loc.local, 2, gl.FLOAT, false, 0, 0);
-    const ebo = gl.createBuffer()!;
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, tri, gl.STATIC_DRAW);
+    gl.vertexAttribPointer(loc.local, 2, gl.FLOAT, false, 16, 0);
+    gl.enableVertexAttribArray(loc.home);
+    gl.vertexAttribPointer(loc.home, 2, gl.FLOAT, false, 16, 8);
+    if (tri) {
+      const ebo = gl.createBuffer()!;
+      buffers.push(ebo);
+      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
+      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, tri, gl.STATIC_DRAW);
+    }
     gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-    const base = firstOf[t] * 24;
-    gl.enableVertexAttribArray(loc.m0);
-    gl.vertexAttribPointer(loc.m0, 3, gl.FLOAT, false, 24, base);
-    gl.vertexAttribDivisor(loc.m0, 1);
-    gl.enableVertexAttribArray(loc.m1);
-    gl.vertexAttribPointer(loc.m1, 3, gl.FLOAT, false, 24, base + 12);
-    gl.vertexAttribDivisor(loc.m1, 1);
-    gl.bindBuffer(gl.ARRAY_BUFFER, tintBuf);
-    gl.enableVertexAttribArray(loc.tint);
-    gl.vertexAttribPointer(loc.tint, 4, gl.UNSIGNED_BYTE, true, 4, firstOf[t] * 4);
-    gl.vertexAttribDivisor(loc.tint, 1);
+    const base = firstSlot * 48;
+    for (const [l, off] of [
+      [loc.m0, 0],
+      [loc.m1, 12],
+      [loc.h0, 24],
+      [loc.h1, 36],
+    ] as const) {
+      gl.enableVertexAttribArray(l);
+      gl.vertexAttribPointer(l, 3, gl.FLOAT, false, 48, base + off);
+      gl.vertexAttribDivisor(l, 1);
+    }
+    if (tintBuf) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, tintBuf);
+      gl.enableVertexAttribArray(loc.tint);
+      gl.vertexAttribPointer(loc.tint, 4, gl.UNSIGNED_BYTE, true, 4, firstSlot * 4);
+      gl.vertexAttribDivisor(loc.tint, 1);
+    } else {
+      // No per-instance tint (the pass draws with u_useTint = 0).
+      gl.disableVertexAttribArray(loc.tint);
+      gl.vertexAttrib4f(loc.tint, 0, 0, 0, 0);
+    }
     gl.bindVertexArray(null);
-    batches.push({ vao, indexCount: tri.length, vertexCount: pts.length, first: firstOf[t], count: perType[t], type: t });
-  }
+    return vao;
+  };
+
+  /**
+   * Instances sorted by type so each type is one contiguous instanced draw.
+   * `xformOf(i)` fills 12 floats: the instance's transform, then the one its
+   * vertices' homes are measured in.
+   */
+  const geometry = (
+    n: number,
+    typeOf: (i: number) => number,
+    types: number,
+    shapeOf: (type: number) => { local: readonly Pt[]; home: readonly Pt[]; fill: number },
+    xformOf: (i: number, out: Float32Array, o: number) => void,
+  ): Geometry => {
+    const perType: number[] = new Array(types).fill(0);
+    for (let i = 0; i < n; i++) perType[typeOf(i)]++;
+    const firstOf: number[] = [];
+    let acc = 0;
+    for (let t = 0; t < types; t++) {
+      firstOf.push(acc);
+      acc += perType[t];
+    }
+    const slotOf = new Int32Array(n);
+    const cursor = [...firstOf];
+    const inst = new Float32Array(n * 12);
+    for (let i = 0; i < n; i++) {
+      const s = cursor[typeOf(i)]++;
+      slotOf[i] = s;
+      xformOf(i, inst, s * 12);
+    }
+    const tints = new Uint8Array(n * 4);
+    const instBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, inst, gl.STATIC_DRAW);
+    const tintBuf = gl.createBuffer()!;
+    gl.bindBuffer(gl.ARRAY_BUFFER, tintBuf);
+    gl.bufferData(gl.ARRAY_BUFFER, tints, gl.DYNAMIC_DRAW);
+    const buffers: WebGLBuffer[] = [instBuf, tintBuf];
+    const vaos: WebGLVertexArrayObject[] = [];
+    const batches: TypeBatch[] = [];
+    for (let t = 0; t < types; t++) {
+      if (perType[t] === 0) continue;
+      const { local, home, fill } = shapeOf(t);
+      const verts = new Float32Array(local.length * 4);
+      local.forEach((p, i) => {
+        verts[i * 4] = p.x;
+        verts[i * 4 + 1] = p.y;
+        verts[i * 4 + 2] = home[i].x;
+        verts[i * 4 + 3] = home[i].y;
+      });
+      const tri = new Uint16Array(triangulate(local));
+      const vao = shapeVao(verts, tri, instBuf, firstOf[t], tintBuf, buffers);
+      vaos.push(vao);
+      batches.push({ vao, indexCount: tri.length, vertexCount: local.length, first: firstOf[t], count: perType[t], fill });
+    }
+    return { batches, instBuf, tintBuf, tints, slotOf, buffers, vaos, tintsDirty: false };
+  };
+
+  const n = field.count;
+  const hex = geometry(
+    n,
+    (i) => field.types[i],
+    field.leafTypes.length,
+    (t) => {
+      const pts = leafPts(field.family, field.leafTypes[t]);
+      return { local: pts, home: pts, fill: t };
+    },
+    (i, out, o) => {
+      for (let k = 0; k < 6; k++) {
+        out[o + k] = field.xforms[i * 6 + k];
+        out[o + 6 + k] = field.xforms[i * 6 + k];
+      }
+    },
+  );
 
   // The direction arrow: one shape in tile-local coordinates for every tile of
-  // the family, so the whole field is a single instanced draw over `instBuf`.
-  // Only hexagons need it — a Spectre's outline already shows its rotation.
+  // the family, so the whole field is a single instanced draw over the hex
+  // instance buffer. Only hexagons need it — a Spectre's outline already
+  // shows its rotation.
   let arrowVao: WebGLVertexArrayObject | null = null;
   let arrowIndexCount = 0;
   if (field.family === 'hex') {
     const pts = directionArrow(leafPts(field.family, field.leafTypes[0]));
-    const verts = new Float32Array(pts.length * 2);
+    const verts = new Float32Array(pts.length * 4);
     pts.forEach((p, i) => {
-      verts[i * 2] = p.x;
-      verts[i * 2 + 1] = p.y;
+      verts[i * 4] = p.x;
+      verts[i * 4 + 1] = p.y;
+      verts[i * 4 + 2] = p.x;
+      verts[i * 4 + 3] = p.y;
     });
     const tri = new Uint16Array(triangulate(pts));
     arrowIndexCount = tri.length;
-    arrowVao = gl.createVertexArray()!;
-    gl.bindVertexArray(arrowVao);
-    const vbo = gl.createBuffer()!;
-    gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
-    gl.bufferData(gl.ARRAY_BUFFER, verts, gl.STATIC_DRAW);
-    gl.enableVertexAttribArray(loc.local);
-    gl.vertexAttribPointer(loc.local, 2, gl.FLOAT, false, 0, 0);
-    const ebo = gl.createBuffer()!;
-    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ebo);
-    gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, tri, gl.STATIC_DRAW);
-    // No per-instance tint here (the pass draws with u_useTint = 0), so every
-    // tile's transform comes from one uninterrupted run of the buffer.
-    gl.bindBuffer(gl.ARRAY_BUFFER, instBuf);
-    gl.enableVertexAttribArray(loc.m0);
-    gl.vertexAttribPointer(loc.m0, 3, gl.FLOAT, false, 24, 0);
-    gl.vertexAttribDivisor(loc.m0, 1);
-    gl.enableVertexAttribArray(loc.m1);
-    gl.vertexAttribPointer(loc.m1, 3, gl.FLOAT, false, 24, 12);
-    gl.vertexAttribDivisor(loc.m1, 1);
-    gl.bindVertexArray(null);
+    arrowVao = shapeVao(verts, tri, hex.instBuf, 0, null, hex.buffers as WebGLBuffer[]);
   }
 
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   let typeFills = fills;
   let scheme = board;
-  let tintsDirty = false;
   let arrows = true;
-  const tinted: number[] = [];
-  /** Slots already in `tinted`. */
-  const listed = new Uint8Array(field.count);
+  /** The Spectre view's pieces, built when the view arrives. */
+  let view: SpectreView | null = null;
+  let pieces: Geometry | null = null;
+  let morph = 0;
+
+  const dropPieces = (): void => {
+    if (!pieces) return;
+    for (const vao of pieces.vaos) gl.deleteVertexArray(vao);
+    for (const b of pieces.buffers) gl.deleteBuffer(b);
+    pieces = null;
+  };
+
+  const tintPiece = (tile: number, r: number, g: number, b: number, a: number): void => {
+    if (!view || !pieces) return;
+    for (let s = view.first[tile]; s < view.first[tile + 1]; s++) {
+      const q = pieces.slotOf[s] * 4;
+      pieces.tints[q] = r;
+      pieces.tints[q + 1] = g;
+      pieces.tints[q + 2] = b;
+      pieces.tints[q + 3] = a;
+    }
+    pieces.tintsDirty = true;
+  };
+
+  const upload = (g: Geometry): void => {
+    if (!g.tintsDirty) return;
+    gl.bindBuffer(gl.ARRAY_BUFFER, g.tintBuf);
+    gl.bufferSubData(gl.ARRAY_BUFFER, 0, g.tints);
+    g.tintsDirty = false;
+  };
 
   return {
     kind: 'webgl',
@@ -290,36 +397,57 @@ export function createGlTiles(
       scheme = next;
       typeFills = nextFills;
     },
-    clearTints() {
-      for (const s of tinted) {
-        tints[s * 4] = 0;
-        tints[s * 4 + 1] = 0;
-        tints[s * 4 + 2] = 0;
-        tints[s * 4 + 3] = 0;
+    setView(next) {
+      if (next === view) return;
+      dropPieces();
+      view = next;
+      if (!view) return;
+      const v = view;
+      pieces = geometry(
+        v.count,
+        (s) => v.types[s],
+        v.leafTypes.length,
+        // A piece wears its hex tile's colour: both halves of the Mystic the Gamma's.
+        (t) => ({ local: leafPts(VIEW_FAMILY, v.leafTypes[t]), home: v.homes[t], fill: field.leafTypes.indexOf(hexTypeOf(v.leafTypes[t])) }),
+        (s, out, o) => {
+          const h = v.parent[s] * 6;
+          for (let k = 0; k < 6; k++) {
+            out[o + k] = v.xforms[s * 6 + k];
+            out[o + 6 + k] = field.xforms[h + k];
+          }
+        },
+      );
+      // The pieces take the tints their tiles already wear.
+      for (let i = 0; i < n; i++) {
+        const q = hex.slotOf[i] * 4;
+        if (hex.tints[q + 3] !== 0) tintPiece(i, hex.tints[q], hex.tints[q + 1], hex.tints[q + 2], hex.tints[q + 3]);
       }
-      tinted.length = 0;
-      listed.fill(0);
-      tintsDirty = true;
+    },
+    setMorph(t) {
+      morph = Math.max(0, Math.min(1, t));
+    },
+    clearTints() {
+      hex.tints.fill(0);
+      hex.tintsDirty = true;
+      if (pieces) {
+        pieces.tints.fill(0);
+        pieces.tintsDirty = true;
+      }
     },
     setTint(tile, r, g, b, a) {
-      const s = slotOf[tile];
-      tints[s * 4] = r;
-      tints[s * 4 + 1] = g;
-      tints[s * 4 + 2] = b;
-      tints[s * 4 + 3] = a;
-      // Tints now change a tile at a time: list each slot once, not per call.
-      if (!listed[s]) {
-        listed[s] = 1;
-        tinted.push(s);
-      }
-      tintsDirty = true;
+      const s = hex.slotOf[tile] * 4;
+      hex.tints[s] = r;
+      hex.tints[s + 1] = g;
+      hex.tints[s + 2] = b;
+      hex.tints[s + 3] = a;
+      hex.tintsDirty = true;
+      tintPiece(tile, r, g, b, a);
     },
     draw(cam: Camera, width: number, height: number, dpr: number) {
-      if (tintsDirty) {
-        gl.bindBuffer(gl.ARRAY_BUFFER, tintBuf);
-        gl.bufferSubData(gl.ARRAY_BUFFER, 0, tints);
-        tintsDirty = false;
-      }
+      // The hexagons themselves until the morph starts; the pieces from then on.
+      const morphing = pieces !== null && morph > 0;
+      const g = morphing ? pieces! : hex;
+      upload(g);
       gl.viewport(0, 0, canvas.width, canvas.height);
       gl.clearColor(scheme.bg[0], scheme.bg[1], scheme.bg[2], 1);
       gl.clear(gl.COLOR_BUFFER_BIT);
@@ -327,10 +455,11 @@ export function createGlTiles(
       gl.uniform2f(loc.cam, cam.x, cam.y);
       gl.uniform1f(loc.scale, cam.scale * dpr);
       gl.uniform2f(loc.half, (width * dpr) / 2, (height * dpr) / 2);
+      gl.uniform1f(loc.t, morphing ? morph : 0);
       const outlines = cam.scale > 4;
-      for (const b of batches) {
+      for (const b of g.batches) {
         gl.bindVertexArray(b.vao);
-        const c = typeFills[b.type];
+        const c = typeFills[b.fill];
         gl.uniform4f(loc.fill, c[0], c[1], c[2], 1);
         gl.uniform1f(loc.useTint, 1);
         gl.drawElementsInstanced(gl.TRIANGLES, b.indexCount, gl.UNSIGNED_SHORT, 0, b.count);
@@ -340,8 +469,8 @@ export function createGlTiles(
           gl.drawArraysInstanced(gl.LINE_LOOP, 0, b.vertexCount, b.count);
         }
       }
-      // Arrows last, so a claimed tile keeps its direction.
-      if (arrowVao && arrows && cam.scale > ARROW_MIN_SCALE) {
+      // Arrows last, so a claimed tile keeps its direction — on the hexagons only.
+      if (arrowVao && arrows && !morphing && cam.scale > ARROW_MIN_SCALE) {
         gl.bindVertexArray(arrowVao);
         gl.uniform4f(loc.fill, scheme.ink[0], scheme.ink[1], scheme.ink[2], scheme.arrowAlpha);
         gl.uniform1f(loc.useTint, 0);
@@ -350,6 +479,7 @@ export function createGlTiles(
       gl.bindVertexArray(null);
     },
     dispose() {
+      dropPieces();
       gl.getExtension('WEBGL_lose_context')?.loseContext();
     },
   };

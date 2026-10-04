@@ -7,6 +7,7 @@
 
 import { TILE_PALETTES, type Pt, type Rgb, type TileTypeId } from '../../shared/tiles';
 import type { Camera } from './camera';
+import type { SpectreView } from './spectre-view';
 import type { BoardTheme } from './theme';
 
 /** Colour channels in 0..1. */
@@ -23,6 +24,13 @@ export interface TileLayer {
   setTint(tile: number, r: number, g: number, b: number, a: number): void;
   /** Show or hide the direction arrows (the plain board hides them). */
   setArrows(on: boolean): void;
+  /**
+   * The Spectre view of the field, once the renderer has built it (null
+   * takes it away). Its pieces take the tint of their hex tile.
+   */
+  setView(view: SpectreView | null): void;
+  /** How far across to the Spectre view to draw: 0 the hexagons (the plain layer), 1 the Spectres, between them the morph. */
+  setMorph(t: number): void;
   draw(cam: Camera, width: number, height: number, dpr: number): void;
   dispose(): void;
 }

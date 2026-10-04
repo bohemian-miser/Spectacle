@@ -11,13 +11,14 @@
  * Zoomed in close, your own rule is sketched faintly over the free tiles.
  */
 
-import { fieldOutline, tilesEnclosed, tilesInBox, type Box, type Field } from '../../shared/game/field';
-import { chordTableFor, tileChords, worldChord } from '../../shared/game/strand';
+import { fieldOutline, tileAt, tilesEnclosed, tilesInBox, type Box, type Field } from '../../shared/game/field';
+import { chordTableFor, tileChords, worldChord, type ChordTable } from '../../shared/game/strand';
 import { getSettings, type CircuitStyle, type Settings } from './settings';
-import { circuitLengthRgb, rgbToHex } from '../../shared/tiles';
+import { circuitLengthRgb, rgbToHex, type Pt } from '../../shared/tiles';
 import type { Camera } from './camera';
 import type { Burst, ClientPath, ClientPlayer, Coalesce, Store } from './store';
 import type { PathStepWire } from '../../shared/game/protocol';
+import { spectreView, viewChord, viewOutline, viewPoint, viewStep, viewTap, viewTileAt, type SpectreView } from './spectre-view';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
@@ -90,6 +91,13 @@ const LINES_BUDGET = 3;
 /** A line's points closer than this (device px, x + y) to the last one drawn are skipped (see `trace`). */
 const TRACE_MIN_PX = 1;
 
+/** How long the board takes to morph between hexagons and Spectres (ms). */
+const MORPH_MS = 1200;
+
+function prefersReducedMotion(): boolean {
+  return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
+}
+
 /** A cached overlay layer and what it was drawn for. */
 interface Layer {
   readonly canvas: HTMLCanvasElement | OffscreenCanvas;
@@ -111,8 +119,10 @@ interface LabelAnchor {
 
 export class Renderer {
   readonly camera: Camera = { x: 0, y: 0, scale: 10 };
-  /** A switch's end-state paths, built once (`drawGhost`). */
-  private readonly ghostPaths = new WeakMap<Coalesce, { line: Path2D; fill: Path2D }>();
+  /** A switch's end-state paths, built once per view (`drawGhost`). */
+  private readonly ghostPaths = new WeakMap<Coalesce, { t: number; line: Path2D; fill: Path2D }>();
+  /** A switch's motes carried into the view they play in (`drawCoalesce`). */
+  private readonly viewMotes = new WeakMap<Coalesce, { t: number; from: readonly Pt[]; to: readonly (Pt | null)[] }>();
   private ctx: CanvasRenderingContext2D;
   private tiles: TileLayer | null = null;
   private width = 1;
@@ -136,6 +146,13 @@ export class Renderer {
   private plain = getSettings().plainTiles;
   /** Team colours: yours blue, everyone else red. */
   private teams = getSettings().teams;
+  /** The Spectre view of a hexagon board (see `spectre-view.ts`): wanted, built, and how far across the board is. */
+  private spectres = getSettings().spectres;
+  private view: SpectreView | null = null;
+  /** 0 = hexagons, 1 = Spectres; between them while the morph plays. */
+  private viewT = 0;
+  private morph: { from: number; to: number; start: number } | null = null;
+  private readonly stepScratch: number[] = [];
   /** A closed circuit's enclosed tiles; a closed path never changes, so once is enough. */
   private readonly interiors = new WeakMap<ClientPath, { tiles: readonly number[]; rings: readonly number[] }>();
   /** A closed path's colour and darkening, keyed on the owner colour it was made from. */
@@ -199,6 +216,45 @@ export class Renderer {
     this.tiles.resize(Math.round(this.width * this.dpr), Math.round(this.height * this.dpr));
     this.tiles.setArrows(!this.plain);
     this.lastGeometry = -1;
+    // A new board starts as hexagons (a fresh view is built for it if wanted), with no morph to play.
+    this.view = null;
+    this.viewT = 0;
+    this.morph = null;
+    if (this.spectres) this.applyView(true, false);
+  }
+
+  /**
+   * Show the board as Spectres (or as hexagons again), morphing between the
+   * two unless told not to (or the player prefers reduced motion). Only a
+   * hexagon board has a Spectre view; the view is built on first use.
+   */
+  private applyView(on: boolean, animate: boolean): void {
+    this.spectres = on;
+    const field = this.field;
+    if (!field || !this.tiles || field.family !== 'hex') return;
+    if (on && !this.view) {
+      try {
+        this.view = spectreView(field);
+      } catch (err) {
+        console.warn('No Spectre view of this board', err);
+        return;
+      }
+      this.tiles.setView(this.view);
+    }
+    if (!this.view) return;
+    const to = on ? 1 : 0;
+    if (animate && !prefersReducedMotion()) {
+      this.morph = { from: this.viewT, to, start: performance.now() };
+    } else {
+      this.morph = null;
+      this.viewT = to;
+      this.tiles.setMorph(to);
+    }
+  }
+
+  /** How far across to the Spectre view the board is drawn right now (0 = hexagons). */
+  get morphT(): number {
+    return this.view ? this.viewT : 0;
   }
 
   private fills(field: Field): Rgb01[] {
@@ -236,6 +292,7 @@ export class Renderer {
       this.tiles?.setArrows(!this.plain);
       this.lastGeometry = -1;
     }
+    if (s.spectres !== this.spectres) this.applyView(s.spectres, true);
   }
 
   /** The colour a path draws in: its pattern's, or its team's with team colours on. */
@@ -280,6 +337,30 @@ export class Renderer {
       x: (sx - this.width / 2) / this.camera.scale + this.camera.x,
       y: (sy - this.height / 2) / this.camera.scale + this.camera.y,
     };
+  }
+
+  /**
+   * The tile under screen point (sx, sy) and the world point to send with a
+   * tap there, or null off the board. In the Spectre view the tile is the one
+   * whose piece is under the pointer, and the point names the chord nearest
+   * the tap as the player sees it (the server picks chords in hexagon
+   * geometry, by distance).
+   */
+  pick(sx: number, sy: number): { tile: number; x: number; y: number } | null {
+    const field = this.field;
+    if (!field) return null;
+    const w = this.screenToWorld(sx, sy);
+    if (this.view && this.viewT >= 0.5) {
+      const tile = viewTileAt(this.view, w, this.viewT);
+      if (tile < 0) return null;
+      const me = this.store.me;
+      const rule = me ? (me.patterns[me.active]?.rule ?? me.rule) : undefined;
+      if (!rule) return { tile, x: w.x, y: w.y };
+      const p = viewTap(this.view, chordTableFor(field, rule), tile, w, this.viewT);
+      return { tile, x: p.x, y: p.y };
+    }
+    const tile = tileAt(field, w);
+    return tile < 0 ? null : { tile, x: w.x, y: w.y };
   }
 
   panBy(dx: number, dy: number): void {
@@ -630,6 +711,8 @@ export class Renderer {
     const pattern = me.patterns[me.active] ?? { rule: me.rule, color: me.color };
     const table = chordTableFor(field, pattern.rule);
     const occupancy = this.store.occupancy;
+    const view = this.viewT > 0 ? this.view : null;
+    const pts = this.stepScratch;
     ctx.beginPath();
     for (const i of tilesInBox(field, box, this.visible)) {
       if (this.rivalInterior.has(i)) continue;
@@ -637,6 +720,15 @@ export class Renderer {
       if (occ && [...occ].some((q) => q.owner !== me.id)) continue;
       const n = tileChords(field, table, i).length;
       for (let c = 0; c < n; c++) {
+        if (view) {
+          viewChord(view, table, i, c, this.viewT, pts);
+          for (let k = 0; k < pts.length; k += 2) {
+            const [x, y] = toScreen(pts[k], pts[k + 1]);
+            if (k === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          continue;
+        }
         const [a, b] = worldChord(field, table, i, c);
         const [ax, ay] = toScreen(a.x, a.y);
         const [bx, by] = toScreen(b.x, b.y);
@@ -654,6 +746,14 @@ export class Renderer {
   private draw(t: number): void {
     const f = this.field;
     if (!f || !this.tiles) return;
+    if (this.morph) {
+      const m = this.morph;
+      const s = Math.min(1, (t - m.start) / MORPH_MS);
+      const e = s < 0.5 ? 4 * s * s * s : 1 - (-2 * s + 2) ** 3 / 2; // ease in-out
+      this.viewT = m.from + (m.to - m.from) * e;
+      this.tiles.setMorph(this.viewT);
+      if (s >= 1) this.morph = null;
+    }
     this.syncTints(t);
     // Both layers are cheap to call every frame: WebGL redraws in one pass,
     // the 2D layer caches its tiles by camera and only re-blits.
@@ -661,11 +761,13 @@ export class Renderer {
     this.drawOverlay(t);
   }
 
-  /** The arena's edge, for the plain board (where no tile fill shows it). */
+  /** The arena's edge, for the plain board (where no tile fill shows it). Not while the board is morphing. */
   private drawOutline(ctx: CanvasRenderingContext2D, toScreen: (x: number, y: number) => [number, number]): void {
     const field = this.field;
     if (!field) return;
-    const ring = fieldOutline(field);
+    const t = this.morphT;
+    if (t > 0 && t < 1) return;
+    const ring = t >= 1 && this.view ? viewOutline(this.view) : fieldOutline(field);
     if (ring.length < 3) return;
     ctx.beginPath();
     for (let k = 0; k < ring.length; k++) {
@@ -688,6 +790,39 @@ export class Renderer {
     return { canvas, ctx: canvas.getContext('2d') as CanvasRenderingContext2D, view: '', board: '', at: -Infinity, cost: 0 };
   }
 
+  /**
+   * The points a step draws, as flat `x, y` pairs: its chord's ends on the
+   * hexagons, or where the Spectre view puts them (`viewStep`), two or three
+   * points, part way across during the morph.
+   */
+  private stepPts(path: ClientPath, step: PathStepWire, out: number[]): number[] {
+    const table = this.view && this.viewT > 0 ? this.store.pathTable(path) : undefined;
+    if (table) return viewStep(this.view!, table, step, this.viewT, out);
+    out.length = 0;
+    out.push(step.a.x, step.a.y, step.b.x, step.b.y);
+    return out;
+  }
+
+  /** Where a step starts (`end` 0) or ends (1), as drawn. */
+  private stepEnd(path: ClientPath, step: PathStepWire, end: 0 | 1): Pt {
+    if (!this.view || this.viewT <= 0) return end === 0 ? step.a : step.b;
+    const pts = this.stepPts(path, step, this.stepScratch);
+    return end === 0 ? { x: pts[0], y: pts[1] } : { x: pts[pts.length - 2], y: pts[pts.length - 1] };
+  }
+
+  /** The middle of a step as drawn (a label's anchor). */
+  private stepMid(path: ClientPath, step: PathStepWire): Pt {
+    if (!this.view || this.viewT <= 0) return { x: (step.a.x + step.b.x) / 2, y: (step.a.y + step.b.y) / 2 };
+    const pts = this.stepPts(path, step, this.stepScratch);
+    const k = pts.length === 6 ? 2 : 0;
+    return { x: (pts[k] + pts[k + 2]) / 2, y: (pts[k + 1] + pts[k + 3]) / 2 };
+  }
+
+  /** A hex-world point that no step pins down (sparks, motes), as the view draws it. */
+  private viewPt(p: Pt): Pt {
+    return this.view && this.viewT > 0 ? viewPoint(this.view, p, this.viewT) : p;
+  }
+
   /** Trace a path's polyline (the parts in view) into `into`; false if none of it is. */
   private trace(
     path: ClientPath,
@@ -704,8 +839,13 @@ export class Renderer {
     let lx = 0, ly = 0, px = 0, py = 0;
     let owed = false;
     let prev: PathStepWire | null = null;
+    const pts = this.stepScratch;
+    let first: [number, number] | null = null;
     for (const st of path.steps) {
-      if (!(inView(st.a.x, st.a.y) || inView(st.b.x, st.b.y))) {
+      this.stepPts(path, st, pts);
+      let visible = false;
+      for (let k = 0; k < pts.length; k += 2) if (inView(pts[k], pts[k + 1])) visible = true;
+      if (!visible) {
         if (owed) into.lineTo(px, py);
         pen = owed = false;
         continue;
@@ -714,31 +854,32 @@ export class Renderer {
       // first step) needs its start.
       if (!pen || prev === null || prev.b.x !== st.a.x || prev.b.y !== st.a.y) {
         if (owed) into.lineTo(px, py);
-        [lx, ly] = toScreen(st.a.x, st.a.y);
+        [lx, ly] = toScreen(pts[0], pts[1]);
         if (pen) into.lineTo(lx, ly);
         else into.moveTo(lx, ly);
         owed = false;
       }
-      [px, py] = toScreen(st.b.x, st.b.y);
-      if (Math.abs(px - lx) + Math.abs(py - ly) >= TRACE_MIN_PX) {
-        into.lineTo(px, py);
-        lx = px;
-        ly = py;
-        owed = false;
-      } else owed = true;
+      if (!first) first = toScreen(pts[0], pts[1]);
+      for (let k = 2; k < pts.length; k += 2) {
+        [px, py] = toScreen(pts[k], pts[k + 1]);
+        if (Math.abs(px - lx) + Math.abs(py - ly) >= TRACE_MIN_PX) {
+          into.lineTo(px, py);
+          lx = px;
+          ly = py;
+          owed = false;
+        } else owed = true;
+      }
       prev = st;
       pen = any = true;
     }
     if (owed) into.lineTo(px, py);
     // A loop joins back to its start; an edge-to-edge claim ends at the edge.
     if (path.status === 'closed' && pen && !path.region) {
-      const first = path.steps[0];
-      const [ax, ay] = toScreen(first.a.x, first.a.y);
+      const [ax, ay] = first ?? toScreen(path.steps[0].a.x, path.steps[0].a.y);
       into.lineTo(ax, ay);
     }
     return any;
   }
-
 
   /**
    * Everything that holds still between board changes, into the lines
@@ -807,12 +948,13 @@ export class Renderer {
         haloAny = true;
       }
       const last = path.steps[path.steps.length - 1];
+      const tip = this.stepEnd(path, last, 1);
       // Only a line someone is steering gets a head. A flip's pieces
       // (`spawned`) grow a few at a time, round robin; hundreds of pulsing
       // dots on them said nothing and cost a lot.
       if (path.status === 'growing' && !path.spawned) {
         // A line growing both ways has a head at its start too.
-        const ends = path.back ? [last.b, path.steps[0].a] : [last.b];
+        const ends = path.back ? [tip, this.stepEnd(path, path.steps[0], 0)] : [tip];
         for (const h of ends) {
           if (!inView(h.x, h.y)) continue;
           let spots = heads.get(ink);
@@ -820,8 +962,8 @@ export class Renderer {
           spots.push(...toScreen(h.x, h.y));
         }
       }
-      if (stuck && inView(last.b.x, last.b.y)) {
-        const [hx, hy] = toScreen(last.b.x, last.b.y);
+      if (stuck && inView(tip.x, tip.y)) {
+        const [hx, hy] = toScreen(tip.x, tip.y);
         crosses.moveTo(hx - crossR, hy - crossR);
         crosses.lineTo(hx + crossR, hy + crossR);
         crosses.moveTo(hx + crossR, hy - crossR);
@@ -884,7 +1026,7 @@ export class Renderer {
     // them: cheap redraws still happen every frame, a 30 ms one about every
     // 90 ms. A camera move redraws at once — panning must not lag.
     const cam = this.camera;
-    const view = `${cam.x}|${cam.y}|${cam.scale}|${W}x${H}|${this.looksEpoch}`;
+    const view = `${cam.x}|${cam.y}|${cam.scale}|${W}x${H}|${this.looksEpoch}|${this.morphT}`;
     const board = `${store.geometryVersion}|${store.version}|${this.tintEpoch}`;
     const lines = (this.lines ??= this.layer(W, H));
     if (lines.canvas.width !== W || lines.canvas.height !== H) Object.assign(lines, this.layer(W, H));
@@ -939,7 +1081,10 @@ export class Renderer {
     }
     if (store.bursts.length > 0) {
       store.bursts = store.bursts.filter((b) => now - b.born < SPARK_MS);
-      for (const b of store.bursts) if (inView(b.at.x, b.at.y)) this.drawBurst(b, now, toScreen);
+      for (const b of store.bursts) {
+        const at = this.viewPt(b.at);
+        if (inView(at.x, at.y)) this.drawBurst(b, at, now, toScreen);
+      }
     }
     if (store.coalesce.length > 0) {
       store.coalesce = store.coalesce.filter((c) => now - c.born < Math.max(COALESCE_MS, c.ghost.length ? GHOST_MS : 0));
@@ -965,9 +1110,19 @@ export class Renderer {
     const ink = strandColor(this.board, this.teams ? this.teamColor(c.mine) : c.color);
     const glow = new Path2D();
     const core = new Path2D();
-    for (let k = 0; k < c.from.length; k++) {
-      const a = c.from[k];
-      const b = c.to[k] ?? a;
+    // The motes sit on tile centres; the Spectre view moves them with their tiles.
+    let motes: { from: readonly Pt[]; to: readonly (Pt | null)[] } = c;
+    if (this.view && this.viewT > 0) {
+      let m = this.viewMotes.get(c);
+      if (!m || m.t !== this.viewT) {
+        m = { t: this.viewT, from: c.from.map((p) => this.viewPt(p)), to: c.to.map((p) => (p ? this.viewPt(p) : null)) };
+        this.viewMotes.set(c, m);
+      }
+      motes = m;
+    }
+    for (let k = 0; k < motes.from.length; k++) {
+      const a = motes.from[k];
+      const b = motes.to[k] ?? a;
       const x = a.x + (b.x - a.x) * e;
       const y = a.y + (b.y - a.y) * e;
       if (!inView(x, y)) continue;
@@ -996,12 +1151,27 @@ export class Renderer {
     if (v <= 0 || v >= 1) return;
     const pulse = Math.sin(Math.PI * v) ** 2;
     let g = this.ghostPaths.get(c);
-    if (!g) {
+    const t = this.morphT;
+    if (!g || g.t !== t) {
       const line = new Path2D();
       const fill = new Path2D();
+      const table = t > 0 ? this.store.players.get(c.owner)?.patterns[0]?.rule : undefined;
+      const chords: ChordTable | undefined = table && this.field ? chordTableFor(this.field, table) : undefined;
+      const scratch = this.stepScratch;
       for (const q of c.ghost) {
         const loop = q.kind === 1;
-        const pts = loop ? q.pts.slice(0, -1) : q.pts;
+        let pts: readonly Pt[] = loop ? q.pts.slice(0, -1) : q.pts;
+        if (chords && this.view) {
+          // In the Spectre view the circuit runs through the pieces' dots.
+          const drawn: Pt[] = [];
+          q.steps.forEach((st, i) => {
+            viewStep(this.view!, chords, st, t, scratch);
+            // Each step ends where the next starts; a line keeps its last end.
+            const upto = !loop && i === q.steps.length - 1 ? scratch.length : scratch.length - 2;
+            for (let k = 0; k < upto; k += 2) drawn.push({ x: scratch[k], y: scratch[k + 1] });
+          });
+          pts = drawn;
+        }
         pts.forEach((p, k) => (k ? line.lineTo(p.x, p.y) : line.moveTo(p.x, p.y)));
         if (loop) {
           line.closePath();
@@ -1009,7 +1179,7 @@ export class Renderer {
           fill.closePath();
         }
       }
-      this.ghostPaths.set(c, (g = { line, fill }));
+      this.ghostPaths.set(c, (g = { t, line, fill }));
     }
     const ctx = this.ctx;
     const k = this.camera.scale * this.dpr;
@@ -1072,8 +1242,8 @@ export class Renderer {
     };
     const free = (r: Rect): boolean => placed.every((q) => r[2] < q[0] || r[0] > q[2] || r[3] < q[1] || r[1] > q[3]);
     const pointOf = (path: ClientPath, i: number): [number, number] => {
-      const st = path.steps[i];
-      return toScreen((st.a.x + st.b.x) / 2, (st.a.y + st.b.y) / 2);
+      const m = this.stepMid(path, path.steps[i]);
+      return toScreen(m.x, m.y);
     };
     const labels: { player: ClientPlayer; rect: Rect; x: number; y: number }[] = [];
     const pending: ClientPlayer[] = [];
@@ -1168,10 +1338,10 @@ export class Renderer {
    * the lines met, slowing as they go and burning out. Each cut line throws
    * its own, in its own colour, so a two-way crash sprays both.
    */
-  private drawBurst(b: Burst, now: number, toScreen: (x: number, y: number) => [number, number]): void {
+  private drawBurst(b: Burst, at: Pt, now: number, toScreen: (x: number, y: number) => [number, number]): void {
     const ctx = this.ctx;
     const u = (now - b.born) / SPARK_MS;
-    const [cx, cy] = toScreen(b.at.x, b.at.y);
+    const [cx, cy] = toScreen(at.x, at.y);
     // Tiny on the board, but never smaller than a few pixels when zoomed out.
     const reach = Math.max(18 * this.dpr, 1.2 * this.camera.scale * this.dpr);
     const w = Math.max(2 * this.dpr, 0.08 * this.camera.scale * this.dpr);

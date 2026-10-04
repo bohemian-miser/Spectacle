@@ -73,6 +73,13 @@ await hex.waitForTimeout(500);
 await hex.screenshot({ path: `${outDir}/arena-teams.png` });
 await hex.keyboard.press('t');
 
+// 4b. The same board as Spectres (S morphs it; wait for the morph to finish).
+await hex.keyboard.press('s');
+await hex.waitForTimeout(1800);
+await hex.screenshot({ path: `${outDir}/arena-spectre-view.png` });
+await hex.keyboard.press('s');
+await hex.waitForTimeout(1800);
+
 // 5. Spectre arena, dark.
 const sp = await open(spectreUrl, 'dark', 'you');
 const s = await enter(sp);

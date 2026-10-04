@@ -90,6 +90,8 @@ export interface Coalesce {
 export interface Ghost {
   readonly pts: readonly Pt[];
   readonly kind: number;
+  /** The steps the points come from, for a view that draws them elsewhere (the Spectre view). */
+  readonly steps: readonly PathStepWire[];
 }
 
 /** At most this many motes per switch (a huge territory is sampled evenly). */
@@ -120,14 +122,16 @@ export function walkOutline(field: Field, rule: PlayerRule, outline: readonly nu
   for (let k = 0; k + 2 < outline.length; k += 3) {
     let cur = unpackStep(field, table, outline[k]);
     const pts: Pt[] = [cur.a];
+    const steps: PathStepWire[] = [cur];
     for (let n = 1; n < outline[k + 1]; n++) {
       const next = stepForward(field, table, cur);
       if (next.kind !== 'step') break;
       pts.push(next.step.a);
       cur = next.step;
+      steps.push(cur);
     }
     pts.push(cur.b);
-    out.push({ pts, kind: outline[k + 2] });
+    out.push({ pts, kind: outline[k + 2], steps });
   }
   return out;
 }
@@ -288,6 +292,11 @@ export class Store {
   private tableFor(owner: string, pattern: number): ChordTable | undefined {
     const rule = this.players.get(owner)?.patterns[pattern]?.rule;
     return rule && this.field ? chordTableFor(this.field, rule) : undefined;
+  }
+
+  /** The chords a path's steps run along: its own table, else its owner's pattern's. */
+  pathTable(path: ClientPath): ChordTable | undefined {
+    return path.table ?? this.tableFor(path.owner, path.pattern);
   }
 
   /** Refusals before this time (ms) go unshown: a drag taps every tile it crosses. */

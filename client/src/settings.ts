@@ -38,6 +38,13 @@ export interface Settings {
    * (circuits keep only their length shading). Toggled with T in the arena.
    */
   readonly teams: boolean;
+  /**
+   * Draw a hexagon arena as Spectres: the same board, every hexagon its
+   * Spectre (a Gamma the Mystic), lines and all — a view, the server never
+   * knows (`spectre-view.ts`). Toggled with S in the arena; `?spectres=1`
+   * starts with it on. Nothing on a Spectre arena.
+   */
+  readonly spectres: boolean;
 }
 
 const KEY = 'spectacle.settings';
@@ -53,12 +60,14 @@ function load(): Settings {
   } catch {
     /* private mode or junk */
   }
-  const param = typeof location === 'undefined' ? null : new URLSearchParams(location.search).get('circuits');
+  const params = typeof location === 'undefined' ? null : new URLSearchParams(location.search);
+  const spectres = params?.get('spectres');
   return {
-    circuitStyle: parseCircuitStyle(param) ?? parseCircuitStyle(saved.circuitStyle) ?? 'a',
+    circuitStyle: parseCircuitStyle(params?.get('circuits')) ?? parseCircuitStyle(saved.circuitStyle) ?? 'a',
     // Both on unless the player has switched them off.
     plainTiles: saved.plainTiles !== false,
     teams: saved.teams !== false,
+    spectres: spectres === '1' || spectres === 'true' || (spectres === null && saved.spectres === true),
   };
 }
 

@@ -5,7 +5,7 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { fieldKey, tileAt } from '../../shared/game/field';
+import { fieldKey } from '../../shared/game/field';
 import { MODE_LABELS, speedFor } from '../../shared/game/knobs';
 import { describeRule } from '../../shared/game/rule';
 import type { Mode } from './App';
@@ -136,13 +136,17 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
     rendererRef.current?.setSettings(settings);
   }, [settings]);
 
-  // 1–9 pick a pattern, like clicking its tab; T toggles team colours.
+  // 1–9 pick a pattern, like clicking its tab; T toggles team colours, S the Spectre view.
   useEffect(() => {
     const onKey = (e: KeyboardEvent): void => {
       if (e.ctrlKey || e.metaKey || e.altKey || e.target instanceof HTMLInputElement) return;
       if (e.target instanceof HTMLSelectElement || e.target instanceof HTMLTextAreaElement) return;
       if (e.key === 't' || e.key === 'T') {
         updateSettings({ teams: !getSettings().teams });
+        return;
+      }
+      if (e.key === 's' || e.key === 'S') {
+        updateSettings({ spectres: !getSettings().spectres });
         return;
       }
       const n = Number(e.key);
@@ -157,13 +161,12 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
   const tap = (sx: number, sy: number): void => {
     const r = rendererRef.current;
     if (!r || !store.field) return;
-    const w = r.screenToWorld(sx, sy);
-    const tile = tileAt(store.field, w);
-    if (tile < 0) {
+    const at = r.pick(sx, sy);
+    if (!at) {
       store.toast('Nothing there', 'bad');
       return;
     }
-    conn.send({ t: 'tap', tile, x: w.x, y: w.y });
+    conn.send({ t: 'tap', ...at });
     if (showHelp) hideHelp();
   };
 
@@ -174,11 +177,10 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
     const g = gesture.current;
     const r = rendererRef.current;
     if (!r || !store.field) return;
-    const w = r.screenToWorld(sx, sy);
-    const tile = tileAt(store.field, w);
-    if (tile < 0 || tile === g.lastTile) return;
-    g.lastTile = tile;
-    g.target = { tile, x: w.x, y: w.y };
+    const at = r.pick(sx, sy);
+    if (!at || at.tile === g.lastTile) return;
+    g.lastTile = at.tile;
+    g.target = at;
   };
   const paintFlush = (): void => {
     const g = gesture.current;
@@ -463,6 +465,7 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
             : " Loop round someone's line to take its pattern."}
           <div className="muted">
             Drag to pan · hold, then drag across tiles to keep starting lines · wheel or pinch to zoom · T: you blue, rivals red
+            {store.field?.family === 'hex' ? ' · S: see the hexagons as Spectres' : ''}
           </div>
           <button type="button" className="btn" onClick={hideHelp}>
             Got it

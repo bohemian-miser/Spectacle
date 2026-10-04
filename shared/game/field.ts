@@ -513,6 +513,18 @@ const outlineCache = new WeakMap<Field, readonly Pt[]>();
 export function fieldOutline(field: Field): readonly Pt[] {
   const hit = outlineCache.get(field);
   if (hit) return hit;
+  const out = chainOutline(field.count, (i) => tilePolygon(field, i));
+  outlineCache.set(field, out);
+  return out;
+}
+
+/**
+ * The outer boundary of any set of polygons that tile a patch (`polygonAt(i)`
+ * for `i < count`): the edges that belong to one polygon only, chained into
+ * the longest loop. `fieldOutline` is this over the field's tiles; the
+ * client's Spectre view runs it over its own pieces.
+ */
+export function chainOutline(count: number, polygonAt: (i: number) => readonly Pt[]): readonly Pt[] {
   // Vertices get small integer ids so an edge packs into one numeric key.
   const ids = new Map<number, number>();
   const pos: Pt[] = [];
@@ -526,14 +538,14 @@ export function fieldOutline(field: Field): readonly Pt[] {
     }
     return id;
   };
-  const count = new Map<number, number>();
-  for (let i = 0; i < field.count; i++) {
-    const poly = tilePolygon(field, i);
+  const edges = new Map<number, number>();
+  for (let i = 0; i < count; i++) {
+    const poly = polygonAt(i);
     let prev = idOf(poly[poly.length - 1]);
     for (const p of poly) {
       const cur = idOf(p);
       const key = prev < cur ? prev * 0x4000000 + cur : cur * 0x4000000 + prev;
-      count.set(key, (count.get(key) ?? 0) + 1);
+      edges.set(key, (edges.get(key) ?? 0) + 1);
       prev = cur;
     }
   }
@@ -543,7 +555,7 @@ export function fieldOutline(field: Field): readonly Pt[] {
     if (list) list.push(v);
     else adj.set(u, [v]);
   };
-  for (const [key, c] of count) {
+  for (const [key, c] of edges) {
     if (c !== 1) continue;
     const u = Math.floor(key / 0x4000000);
     const v = key % 0x4000000;
@@ -566,9 +578,7 @@ export function fieldOutline(field: Field): readonly Pt[] {
     }
     if (loop.length > best.length) best = loop;
   }
-  const out = best.map((k) => pos[k]);
-  outlineCache.set(field, out);
-  return out;
+  return best.map((k) => pos[k]);
 }
 
 /**

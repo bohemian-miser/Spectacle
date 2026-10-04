@@ -104,15 +104,25 @@ client/src/       Vite + React.
                   back out of the CSS tokens.
   settings.ts     Board display settings (localStorage): circuit style a–e
                   (?circuits= overrides), plain board and team colours (both
-                  on by default). SettingsButton.tsx is
+                  on by default), the Spectre view (`spectres`, ?spectres=1,
+                  key S). SettingsButton.tsx is
                   the ⚙ button + modal (theme, circuit colours, plain board).
+  spectre-view.ts The Spectre view of a hexagon board (see "settled"): pure,
+                  no DOM. `spectreView(field)` (pieces, fitted transforms,
+                  per-type vertex homes), `viewStep`/`viewChord` (a hex step's
+                  polyline in the view, morph-interpolated), `viewTileAt`,
+                  `viewTap`, `viewOutline`. tests/spectre-view.test.ts.
   FeedbackButton.tsx  Feedback button + modal beside it, portalled to <body>
                   like Settings' and Bots' (feedback.ts: where it posts, the
                   context sent along).
   styles.css      Spectre's explorer tokens, both schemes, incl. the board
                   knobs (--tile-*, --board-*, --strand-darken).
-  render.ts       Camera, tint sync, Canvas2D strand overlay.
-  tiles-gl.ts     WebGL2 instanced tile layer. tiles-2d.ts: Canvas2D fallback.
+  render.ts       Camera, tint sync, Canvas2D strand overlay, the morph
+                  driver (`applyView`, `viewT`; every point drawn goes
+                  through `stepPts`), `pick` (the tile and point a tap sends).
+  tiles-gl.ts     WebGL2 instanced tile layer; the Spectre view is a second
+                  set of batches whose shader mixes two transforms by `u_t`.
+                  tiles-2d.ts: Canvas2D fallback (pieces as polygons).
   tiles-layer.ts  TileLayer interface, typeFill (Spectre's own tile palette),
                   colour helpers, directionArrow (a tile's rotation).
 tests/            vitest. strand.test.ts pins the local walker against the
@@ -593,6 +603,47 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   (saving rooms to storage is open). `tests/resume.test.ts` has a second server
   with short timers for this.
 - **Solo mode** is the same engine in the tab; the Pages build is solo-only.
+- **The Spectre view is the client's alone.** A hexagon arena can be drawn
+  as Spectres (`settings.spectres`, key S, `?spectres=1`), morphing in
+  place; the server, the engine, the wire and every other player know
+  nothing of it, and nothing in `shared/game` depends on it. The two
+  tilings are isomorphic (`'spectre-iso'` labels in the vendored core:
+  every seam of a hexagon is a seam of its Spectre with the same class), so
+  a hex tile is a *piece* (a Gamma two: Gamma1 then Gamma2, the Mystic),
+  and a hex chord's ends are the same seams' Spectre dots. The Spectre
+  patch is fitted over the hex patch by a least-squares similarity over the
+  tiles' centres (`fitSimilarity`; Spectre's own morph left ~21° of net
+  rotation and a 0.53 scale between the two — the fit removes it): what is
+  left is under half a unit per tile at level 6, so the view lives in hex
+  world coordinates, the camera never moves, and `tilesInBox`'s padding
+  still finds every piece. Where a piece's vertex sits in the hexagon
+  (`vertexHomes`) is label arithmetic per leaf type in the hex parent's
+  frame — checked to 1e-14 against Spectre's per-world-vertex mean — so the
+  WebGL layer morphs instanced (two transforms per instance, two positions
+  per vertex, `u_t`). Three rules of the owner's for the odd places:
+  the **Mystic is one tile** — a Gamma chord that crosses the class-7 seam
+  goes straight from its Gamma1 dot to its Gamma2 dot; **Gamma2's `6`|`-6`
+  wedge belongs to the Delta** — its bridge chord (only with class 6 in the
+  rule) is drawn as the third point of the Delta's chord ending on the
+  Delta's `-6` seam, carrying on to the Sigma's `6` dot where the Sigma's
+  chord starts (`acrossEdge` finds the Sigma; at the board's edge, none, the
+  chord just ends), and in the hexagon view the wedge is flat on the
+  Delta–Sigma edge (the wedge always sits between a Delta and a Sigma, inside
+  the supertile rules, never at the board's edge — the owner's check);
+  **taps land on the piece under the pointer** (`Renderer.pick`,
+  `viewTileAt`), and the point sent is the hexagon midpoint of the chord
+  nearest the tap in the view (`viewTap`), since the server picks the nearest
+  chord in hexagon geometry. The view is built on first use (~0.2 s at
+  level 6) and cached per field; its outline for the plain board is read off
+  the hexagon outline seam by seam (`viewOutline`, ~0.6 s at level 6 on top
+  of `fieldOutline`; chaining every piece edge took 4 s) with the full chain
+  as a fallback. Everything the overlay draws per path goes through
+  `Renderer.stepPts`, which is the hex chord or `viewStep`'s polyline
+  interpolated by `viewT` — anything new drawn per step must too, or it
+  stays on the hexagons. `prefers-reduced-motion` cuts instead of morphing.
+  `tests/spectre-view.test.ts` pins the lockstep, the hexagon-side cover,
+  gluing, the fit, the wedge's dots, strands joining end to end on every
+  step of several rules (class 6 ones included), taps and the outline.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
   and most players are in North America). Cloud Run (scale to zero) via CI is
   the intended path; the free e2-micro VM is the alternative. Session resume
@@ -616,7 +667,10 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   whose attribute condition pins the trust to `bohemian-miser/Spectacle`;
   the deploy job needs `id-token: write` to mint the OIDC token. Everything
   `setup-ci.sh` prints is a *variable*, not a secret.
-- **Vendored core** stays byte-identical to Spectre's.
+- **Vendored core** stays byte-identical to Spectre's (re-copied 2026-10-04:
+  `families.ts` gained the `'spectre-iso'` family, `circuits.ts` the
+  optional `chords`/`auxChords` of `analyze`; `hexRule.ts`/`morph.ts` are
+  not vendored — the view has its own).
 - **Tile colours are Spectre's own table** (`TILE_PALETTES.bright`, the
   `colmap_orig` of the paper's figures): Xi yellow, the Gammas white. A type's
   colour is the same on the board, in the thumbs and in the patch preview, and
