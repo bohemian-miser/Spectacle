@@ -424,7 +424,7 @@ const BRIDGE_GIVE_UP_MS = 90_000;
 /** …and one where this many turns in a row land no tap (inside a rival's circuit, say) much sooner. */
 const BRIDGE_IDLE_TURNS = 8;
 /** …and one cut back this many times while being laid (a rival keeps crossing it). */
-const BRIDGE_CUTS = 5;
+const BRIDGE_CUTS = 10;
 /** A bridge given up isn't planned again for this long. */
 const BRIDGE_RETRY_MS = 5 * 60_000;
 /** How often a bridge looks over the ones it finished for any a rival has cut, to lay them again first. */
