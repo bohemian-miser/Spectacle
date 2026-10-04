@@ -1,5 +1,5 @@
 /**
- * The five kinds of bot, mixed freely (`BotMix`):
+ * The seven kinds of bot, mixed freely (`BotMix`):
  *
  *  - wanderer: a random clean rule; taps somewhere random, sometimes right
  *    beside a rival's line. The original bot, and the easy one.
@@ -16,6 +16,12 @@
  *    middle until it closes (a half that runs off the edge is tapped at its
  *    start to turn it round). It plans with the field's edge index
  *    (`sense.ts`), a slice per tick.
+ *  - edgelord (#84): goes round the field's edge clockwise, tapping every
+ *    edge start in turn until its line closes edge to edge, and jumps past
+ *    whatever it has already claimed.
+ *  - lazylord (#84): the same walk round the edge, but it taps every start in
+ *    turn — inside its own claims too — and moves on once each has sent a
+ *    line inwards, closed or not.
  *
  * The farmer's short-loop rule comes from a scout (`sense.ts`) that tries a
  * spread of clean rules on the field once, a slice per tick. No bot
@@ -29,17 +35,17 @@
 
 import type { Brain, BotContext } from '../bots';
 import type { Engine, Path, Player } from '../engine';
-import { onFieldBoundary, tileCenter, tileNeighbours } from '../field';
+import { onFieldBoundary, pathPolygon, pointInPolygon, tileCenter, tileNeighbours, type Box } from '../field';
 import type { GameEvent } from '../protocol';
 import { isInfiniteLineRule, randomCleanRule, ruleFromCombo, ruleKey, type PlayerRule } from '../rule';
 import type { Rng } from '../rng';
-import { tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
-import { EdgeWalk, WALK_COST, type EdgeLine, edgeIndexFor, fieldFrame, isBridgeClosed, probe, randomTileWithLine, scoutFor, stepMid, tileNear, type Probe } from './sense';
+import { startStep, tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
+import { EdgeIndex, EdgeWalk, WALK_COST, type EdgeLine, edgeIndexFor, fieldFrame, isBridgeClosed, probe, randomTileWithLine, scoutFor, stepMid, tileNear, type Probe } from './sense';
 import { leafOrder, validEdgeSubsets, type Pt, type TileFamilyId } from '../../tiles';
 
-export type BotKind = 'wanderer' | 'rotator' | 'hunter' | 'farmer' | 'bridge';
+export type BotKind = 'wanderer' | 'rotator' | 'hunter' | 'farmer' | 'bridge' | 'edgelord' | 'lazylord';
 
-export const BOT_KINDS: readonly BotKind[] = ['wanderer', 'rotator', 'hunter', 'farmer', 'bridge'];
+export const BOT_KINDS: readonly BotKind[] = ['wanderer', 'rotator', 'hunter', 'farmer', 'bridge', 'edgelord', 'lazylord'];
 
 export const BOT_INFO: Readonly<Record<BotKind, { readonly label: string; readonly blurb: string }>> = {
   wanderer: { label: 'Wanderer', blurb: 'random rule, random taps — the easy one' },
@@ -47,6 +53,8 @@ export const BOT_INFO: Readonly<Record<BotKind, { readonly label: string; readon
   hunter: { label: 'Hunter', blurb: 'goes after the leader and cuts their lines' },
   farmer: { label: 'Farmer', blurb: 'small safe loops in a quiet corner' },
   bridge: { label: 'Bridge', blurb: 'edge-to-edge claims, small first, then each one round the last' },
+  edgelord: { label: 'Edge Lord', blurb: 'clockwise round the edge, closing every edge line, skipping what it holds' },
+  lazylord: { label: 'Edge Lord -Lazy', blurb: 'clockwise round the edge, one line from every edge tile, no skipping' },
 };
 
 const NAMES = [
@@ -72,6 +80,10 @@ export function makeBot(kind: BotKind, id: string, ctx: BotContext): Brain {
       return new Farmer(id, kind, ctx);
     case 'bridge':
       return new Bridge(id, kind, ctx);
+    case 'edgelord':
+      return new EdgeLord(id, kind, ctx, false);
+    case 'lazylord':
+      return new EdgeLord(id, kind, ctx, true);
   }
 }
 
@@ -669,7 +681,7 @@ class Bridge extends Bot {
         this.nest.next = c + 1;
       } else {
         const short = this.tries++ < FIRST_BRIDGE_TRIES;
-        c = short && this.near !== null ? mod(this.near + this.tries - 1, n) : this.rng.int(n);
+        c = this.near !== null ? mod(this.near + this.tries - 1, n) : this.rng.int(n);
         if (short) limit = FIRST_BRIDGE;
       }
       const line = index.lineFrom(c, limit);
@@ -734,4 +746,178 @@ function mod(x: number, n: number): number {
 /** Edge starts from `x` on round to `y`, of `n`. */
 function fwd(x: number, y: number, n: number): number {
   return mod(y - x, n);
+}
+
+// --- edge lords (#84) ------------------------------------------------------------
+
+/** Edge starts an edge lord may look past in one turn (each a few µs) before it waits for the next. */
+const EDGE_LOOK = 64;
+/** Taps it spends on one start (a tap that sends the line off the edge, another to turn it round, a retry after a cut)… */
+const EDGE_TAPS = 4;
+/** …and how long it waits on one before going on round. */
+const EDGE_GIVE_UP_MS = 60_000;
+/** Taps the engine may refuse in one turn before it waits for the next. */
+const EDGE_REFUSALS = 2;
+
+/**
+ * Round the field's edge clockwise, an edge start at a time (#84): the edge
+ * index Bridge plans with (`sense.ts`, traced a slice a tick, for whatever
+ * rule it plays — a random clean one). Each start is tapped at its chord: a
+ * line that runs straight off the edge (half the time) is tapped again to
+ * turn it round, so it goes inwards and out at the edge somewhere else,
+ * closing as an edge-to-edge claim.
+ *
+ * The Edge Lord stays on a start until its line closes (tapping again after
+ * a cut), then goes on to the next start that isn't on or inside a circuit
+ * of its own — so it jumps over what it has claimed. The lazy one taps every
+ * start in turn, claimed ground and all, and goes on as soon as the line has
+ * left the edge tile (more than one step), closed or not. Both pass over a
+ * start where no tap lands (a rival's line or circuit) and, after
+ * `EDGE_TAPS` taps or `EDGE_GIVE_UP_MS`, one whose line won't close.
+ */
+class EdgeLord extends Bot {
+  private index: EdgeIndex | null = null;
+  /** +1 or -1: which way through the index is clockwise on screen; 0 until worked out. */
+  private dir = 0;
+  /** The start being worked on, by number. */
+  private at = -1;
+  private since = 0;
+  private taps = 0;
+  /** Own circuits' outlines and boxes, kept while a circuit stays as it was. */
+  private readonly shapes = new WeakMap<Path, { n: number; first: WalkStep; last: WalkStep; poly: readonly Pt[]; box: Box }>();
+
+  constructor(id: string, kind: BotKind, ctx: BotContext, private readonly lazy: boolean) {
+    super(id, kind, ctx);
+  }
+
+  override update(now: number, p: Player, ev: GameEvent[]): void {
+    const index = edgeIndexFor(this.engine.field, p.table);
+    if (index !== this.index) {
+      this.index = index;
+      this.dir = 0;
+      this.at = -1;
+    }
+    // The index is traced whether or not a head is free; nothing to tap till it's done.
+    if (!index.done) {
+      index.work(BRIDGE_BUDGET);
+      return;
+    }
+    if (index.starts.length === 0) return;
+    if (this.dir === 0) {
+      this.dir = clockwise(this.engine, index) ? 1 : -1;
+      this.goTo(now, this.rng.int(index.starts.length));
+    }
+    // Cut while growing: the engine refuses taps for a moment.
+    for (const e of ev) {
+      if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined) this.nextTapAt = Math.max(this.nextTapAt, now + this.engine.knobs.respawnDelayMs + 50);
+    }
+    super.update(now, p, ev);
+  }
+
+  protected think(now: number, p: Player, ev: GameEvent[]): void {
+    const index = this.index;
+    if (!index) return;
+    this.nextTapAt = now + 300 + this.rng.int(400);
+    ev.push(...this.engine.setActive(this.id, 0));
+    const field = this.engine.field;
+    let refused = 0;
+    for (let k = 0; k < EDGE_LOOK; k++) {
+      const s = index.starts[this.at];
+      const step = startStep(field, p.table, s.tile, s.chord, s.exitEnd);
+      const line = this.lineOn(step, p.table);
+      const done = line ? line.status === 'closed' || (this.lazy && line.steps.length > 1) : !this.lazy && this.claimed(step);
+      if (done || now - this.since > EDGE_GIVE_UP_MS || this.taps >= EDGE_TAPS) {
+        this.goTo(now, this.at + this.dir);
+        continue;
+      }
+      // Still growing (a captured pattern gave a spare head): wait for it.
+      if (line?.status === 'growing') return;
+      // Stuck short of the edge (a tail): it won't close from here.
+      if (line && line.steps.length > 1) {
+        this.goTo(now, this.at + this.dir);
+        continue;
+      }
+      // A rival's line or circuit there: no tap would land.
+      if (!line && this.rivalsHold(step)) {
+        this.goTo(now, this.at + this.dir);
+        continue;
+      }
+      // Not started, cut, or run off the edge: tap it (a stuck line's start turns it round).
+      this.taps++;
+      if (this.tapStep(step, ev) || ++refused >= EDGE_REFUSALS) return;
+      // Refused anyway: on round.
+      this.goTo(now, this.at + this.dir);
+    }
+  }
+
+  private goTo(now: number, at: number): void {
+    const n = this.index!.starts.length;
+    this.at = ((at % n) + n) % n;
+    this.since = now;
+    this.taps = 0;
+  }
+
+  /** Our line on the chord of `step` (of our own rule), if any. */
+  private lineOn(step: WalkStep, table: ChordTable): Path | undefined {
+    for (const q of this.engine.pathsOn(step.tile)) {
+      if (q.owner !== this.id || q.table !== table) continue;
+      for (const r of q.steps) if (r.tile === step.tile && r.chord === step.chord) return q;
+    }
+    return undefined;
+  }
+
+  /** Is `step`'s tile on a rival's line, or inside a rival's circuit? */
+  private rivalsHold(step: WalkStep): boolean {
+    for (const q of this.engine.pathsOn(step.tile)) if (q.owner !== this.id) return true;
+    return this.engine.insideRivalCircuit(this.id, stepMid(step));
+  }
+
+  /** Is `step` inside a circuit of ours (a loop or an edge-to-edge claim)? */
+  private claimed(step: WalkStep): boolean {
+    const p = stepMid(step);
+    const me = this.engine.players.get(this.id);
+    if (!me) return false;
+    for (const q of me.paths) {
+      if (q.status !== 'closed') continue;
+      const { poly, box } = this.shapeOf(q);
+      if (poly.length < 3 || p.x < box.minX || p.x > box.maxX || p.y < box.minY || p.y > box.maxY) continue;
+      if (pointInPolygon(p, poly)) return true;
+    }
+    return false;
+  }
+
+  private shapeOf(q: Path): { poly: readonly Pt[]; box: Box } {
+    const first = q.steps[0];
+    const last = q.steps[q.steps.length - 1];
+    const hit = this.shapes.get(q);
+    if (hit && hit.n === q.steps.length && hit.first === first && hit.last === last) return hit;
+    const poly = pathPolygon(q);
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const v of poly) {
+      if (v.x < minX) minX = v.x;
+      if (v.x > maxX) maxX = v.x;
+      if (v.y < minY) minY = v.y;
+      if (v.y > maxY) maxY = v.y;
+    }
+    const shape = { n: q.steps.length, first, last, poly, box: { minX, minY, maxX, maxY } };
+    this.shapes.set(q, shape);
+    return shape;
+  }
+}
+
+/**
+ * Does the edge index number its starts clockwise as the board is drawn
+ * (y down)? The shoelace sum of their tiles' centres in order is positive
+ * then.
+ */
+export function clockwise(engine: Engine, index: EdgeIndex): boolean {
+  const field = engine.field;
+  const n = index.starts.length;
+  let sum = 0;
+  for (let i = 0; i < n; i++) {
+    const a = tileCenter(field, index.starts[i].tile);
+    const b = tileCenter(field, index.starts[(i + 1) % n].tile);
+    sum += a.x * b.y - b.x * a.y;
+  }
+  return sum > 0;
 }

@@ -364,7 +364,7 @@ Server environment:
 
 ## Bots
 
-Five kinds, mixed freely — on the server with `BOTS` (e.g.
+Seven kinds, mixed freely — on the server with `BOTS` (e.g.
 `BOTS=bridge+hunter:2`; use `+` rather than commas in Cloud Run env vars),
 in solo with the lobby's picker (or `/?solo&bots=bridge+farmer`). In the
 arena the **Bots** button (beside Settings) changes them mid-game. Online, it
@@ -382,6 +382,8 @@ its players' choice for as long as it lasts, even when new bot brains or a
 | **Hunter** | picks on the leader: looks ~40 steps ahead from the tiles round their lines and taps where its line would hit theirs soonest |
 | **Farmer** | a rule that reliably closes small loops, a quiet corner of the board, and only taps where both ways round close without touching anyone |
 | **Bridge** | every edge class on, combination all zeros; edge-to-edge claims, nested: a short one across a corner first (under 20 steps), then the line that spans it, outwards — each tapped from its middle until it closes, turning a half that ran off the edge round. It plans from an index of the field's edge, traced a slice a tick |
+| **Edge Lord** | a random clean rule; goes round the field's edge clockwise, tapping each edge start until its line closes edge to edge (tapping again to turn round a line that ran straight off the edge), then on to the next start that isn't inside something it has already claimed. Kind `edgelord` |
+| **Edge Lord -Lazy** | the same walk round the edge, but every edge start in turn, its own claims and all, moving on once each has sent a line inwards (more than the edge tile), closed or not. Kind `lazylord` |
 
 The farmer's rule comes from a scout that tries a spread of
 clean rules on the field once (~0.2 s at hex level 6, at startup).

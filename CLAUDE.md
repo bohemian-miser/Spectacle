@@ -39,8 +39,10 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
                   bot players, driving their brains; `setBrains` swaps
                   brains live (players kept), `reconcile` matches a mix;
                   the watchdog (`Bots.watchdog`, see "settled").
-  brains/         HOT-LOADED (see "settled"): how bots play. kinds.ts (five
-                  kinds: wanderer, rotator, hunter, farmer, bridge),
+  brains/         HOT-LOADED (see "settled"): how bots play. kinds.ts (seven
+                  kinds: wanderer, rotator, hunter, farmer, bridge,
+                  edgelord, lazylord — the Edge Lords walk the edge index
+                  clockwise, `clockwise()` working out which way that is),
                   sense.ts (rule scout, sliced per tick or `prepareBots` up
                   front; `probe` walks a would-be line against the live
                   board), mix.ts (`LIVE_MIX`), tuning.ts (`TUNING`: every
