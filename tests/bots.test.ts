@@ -79,9 +79,10 @@ describe('the scout', () => {
 
 describe('bots at play', () => {
   it('every kind plays: lines, points, and nothing throws', () => {
-    const { engine } = play(Object.fromEntries(BOT_KINDS.map((k) => [k, 1])), 3 * 60_000);
+    const { engine, events } = play(Object.fromEntries(BOT_KINDS.map((k) => [k, 1])), 3 * 60_000);
     for (const p of engine.players.values()) {
-      expect(p.paths.length + p.score, p.name).toBeGreaterThan(0);
+      // Laid lines at some point: on a crowded board any one of them may be cut back to nothing by the end.
+      expect(events.filter((e) => e.t === 'step' && e.owner === p.id).length, p.name).toBeGreaterThan(20);
       expect(isInfiniteLineRule(p.rule), p.name).toBe(false);
     }
   });
