@@ -153,14 +153,40 @@ describe('bots at play', () => {
     const holds = (o: { a: number; b: number }, i: { a: number; b: number }) => fwd(o.a, i.a) <= fwd(o.a, i.b) && fwd(o.a, i.b) <= fwd(o.a, o.b);
     // Round the last (or something laid already), else on round the edge from it — past what it holds
     // there already — never back across the board. (Before, it went on from a random start.)
+    // A repair (one laid again after a cut) goes back on purpose; moves count from the last new one,
+    // and after one given up a whole new nest may start anywhere.
+    let prev = plans[0];
     for (let i = 1; i < plans.length; i++) {
-      const [prev, next] = [plans[i - 1], plans[i]];
-      if (plans.slice(0, i).some((q) => holds(next, q))) continue;
-      expect(fwd(prev.b, next.a)).toBeLessThan(n >> 1);
+      const next = plans[i];
+      if (plans.slice(0, i).some((q) => q.a === next.a && q.b === next.b)) continue;
+      if (prev.closed && !plans.slice(0, i).some((q) => holds(next, q))) expect(fwd(prev.b, next.a)).toBeLessThan(n >> 1);
+      prev = next;
     }
     // Given up rarely: no bridge planned where it can't be tapped.
     expect(plans.filter((q) => q.closed).length).toBeGreaterThanOrEqual(0.8 * plans.length);
   }, 30_000);
+
+  it('a bridge lays again one of its finished bridges a rival has cut, before going on', () => {
+    const rng = mulberry32(5);
+    const engine = new Engine(field, knobsForMode(DEFAULT_KNOBS, 'normal'), rng);
+    const bots = new Bots(engine, rng);
+    bots.add({ bridge: 1 }, 0);
+    const brain = (bots as unknown as { bots: { id: string; laid: { steps: WalkStep[] }[] }[] }).bots[0];
+    const dt = engine.knobs.tickMs;
+    let now = 0;
+    const run = (ms: number) => {
+      for (const end = now + ms; now < end; now += dt) bots.update(now, engine.tick(dt));
+    };
+    run(60_000);
+    // Cut a finished bridge of a few steps, as a rival's line would.
+    const bridge = brain.laid.find((q) => q.steps.length >= 5 && isBridgeClosed(engine, brain.id, q.steps))!;
+    expect(bridge).toBeDefined();
+    const drop = (engine as unknown as { dropPath(p: unknown, by: string, ev: GameEvent[]): void }).dropPath.bind(engine);
+    for (const q of [...engine.pathsOn(bridge.steps[0].tile)]) if (q.owner === brain.id) drop(q, 'rival', []);
+    expect(isBridgeClosed(engine, brain.id, bridge.steps)).toBe(false);
+    run(30_000);
+    expect(isBridgeClosed(engine, brain.id, bridge.steps)).toBe(true);
+  });
 
   it("a bridge's planning keeps to its budget every tick (and lays lines on the spectre board too)", () => {
     // A board no other test has traced, so the edge index is built here, a slice a tick.

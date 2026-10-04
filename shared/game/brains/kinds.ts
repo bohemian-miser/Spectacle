@@ -423,8 +423,16 @@ const BRIDGE_LIMIT = 20_000;
 const BRIDGE_GIVE_UP_MS = 90_000;
 /** …and one where this many turns in a row land no tap (inside a rival's circuit, say) much sooner. */
 const BRIDGE_IDLE_TURNS = 8;
+/** …and one cut back this many times while being laid (a rival keeps crossing it). */
+const BRIDGE_CUTS = 10;
 /** A bridge given up isn't planned again for this long. */
 const BRIDGE_RETRY_MS = 5 * 60_000;
+/** How often a bridge looks over the ones it finished for any a rival has cut, to lay them again first. */
+const BRIDGE_REPAIR_MS = 5_000;
+/** It remembers this many of the bridges it finished… */
+const BRIDGE_MEMORY = 64;
+/** …and lays one again at most this many times (a rival forever crossing it wins). */
+const BRIDGE_REPAIRS = 2;
 
 /** A stretch of the field's edge, in edge-index numbers: from `a` on round to `b`. */
 interface Arc {
@@ -434,12 +442,14 @@ interface Arc {
 
 interface BridgePlan extends Arc {
   readonly steps: readonly WalkStep[];
-  /** Where it starts (C): if it's given up, the search goes on from the next start. */
-  readonly from: number;
   readonly since: number;
-  /** How many of its chords our lines held when last looked at, and since when. */
+  /** Times it has been laid again after a cut. */
+  readonly repairs: number;
+  /** How many of its chords our lines held when last looked at, and when that last went up. */
   held: number;
   heldSince: number;
+  /** Times a rival has cut one of our lines since it was planned. */
+  cuts: number;
 }
 
 /**
@@ -454,8 +464,10 @@ interface BridgePlan extends Arc {
  * round, so a finished bridge claims all inside it. A bridge already laid is
  * stepped over (the search goes on round it); one whose middle is inside a
  * rival's circuit or on a rival's line isn't planned; one that can't be
- * tapped for a while, or makes no headway for too long, is given up, and the search
- * goes on round the last that closed. Once nothing spans the last (that
+ * tapped for a while, makes no headway for too long, or is cut back by
+ * rivals again and again, is given up, and a whole new nest starts: a short
+ * first one from anywhere on the edge. A finished bridge a rival cuts is laid again before anything
+ * new (twice at most). Once nothing spans the last (that
  * would take more than half the edge), it starts small
  * again just past it — growing on round from where it is, never jumping
  * across the board. Every search runs a slice a tick
@@ -477,6 +489,9 @@ class Bridge extends Bot {
   private idle = 0;
   /** Ends of bridges given up, and when. */
   private readonly failed = new Map<number, number>();
+  /** Bridges it finished, oldest first: one a rival cuts is laid again before anything new. */
+  private readonly laid: BridgePlan[] = [];
+  private repairAt = 0;
 
   override firstRule(): PlayerRule {
     return bridgeRule(this.engine.field.family);
@@ -485,6 +500,7 @@ class Bridge extends Bot {
   override update(now: number, p: Player, ev: GameEvent[]): void {
     // Planning runs whether or not a head is free.
     if (!this.plan) this.search(now, p, BRIDGE_BUDGET);
+    else for (const e of ev) if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined) this.plan.cuts++;
     super.update(now, p, ev);
   }
 
@@ -500,11 +516,10 @@ class Bridge extends Bot {
     const mine = this.ours(plan.steps);
     let held = 0;
     for (const s of plan.steps) if (mine.has(s.tile * 64 + s.chord)) held++;
-    if (held > plan.held) {
-      plan.held = held;
-      plan.heldSince = now;
-    }
-    if (now - plan.heldSince > BRIDGE_GIVE_UP_MS || this.idle >= BRIDGE_IDLE_TURNS) {
+    // Headway is more than last time, not more than ever: a line cut and growing back is getting on.
+    if (held > plan.held) plan.heldSince = now;
+    plan.held = held;
+    if (now - plan.heldSince > BRIDGE_GIVE_UP_MS || this.idle >= BRIDGE_IDLE_TURNS || plan.cuts >= BRIDGE_CUTS) {
       this.done(plan, false);
       return;
     }
@@ -525,18 +540,28 @@ class Bridge extends Bot {
   private done(plan: BridgePlan, closed: boolean): void {
     this.plan = null;
     this.idle = 0;
-    if (closed) this.closed = { a: plan.a, b: plan.b };
-    else {
+    if (closed) {
+      if (plan.repairs < BRIDGE_REPAIRS) this.laid.push(plan);
+      if (this.laid.length > BRIDGE_MEMORY) this.laid.shift();
+    } else {
       this.failed.set(plan.a, plan.since);
       this.failed.set(plan.b, plan.since);
     }
-    const last = this.closed;
-    if (last && (closed || this.nest)) this.nest = { arc: last, next: closed ? last.b + 1 : plan.from + 1 };
-    else this.startSmall(plan.from + 1);
+    // A repair leaves the search where it was.
+    if (plan.repairs > 0) return;
+    if (closed) {
+      // The next one out spans it.
+      this.closed = { a: plan.a, b: plan.b };
+      this.nest = { arc: this.closed, next: plan.b + 1 };
+    } else {
+      // Given up (someone's in the way): a whole new nest, a short first one from anywhere.
+      this.closed = null;
+      this.startSmall(null);
+    }
   }
 
-  /** Look for a short first one, walking round from start `near`. */
-  private startSmall(near: number): void {
+  /** Look for a short first one, walking round from start `near` (null: from anywhere). */
+  private startSmall(near: number | null): void {
     this.nest = null;
     this.near = near;
     this.tries = 0;
@@ -599,6 +624,18 @@ class Bridge extends Bot {
     }
     const n = index.starts.length;
     if (n < 2) return;
+    if (now >= this.repairAt && !this.chosen) {
+      this.repairAt = now + BRIDGE_REPAIR_MS;
+      const cut = this.cutBridge(now);
+      if (cut) {
+        // Lay it again (the search for the next goes on where it was).
+        if (this.walk && this.nest) this.nest.next = this.walk.from;
+        this.walk = null;
+        this.plan = { ...cut, since: now, held: 0, heldSince: now, cuts: 0, repairs: cut.repairs + 1 };
+        this.idle = 0;
+        return;
+      }
+    }
     while (budget > 0 && !this.plan) {
       if (this.walk) {
         // A line being walked: to judge it, or for the steps of the one chosen.
@@ -609,12 +646,12 @@ class Bridge extends Bot {
         const chosen = this.chosen;
         this.chosen = null;
         if (chosen) {
-          if (w.end !== null) this.setPlan(now, chosen, w.from, w.steps);
+          if (w.end !== null) this.setPlan(now, chosen, w.steps);
           continue;
         }
         const line = index.lineFrom(w.from, w.steps.length);
         const arc = line && this.judge(now, n, w.from, line);
-        if (arc) this.setPlan(now, arc, w.from, w.steps);
+        if (arc) this.setPlan(now, arc, w.steps);
         continue;
       }
       // The next start to try.
@@ -650,8 +687,20 @@ class Bridge extends Bot {
     }
   }
 
-  private setPlan(now: number, arc: Arc, from: number, steps: readonly WalkStep[]): void {
-    this.plan = { steps, a: arc.a, b: arc.b, from, since: now, held: 0, heldSince: now };
+  /** The latest finished bridge a rival has cut (and that can be tapped), if any. */
+  private cutBridge(now: number): BridgePlan | null {
+    for (let i = this.laid.length - 1; i >= 0; i--) {
+      const q = this.laid[i];
+      if (isBridgeClosed(this.engine, this.id, q.steps)) continue;
+      if (this.unplayable(now, q.a, q.b, q.steps[q.steps.length >> 1])) continue;
+      this.laid.splice(i, 1);
+      return q;
+    }
+    return null;
+  }
+
+  private setPlan(now: number, arc: Arc, steps: readonly WalkStep[]): void {
+    this.plan = { steps, a: arc.a, b: arc.b, since: now, held: 0, heldSince: now, cuts: 0, repairs: 0 };
     this.tries = 0;
     this.idle = 0;
   }
