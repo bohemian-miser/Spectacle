@@ -153,12 +153,13 @@ describe('bots at play', () => {
     const holds = (o: { a: number; b: number }, i: { a: number; b: number }) => fwd(o.a, i.a) <= fwd(o.a, i.b) && fwd(o.a, i.b) <= fwd(o.a, o.b);
     // Round the last (or something laid already), else on round the edge from it — past what it holds
     // there already — never back across the board. (Before, it went on from a random start.)
-    // A repair (one laid again after a cut) goes back on purpose; moves count from the last new one.
+    // A repair (one laid again after a cut) goes back on purpose; moves count from the last new one,
+    // and after one given up a whole new nest may start anywhere.
     let prev = plans[0];
     for (let i = 1; i < plans.length; i++) {
       const next = plans[i];
       if (plans.slice(0, i).some((q) => q.a === next.a && q.b === next.b)) continue;
-      if (!plans.slice(0, i).some((q) => holds(next, q))) expect(fwd(prev.b, next.a)).toBeLessThan(n >> 1);
+      if (prev.closed && !plans.slice(0, i).some((q) => holds(next, q))) expect(fwd(prev.b, next.a)).toBeLessThan(n >> 1);
       prev = next;
     }
     // Given up rarely: no bridge planned where it can't be tapped.

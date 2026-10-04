@@ -442,8 +442,6 @@ interface Arc {
 
 interface BridgePlan extends Arc {
   readonly steps: readonly WalkStep[];
-  /** Where it starts (C): if it's given up, the search goes on from the next start. */
-  readonly from: number;
   readonly since: number;
   /** Times it has been laid again after a cut. */
   readonly repairs: number;
@@ -467,8 +465,8 @@ interface BridgePlan extends Arc {
  * stepped over (the search goes on round it); one whose middle is inside a
  * rival's circuit or on a rival's line isn't planned; one that can't be
  * tapped for a while, makes no headway for too long, or is cut back by
- * rivals again and again, is given up, and the search goes on round the last
- * that closed. A finished bridge a rival cuts is laid again before anything
+ * rivals again and again, is given up, and a whole new nest starts: a short
+ * first one from anywhere on the edge. A finished bridge a rival cuts is laid again before anything
  * new (twice at most). Once nothing spans the last (that
  * would take more than half the edge), it starts small
  * again just past it — growing on round from where it is, never jumping
@@ -551,14 +549,19 @@ class Bridge extends Bot {
     }
     // A repair leaves the search where it was.
     if (plan.repairs > 0) return;
-    if (closed) this.closed = { a: plan.a, b: plan.b };
-    const last = this.closed;
-    if (last && (closed || this.nest)) this.nest = { arc: last, next: closed ? last.b + 1 : plan.from + 1 };
-    else this.startSmall(plan.from + 1);
+    if (closed) {
+      // The next one out spans it.
+      this.closed = { a: plan.a, b: plan.b };
+      this.nest = { arc: this.closed, next: plan.b + 1 };
+    } else {
+      // Given up (someone's in the way): a whole new nest, a short first one from anywhere.
+      this.closed = null;
+      this.startSmall(null);
+    }
   }
 
-  /** Look for a short first one, walking round from start `near`. */
-  private startSmall(near: number): void {
+  /** Look for a short first one, walking round from start `near` (null: from anywhere). */
+  private startSmall(near: number | null): void {
     this.nest = null;
     this.near = near;
     this.tries = 0;
@@ -643,12 +646,12 @@ class Bridge extends Bot {
         const chosen = this.chosen;
         this.chosen = null;
         if (chosen) {
-          if (w.end !== null) this.setPlan(now, chosen, w.from, w.steps);
+          if (w.end !== null) this.setPlan(now, chosen, w.steps);
           continue;
         }
         const line = index.lineFrom(w.from, w.steps.length);
         const arc = line && this.judge(now, n, w.from, line);
-        if (arc) this.setPlan(now, arc, w.from, w.steps);
+        if (arc) this.setPlan(now, arc, w.steps);
         continue;
       }
       // The next start to try.
@@ -696,8 +699,8 @@ class Bridge extends Bot {
     return null;
   }
 
-  private setPlan(now: number, arc: Arc, from: number, steps: readonly WalkStep[]): void {
-    this.plan = { steps, a: arc.a, b: arc.b, from, since: now, held: 0, heldSince: now, cuts: 0, repairs: 0 };
+  private setPlan(now: number, arc: Arc, steps: readonly WalkStep[]): void {
+    this.plan = { steps, a: arc.a, b: arc.b, since: now, held: 0, heldSince: now, cuts: 0, repairs: 0 };
     this.tries = 0;
     this.idle = 0;
   }
