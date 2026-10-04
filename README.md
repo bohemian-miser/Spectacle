@@ -69,7 +69,13 @@ line and you both die.
 </tr>
 <tr>
 <td><b>Team colours</b> (on by default; press <kbd>T</kbd>): you in blue, everyone else in red.</td>
-<td><b>Settings apply live</b> — theme, five circuit-colour styles, a plain board and team colours (both on by default).</td>
+<td><b>Settings apply live</b> — theme, five circuit-colour styles, a plain board, team colours (both on by default) and the Spectre view.</td>
+</tr>
+<tr>
+<td colspan="2"><img src="docs/images/arena-spectre-view.png" alt="The same hexagon arena drawn as Spectres: every hexagon its Spectre, the lines following"></td>
+</tr>
+<tr>
+<td colspan="2"><b>The hexagons as Spectres</b> (press <kbd>S</kbd>): the same board, every line still where it was — the two tilings are the same game. The board morphs from one shape to the other in place.</td>
 </tr>
 </table>
 
@@ -83,6 +89,7 @@ line and you both die.
 | Zoom | wheel | pinch | |
 | Pick the pattern you draw with | click a tab (bottom left) | tap a tab | <kbd>1</kbd>–<kbd>9</kbd> |
 | Team colours | ⚙ Settings | ⚙ Settings | <kbd>T</kbd> |
+| See the hexagons as Spectres | ⚙ Settings | ⚙ Settings | <kbd>S</kbd> |
 
 ## The rules in full
 
@@ -243,6 +250,14 @@ picks how loops and the areas inside them are shaded (A owner ramp, B length
 palette, C depth bands, D contour stripes, E depth heatmap; `?circuits=a…e`
 forces one). **Plain board** hides the tile colours and arrows, leaving the
 arena's edge, the faint tile outlines when zoomed in and your rule's pattern.
+**Draw the hexagons as Spectres** (or <kbd>S</kbd> in the arena; `?spectres=1`)
+shows a hexagon arena as the Spectre tiling it stands for — the two are the
+same tiling in two shapes: every hexagon is a Spectre (a Gamma is the Mystic,
+two of them), every seam has the same class in both, so every line sits on
+its Spectres exactly where it sat on its hexagons. The board morphs from one
+shape to the other in place, and back. It is a view in your browser only:
+the game, the server and everyone else's board are untouched, and taps land
+on the tile you see. (A Spectre arena is Spectres already.)
 
 **Light or dark** (also in Settings) flips the whole game, board included: outlines, the halo on your line and how far the
 tiles are sat back are part of the scheme, not just the panels. Light shows the

@@ -25,6 +25,17 @@ export interface CircuitInput {
   /** Matching index per leaf tile type (into `enumerateMatchings` order). */
   readonly matchingIndexByType: Readonly<Record<string, number>>;
   readonly contracts?: EdgeContracts;
+  /**
+   * Chords per leaf type, in each leaf's frame, used instead of working them
+   * out from `selected` / `matchingIndexByType` (see `hexRuleSpectreChords`).
+   */
+  readonly chords?: Readonly<Record<string, readonly Segment[]>>;
+  /**
+   * Chords (the very objects in `chords`) that are drawn and traced but do
+   * not count towards a path's length — the Mystic's internal links when a
+   * hexagon rule is drawn on Spectres, so lengths stay the hexagons'.
+   */
+  readonly auxChords?: Readonly<Record<string, readonly Segment[]>>;
 }
 
 /** Canonical key for a point, rounded to 3 decimals (ports `pointToKey`). */
@@ -62,11 +73,19 @@ export function localChords(
 
 /** Ports `collectEdges`: all chords of all instances in world coordinates. */
 export function collectSegments(input: CircuitInput): readonly Segment[] {
+  return collectTaggedSegments(input).segments;
+}
+
+/** {@link collectSegments}, plus which of them are `auxChords`. */
+function collectTaggedSegments(input: CircuitInput): { segments: Segment[]; aux: boolean[] } {
   const contracts = input.contracts ?? DEFAULT_CONTRACTS;
   const cache = new Map<string, readonly Segment[]>();
+  const auxOf = new Set<Segment>();
+  for (const list of Object.values(input.auxChords ?? {})) for (const seg of list) auxOf.add(seg);
   const out: Segment[] = [];
+  const aux: boolean[] = [];
   for (const inst of input.instances) {
-    let local = cache.get(inst.type);
+    let local = input.chords ? input.chords[inst.type] ?? [] : cache.get(inst.type);
     if (!local) {
       local = localChords(
         input.family,
@@ -77,11 +96,12 @@ export function collectSegments(input: CircuitInput): readonly Segment[] {
       );
       cache.set(inst.type, local);
     }
-    for (const [a, b] of local) {
-      out.push([transPt(inst.xform, a), transPt(inst.xform, b)]);
+    for (const seg of local) {
+      out.push([transPt(inst.xform, seg[0]), transPt(inst.xform, seg[1])]);
+      aux.push(auxOf.has(seg));
     }
   }
-  return out;
+  return { segments: out, aux };
 }
 
 /**
@@ -131,11 +151,16 @@ export interface Path {
   readonly points: readonly Pt[];
   /** Closed paths do not repeat their first point at the end. */
   readonly closed: boolean;
+  /**
+   * Length when some of the path's segments do not count (`auxChords`);
+   * absent otherwise. Read it through {@link pathLength}.
+   */
+  readonly length?: number;
 }
 
-/** Number of segments in a path. */
+/** Number of (counted) segments in a path. */
 export function pathLength(p: Path): number {
-  return p.closed ? p.points.length : p.points.length - 1;
+  return p.length ?? (p.closed ? p.points.length : p.points.length - 1);
 }
 
 export function pathSegments(p: Path): readonly Segment[] {
@@ -255,8 +280,23 @@ export interface AnalyzeOptions {
 
 /** Ports `analyzeAndColor` (collect -> weld -> trace -> color), p5-free. */
 export function analyze(input: CircuitInput, opts: AnalyzeOptions = {}): CircuitAnalysis {
-  const segments = weldSegments(collectSegments(input), opts.epsilon ?? 0.05);
-  const { circuits, tails, junctionCount } = tracePaths(segments);
+  const tagged = collectTaggedSegments(input);
+  const segments = weldSegments(tagged.segments, opts.epsilon ?? 0.05);
+  const traced = tracePaths(segments);
+  const { junctionCount } = traced;
+  let { circuits, tails } = traced;
+  if (tagged.aux.includes(true)) {
+    const auxKeys = new Set<string>();
+    segments.forEach((seg, i) => {
+      if (tagged.aux[i]) auxKeys.add(segmentKey(seg));
+    });
+    const recount = (p: Path): Path => {
+      const skip = pathSegments(p).filter((seg) => auxKeys.has(segmentKey(seg))).length;
+      return skip ? { ...p, length: pathLength(p) - skip } : p;
+    };
+    circuits = circuits.map(recount);
+    tails = tails.map(recount);
+  }
 
   const circuitsByLength = groupByLength(circuits);
   const tailsByLength = groupByLength(tails);

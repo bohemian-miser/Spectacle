@@ -8,7 +8,7 @@
 
 import type { Pt } from './geom';
 
-export type TileFamilyId = 'spectre' | 'hex' | 'hat' | 'turtle';
+export type TileFamilyId = 'spectre' | 'spectre-iso' | 'hex' | 'hat' | 'turtle';
 
 export type TileTypeId =
   | 'Gamma'
@@ -23,11 +23,12 @@ export type TileTypeId =
   | 'Gamma1'
   | 'Gamma2';
 
-export const FAMILIES: readonly TileFamilyId[] = ['spectre', 'hex', 'hat', 'turtle'];
+export const FAMILIES: readonly TileFamilyId[] = ['spectre', 'spectre-iso', 'hex', 'hat', 'turtle'];
 
 /** Display names used by the old shape dropdown (sketch.ts). */
 export const FAMILY_DISPLAY_NAMES: Readonly<Record<TileFamilyId, string>> = {
   spectre: 'Tile(1,1)',
+  'spectre-iso': 'Tile(1,1), hex-isomorphic labels',
   hex: 'Hexagons',
   hat: 'Turtles in Hats',
   turtle: 'Hats in Turtles',
@@ -165,6 +166,35 @@ export const SPECTRE_EDGE_LABELS: Readonly<Record<string, readonly string[]>> = 
   Gamma1: ['-1.2A', '-1.1A', '-1.0A', '1.0A', '1.1A', '1.2A', '7.0A', '7.1A', '7.2A', '7.3A', '2.2A', '-2.2A', '-2.1A', '-2.0A'],
 };
 
+/**
+ * Tile(1,1) labelled so its seams match the hexagon family's one for one.
+ *
+ * {@link SPECTRE_EDGE_LABELS} gives the Sigma a single four-edge class-4 seam
+ * and the Mystic a class-6 seam, so class 6 joins Delta to Gamma and class 4
+ * never shows up in a valid rule. In the hexagons Sigma has a class-6 edge
+ * and a class-4 edge, and class 6 joins Delta to Sigma. The two tilings really
+ * do differ there: a thin wedge of Gamma2 (its edges 4–7) sits between the
+ * Delta's `-6` seam and the Sigma's first two edges, where the hexagons have
+ * Delta and Sigma touching.
+ *
+ * This table splits that four-edge seam in two. The Sigma's edges 0–1
+ * (`4.2A`, `4.3A`) become a `6` seam, glued to Gamma2's edges 6–7, which
+ * become `-6`; the other half stays class 4 (`4.0A`, `4.1A` / `-4.1A`,
+ * `-4.0A`). Everything else is {@link SPECTRE_EDGE_LABELS} unchanged.
+ *
+ * Gamma2 then carries a `6` and a `-6` dot side by side, with no other dot
+ * between them: pairing those two is the chord that stands in for the
+ * hexagons' Delta–Sigma edge, and every other tile has exactly the hexagon
+ * tile's dots in the hexagon tile's order. Class parities (and so the valid
+ * rules) match the hexagons', with class 7 riding along inside the Mystic as
+ * before (`128` ↔ `1278`).
+ */
+export const SPECTRE_ISO_EDGE_LABELS: Readonly<Record<string, readonly string[]>> = {
+  ...SPECTRE_EDGE_LABELS,
+  Sigma: ['6.0A', '6.1A', '2.0A', '2.1A', '2.2A', '-5.1A', '-5.0A', '1.0A', '1.1A', '1.2A', '-3.1A', '-3.0A', '4.0A', '4.1A'],
+  Gamma2: ['-7.1A', '-7.0A', '-3.1A', '-3.0A', '6.0A', '6.1A', '-6.1A', '-6.0A', '-4.1A', '-4.0A', '2.0A', '2.1A', '-7.3A', '-7.2A'],
+};
+
 /** tiles.hex_edge_labels — 6 physical edges per tile. */
 export const HEX_EDGE_LABELS: Readonly<Record<string, readonly string[]>> = {
   Delta: ['3.0A', '2.0A', '-5.0A', '1.0A', '-3.0A', '-6.0A'],
@@ -199,7 +229,12 @@ export function leafPts(family: TileFamilyId, type: TileTypeId): readonly Pt[] {
 
 /** Edge labels for a tile in a family (empty array for unknown tiles). */
 export function edgeLabels(family: TileFamilyId, type: TileTypeId): readonly string[] {
-  const table = family === 'hex' ? HEX_EDGE_LABELS : SPECTRE_EDGE_LABELS;
+  const table =
+    family === 'hex'
+      ? HEX_EDGE_LABELS
+      : family === 'spectre-iso'
+        ? SPECTRE_ISO_EDGE_LABELS
+        : SPECTRE_EDGE_LABELS;
   return table[type] ?? [];
 }
 

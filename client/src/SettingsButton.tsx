@@ -1,6 +1,6 @@
 /**
  * The settings button and its small modal: theme, circuit colouring, plain
- * board, team colours. Every control applies as it changes, so the board
+ * board, team colours, the Spectre view of a hexagon board. Every control applies as it changes, so the board
  * updates behind the modal without closing it. Lives in the lobby header and
  * the arena HUD.
  */
@@ -66,6 +66,10 @@ export function SettingsButton(): JSX.Element {
               <label className="setting setting-check">
                 <input type="checkbox" checked={settings.teams} onChange={(e) => update({ teams: e.target.checked })} />
                 <span>Team colours: you blue, everyone else red (T)</span>
+              </label>
+              <label className="setting setting-check">
+                <input type="checkbox" checked={settings.spectres} onChange={(e) => update({ spectres: e.target.checked })} />
+                <span>Draw the hexagons as Spectres (S)</span>
               </label>
             </div>
           </div>,
