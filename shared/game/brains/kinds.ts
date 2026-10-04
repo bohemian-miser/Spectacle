@@ -34,7 +34,7 @@ import type { GameEvent } from '../protocol';
 import { isInfiniteLineRule, randomCleanRule, ruleFromCombo, ruleKey, type PlayerRule } from '../rule';
 import type { Rng } from '../rng';
 import { tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
-import { EdgeWalk, WALK_COST, edgeIndexFor, fieldFrame, isBridgeClosed, probe, randomTileWithLine, scoutFor, stepMid, tileNear, type Probe } from './sense';
+import { EdgeWalk, WALK_COST, type EdgeLine, edgeIndexFor, fieldFrame, isBridgeClosed, probe, randomTileWithLine, scoutFor, stepMid, tileNear, type Probe } from './sense';
 import { leafOrder, validEdgeSubsets, type Pt, type TileFamilyId } from '../../tiles';
 
 export type BotKind = 'wanderer' | 'rotator' | 'hunter' | 'farmer' | 'bridge';
@@ -419,34 +419,64 @@ const FIRST_BRIDGE = 20;
 const FIRST_BRIDGE_TRIES = 400;
 /** No bridge is planned longer than this. */
 const BRIDGE_LIMIT = 20_000;
-/** A bridge still open after this long (someone's line in the way) is passed over for the next one out. */
-const BRIDGE_GIVE_UP_MS = 3 * 60_000;
+/** A bridge none of whose gaps has filled for this long (someone's line in the way) is passed over for the next one out. */
+const BRIDGE_GIVE_UP_MS = 90_000;
+/** …and one where this many turns in a row land no tap (inside a rival's circuit, say) much sooner. */
+const BRIDGE_IDLE_TURNS = 8;
+/** A bridge given up isn't planned again for this long. */
+const BRIDGE_RETRY_MS = 5 * 60_000;
 
-interface BridgePlan {
-  readonly steps: readonly WalkStep[];
-  /** Edge-index numbers: the bridge runs from one to the other, enclosing the arc of edge from `a` on round to `b`. */
+/** A stretch of the field's edge, in edge-index numbers: from `a` on round to `b`. */
+interface Arc {
   readonly a: number;
   readonly b: number;
+}
+
+interface BridgePlan extends Arc {
+  readonly steps: readonly WalkStep[];
+  /** Where it starts (C): if it's given up, the search goes on from the next start. */
+  readonly from: number;
   readonly since: number;
+  /** How many of its chords our lines held when last looked at, and since when. */
+  held: number;
+  heldSince: number;
 }
 
 /**
- * Bridges from edge to edge, nested outwards (#81). The first is a short
- * line across a corner of the board; once it closes, the next is the line
- * that spans it: from the bridge's far end B the bot walks the edge index on
- * (start C), following each start's line to where it comes out (D), and takes
- * the first whose D lands nearer the near end A than B. Each is tapped until
- * it closes: the gap nearest its middle, and a half that ran off the edge
- * tapped at its start to turn it round, so a finished bridge claims all
- * inside it. Every search runs a slice a tick (`BRIDGE_BUDGET`).
+ * Bridges from edge to edge, nested outwards (#81). A bridge claims the
+ * smaller side of the board, as the engine does: its arc is the shorter way
+ * round the edge between its ends. The first is a short line across a
+ * corner; once it closes, the next is the line that spans it: from the
+ * bridge's far end B the bot walks the edge index on (start C), following
+ * each start's line to where it comes out (D), and takes the first whose arc
+ * holds the last one's. Each is tapped until it closes: the gap nearest its
+ * middle, and a half that ran off the edge tapped at its start to turn it
+ * round, so a finished bridge claims all inside it. A bridge already laid is
+ * stepped over (the search goes on round it); one whose middle is inside a
+ * rival's circuit or on a rival's line isn't planned; one that can't be
+ * tapped for a while, or makes no headway for too long, is given up, and the search
+ * goes on round the last that closed. Once nothing spans the last (that
+ * would take more than half the edge), it starts small
+ * again just past it — growing on round from where it is, never jumping
+ * across the board. Every search runs a slice a tick
+ * (`BRIDGE_BUDGET`).
  */
 class Bridge extends Bot {
   private plan: BridgePlan | null = null;
-  /** The line being walked, as a candidate for the next plan. */
+  /** The line being walked: a candidate for the next plan, or (`chosen`) the next plan's steps. */
   private walk: EdgeWalk | null = null;
-  /** Looking for the line round the last bridge (its a, b), at start `next`; null: looking for a short first one. */
-  private nest: { a: number; b: number; next: number } | null = null;
+  private chosen: Arc | null = null;
+  /** Looking for the line round the last bridge that closed (its arc), at start `next`; null: looking for a short first one. */
+  private nest: { arc: Arc; next: number } | null = null;
+  /** The last bridge that closed. */
+  private closed: Arc | null = null;
+  /** Where a search for a short first one walks from (on round, a start at a time); null: anywhere. */
+  private near: number | null = null;
   private tries = 0;
+  /** Turns in a row with no tap landing on the plan. */
+  private idle = 0;
+  /** Ends of bridges given up, and when. */
+  private readonly failed = new Map<number, number>();
 
   override firstRule(): PlayerRule {
     return bridgeRule(this.engine.field.family);
@@ -462,12 +492,58 @@ class Bridge extends Bot {
     this.nextTapAt = now + 400 + this.rng.int(600);
     const plan = this.plan;
     if (!plan) return;
-    if (isBridgeClosed(this.engine, this.id, plan.steps) || now - plan.since > BRIDGE_GIVE_UP_MS) {
-      // Done (or hopeless): the next one out spans it.
-      this.plan = null;
-      this.nest = { a: plan.a, b: plan.b, next: plan.b + 1 };
+    if (isBridgeClosed(this.engine, this.id, plan.steps)) {
+      // Done: the next one out spans it.
+      this.done(plan, true);
       return;
     }
+    const mine = this.ours(plan.steps);
+    let held = 0;
+    for (const s of plan.steps) if (mine.has(s.tile * 64 + s.chord)) held++;
+    if (held > plan.held) {
+      plan.held = held;
+      plan.heldSince = now;
+    }
+    if (now - plan.heldSince > BRIDGE_GIVE_UP_MS || this.idle >= BRIDGE_IDLE_TURNS) {
+      this.done(plan, false);
+      return;
+    }
+    if (this.tapPlan(plan, p, mine, ev)) this.idle = 0;
+    else this.idle++;
+  }
+
+  /** The chords our lines on these steps' tiles hold (tile × 64 + chord). */
+  private ours(steps: readonly WalkStep[]): Set<number> {
+    const crossing = new Set<Path>();
+    for (const s of steps) for (const q of this.engine.pathsOn(s.tile)) if (q.owner === this.id) crossing.add(q);
+    const mine = new Set<number>();
+    for (const q of crossing) for (const s of q.steps) mine.add(s.tile * 64 + s.chord);
+    return mine;
+  }
+
+  /** Drop the plan: the search goes on round the last bridge that closed (this one, if it did). */
+  private done(plan: BridgePlan, closed: boolean): void {
+    this.plan = null;
+    this.idle = 0;
+    if (closed) this.closed = { a: plan.a, b: plan.b };
+    else {
+      this.failed.set(plan.a, plan.since);
+      this.failed.set(plan.b, plan.since);
+    }
+    const last = this.closed;
+    if (last && (closed || this.nest)) this.nest = { arc: last, next: closed ? last.b + 1 : plan.from + 1 };
+    else this.startSmall(plan.from + 1);
+  }
+
+  /** Look for a short first one, walking round from start `near`. */
+  private startSmall(near: number): void {
+    this.nest = null;
+    this.near = near;
+    this.tries = 0;
+  }
+
+  /** One tap towards closing the plan; false if none landed. */
+  private tapPlan(plan: BridgePlan, p: Player, mine: ReadonlySet<number>, ev: GameEvent[]): boolean {
     ev.push(...this.engine.setActive(this.id, 0));
     const field = this.engine.field;
     const onPlan = new Set(plan.steps.map((s) => s.tile * 64 + s.chord));
@@ -477,26 +553,44 @@ class Bridge extends Bot {
       const first = q.steps[0];
       const last = q.steps[q.steps.length - 1];
       if (!onPlan.has(first.tile * 64 + first.chord) || !onFieldBoundary(field, last.tile, last.b)) continue;
-      if (this.tapStep(first, ev)) return;
+      if (this.tapStep(first, ev)) return true;
     }
     // Otherwise the gap nearest the middle: a chord of the plan none of its lines holds yet.
     const steps = plan.steps;
-    const crossing = new Set<Path>();
-    for (const s of steps) for (const q of this.engine.pathsOn(s.tile)) if (q.owner === this.id) crossing.add(q);
-    const mine = new Set<number>();
-    for (const q of crossing) for (const s of q.steps) mine.add(s.tile * 64 + s.chord);
     const mid = steps.length >> 1;
     let tries = 0;
     for (let d = 0; d <= mid + 1; d++) {
       for (const i of d === 0 ? [mid] : [mid - d, mid + d]) {
         const s = steps[i];
         if (!s || mine.has(s.tile * 64 + s.chord)) continue;
-        if (this.tapStep(s, ev) || ++tries >= 6) return;
+        if (this.tapStep(s, ev)) return true;
+        if (++tries >= 6) return false;
       }
     }
+    return false;
   }
 
-  /** Spend about `budget` steps on the edge index, then on finding the next bridge. */
+  /**
+   * Not worth planning: given up on lately, or its middle — where it's tapped
+   * first — is inside a rival's circuit or on a rival's line, where no tap lands.
+   */
+  private unplayable(now: number, c: number, d: number, mid: WalkStep): boolean {
+    for (const k of [c, d]) {
+      const at = this.failed.get(k);
+      if (at === undefined) continue;
+      if (now - at < BRIDGE_RETRY_MS) return true;
+      this.failed.delete(k);
+    }
+    for (const q of this.engine.pathsOn(mid.tile)) if (q.owner !== this.id) return true;
+    return this.engine.insideRivalCircuit(this.id, stepMid(mid));
+  }
+
+  /**
+   * Spend about `budget` steps on the edge index, then on finding the next
+   * bridge. A line walked once is known from then on (`lineFrom`), so going
+   * round past lines already judged costs next to nothing; only the plan's
+   * own steps are walked again.
+   */
   private search(now: number, p: Player, budget: number): void {
     const index = edgeIndexFor(this.engine.field, p.table);
     if (!index.done) {
@@ -506,41 +600,89 @@ class Bridge extends Bot {
     const n = index.starts.length;
     if (n < 2) return;
     while (budget > 0 && !this.plan) {
-      if (!this.walk) {
-        if (this.nest) {
-          // On round from B; back at A, there's nothing left to span: start again small.
-          const c = ((this.nest.next % n) + n) % n;
-          if (c === this.nest.a) {
-            this.nest = null;
-            continue;
-          }
-          this.nest.next = c + 1;
-          this.walk = new EdgeWalk(index, c, BRIDGE_LIMIT);
-        } else {
-          const limit = this.tries++ < FIRST_BRIDGE_TRIES ? FIRST_BRIDGE : BRIDGE_LIMIT;
-          this.walk = new EdgeWalk(index, this.rng.int(n), limit);
+      if (this.walk) {
+        // A line being walked: to judge it, or for the steps of the one chosen.
+        const w = this.walk;
+        budget -= w.work(budget);
+        if (w.end === undefined) return;
+        this.walk = null;
+        const chosen = this.chosen;
+        this.chosen = null;
+        if (chosen) {
+          if (w.end !== null) this.setPlan(now, chosen, w.from, w.steps);
+          continue;
         }
-        budget -= WALK_COST;
+        const line = index.lineFrom(w.from, w.steps.length);
+        const arc = line && this.judge(now, n, w.from, line);
+        if (arc) this.setPlan(now, arc, w.from, w.steps);
+        continue;
       }
-      const w = this.walk;
-      budget -= w.work(budget);
-      if (w.end === undefined) return;
-      this.walk = null;
-      if (w.end === null) continue;
-      const c = w.from;
-      const d = w.end;
+      // The next start to try.
+      let c: number;
+      let limit = BRIDGE_LIMIT;
       if (this.nest) {
-        const { a, b } = this.nest;
-        const dist = (x: number, y: number): number => Math.min((x - y + n) % n, (y - x + n) % n);
-        if (dist(d, a) >= dist(d, b)) continue;
-        // It spans the last one: its inside runs from D on round past A and B to C.
-        this.plan = { steps: w.steps, a: d, b: c, since: now };
+        // On round from B. A line from C that spans the last arc has A to C on its side: past half the edge
+        // (where the engine would claim the other side) nothing will, so start again small, just past it.
+        const { a, b } = this.nest.arc;
+        c = mod(this.nest.next, n);
+        if (fwd(a, c, n) > n >> 1) {
+          this.startSmall(b + 1);
+          continue;
+        }
+        this.nest.next = c + 1;
       } else {
-        // The first: its inside is the short way round between its ends.
-        const short = (d - c + n) % n <= n >> 1;
-        this.plan = { steps: w.steps, a: short ? c : d, b: short ? d : c, since: now };
+        const short = this.tries++ < FIRST_BRIDGE_TRIES;
+        c = short && this.near !== null ? mod(this.near + this.tries - 1, n) : this.rng.int(n);
+        if (short) limit = FIRST_BRIDGE;
       }
-      this.tries = 0;
+      const line = index.lineFrom(c, limit);
+      if (!line) {
+        budget -= WALK_COST;
+        this.walk = new EdgeWalk(index, c, limit);
+        continue;
+      }
+      budget--;
+      const arc = this.judge(now, n, c, line);
+      if (arc) {
+        this.chosen = arc;
+        this.walk = new EdgeWalk(index, c, line.length);
+      }
     }
   }
+
+  private setPlan(now: number, arc: Arc, from: number, steps: readonly WalkStep[]): void {
+    this.plan = { steps, a: arc.a, b: arc.b, from, since: now, held: 0, heldSince: now };
+    this.tries = 0;
+    this.idle = 0;
+  }
+
+  /** The arc of the line from start `c` if it's the next bridge to lay; null if not (and stepping over one laid already). */
+  private judge(now: number, n: number, c: number, line: EdgeLine): Arc | null {
+    const d = line.end;
+    if (d === null) return null;
+    // A bridge claims the shorter way round between its ends, as the engine does.
+    const arc = fwd(c, d, n) <= n >> 1 ? { a: c, b: d } : { a: d, b: c };
+    const laid = isBridgeClosed(this.engine, this.id, [line.first, line.last]);
+    if (this.nest) {
+      // It spans the last one if its arc holds the last's (else it's a bump beside it).
+      const last = this.nest.arc;
+      if (fwd(arc.a, last.a, n) > fwd(arc.a, last.b, n) || fwd(arc.a, last.b, n) > fwd(arc.a, arc.b, n)) return null;
+      if (laid) {
+        // Laid already: the next one out spans it.
+        this.closed = arc;
+        this.nest = { arc, next: arc.b + 1 };
+        return null;
+      }
+    } else if (laid) return null;
+    return this.unplayable(now, c, d, line.mid) ? null : arc;
+  }
+}
+
+function mod(x: number, n: number): number {
+  return ((x % n) + n) % n;
+}
+
+/** Edge starts from `x` on round to `y`, of `n`. */
+function fwd(x: number, y: number, n: number): number {
+  return mod(y - x, n);
 }

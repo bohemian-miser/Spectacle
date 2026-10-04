@@ -1,13 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import { BRIDGE_BUDGET, bridgeRule } from '../shared/game/brains/kinds';
-import { EdgeIndex, EdgeWalk, edgeIndexFor, isInfiniteLineRule, scoutFor } from '../shared/game/brains/sense';
+import { EdgeIndex, EdgeWalk, edgeIndexFor, isBridgeClosed, isInfiniteLineRule, scoutFor } from '../shared/game/brains/sense';
 import { BOT_KINDS, Bots, formatBotMix, parseBotMix, prepareBots, type BotMix } from '../shared/game/bots';
 import { Engine } from '../shared/game/engine';
 import { buildField, fieldOutline } from '../shared/game/field';
 import { DEFAULT_KNOBS, knobsForMode } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
 import { describeRule, fassRule, ruleKey } from '../shared/game/rule';
-import { chordTableFor } from '../shared/game/strand';
+import { chordTableFor, type WalkStep } from '../shared/game/strand';
 import { mulberry32 } from '../shared/game/rng';
 
 const field = buildField({ family: 'hex', level: 4, rootTile: 'Delta' });
@@ -126,6 +126,41 @@ describe('bots at play', () => {
     expect(Math.max(...claims)).toBeGreaterThan(2 * claims[0]);
     expect(engine.players.size).toBe(3);
   });
+
+  it('a bridge finishes what it starts, and each next one spans the last or carries on round the edge from it — never back across the board', () => {
+    const rng = mulberry32(3);
+    const engine = new Engine(field, knobsForMode(DEFAULT_KNOBS, 'normal'), rng);
+    const bots = new Bots(engine, rng);
+    bots.add({ bridge: 1, wanderer: 2 }, 0);
+    // The brain's own plan, looked at from outside: its arc of the edge index, and whether it closed.
+    const brain = (bots as unknown as { bots: { id: string; kind: string; plan: { a: number; b: number; steps: WalkStep[] } | null }[] }).bots.find((b) => b.kind === 'bridge')!;
+    const plans: { a: number; b: number; closed: boolean }[] = [];
+    let last: (typeof brain)['plan'] = null;
+    const dt = engine.knobs.tickMs;
+    for (let now = 0; now < 8 * 60_000; now += dt) {
+      const ev = engine.tick(dt);
+      bots.update(now, ev);
+      if (brain.plan !== last) {
+        if (last) plans[plans.length - 1].closed = isBridgeClosed(engine, brain.id, last.steps);
+        last = brain.plan;
+        if (last) plans.push({ a: last.a, b: last.b, closed: false });
+      }
+    }
+    expect(plans.length).toBeGreaterThan(10);
+    const n = edgeIndexFor(field, chordTableFor(field, bridgeRule('hex'))).starts.length;
+    expect(n).toBeGreaterThan(100);
+    const fwd = (x: number, y: number) => (((y - x) % n) + n) % n;
+    const holds = (o: { a: number; b: number }, i: { a: number; b: number }) => fwd(o.a, i.a) <= fwd(o.a, i.b) && fwd(o.a, i.b) <= fwd(o.a, o.b);
+    // Round the last (or something laid already), else on round the edge from it — past what it holds
+    // there already — never back across the board. (Before, it went on from a random start.)
+    for (let i = 1; i < plans.length; i++) {
+      const [prev, next] = [plans[i - 1], plans[i]];
+      if (plans.slice(0, i).some((q) => holds(next, q))) continue;
+      expect(fwd(prev.b, next.a)).toBeLessThan(n >> 1);
+    }
+    // Given up rarely: no bridge planned where it can't be tapped.
+    expect(plans.filter((q) => q.closed).length).toBeGreaterThanOrEqual(0.8 * plans.length);
+  }, 30_000);
 
   it("a bridge's planning keeps to its budget every tick (and lays lines on the spectre board too)", () => {
     // A board no other test has traced, so the edge index is built here, a slice a tick.
