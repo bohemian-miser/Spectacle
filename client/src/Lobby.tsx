@@ -168,13 +168,6 @@ export function Lobby(props: LobbyProps): JSX.Element {
           {mode === 'solo' && (
             <div className="solo-row">
               <label>
-                Tiles
-                <select value={solo.family} onChange={(e) => onSolo({ ...solo, family: e.target.value as TileFamilyId })}>
-                  <option value="hex">Hexagons</option>
-                  <option value="spectre">Tile(1,1) — the Spectre</option>
-                </select>
-              </label>
-              <label>
                 Size
                 <select value={solo.level} onChange={(e) => onSolo({ ...solo, level: Number(e.target.value) })}>
                   {SOLO_LEVELS.map((lv) => (

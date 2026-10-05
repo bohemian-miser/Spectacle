@@ -545,3 +545,45 @@ export function isBridgeClosed(engine: Engine, me: string, steps: readonly WalkS
   }
   return false;
 }
+
+// --- how far a rule's lines can go ------------------------------------------------
+
+/**
+ * The longest strand (circuit, tail or edge-to-edge line) of `table` on the
+ * whole field, in steps — or the first length found over `cap`, as soon as
+ * one is (so a rule with long lines costs little). Walks every chord once:
+ * for `scripts/small-rules.ts` and its test, never in a tick.
+ */
+export function longestStrand(field: Field, table: ChordTable, cap = Infinity): number {
+  const seen = new Uint8Array(field.count * 64);
+  let longest = 0;
+  for (let t = 0; t < field.count; t++) {
+    const n = tileChords(field, table, t).length;
+    for (let c = 0; c < n; c++) {
+      if (seen[t * 64 + c]) continue;
+      seen[t * 64 + c] = 1;
+      let len = 1;
+      let closed = false;
+      for (const exit of [1, 0] as const) {
+        let cur = startStep(field, table, t, c, exit);
+        for (;;) {
+          const out = stepForward(field, table, cur);
+          if (out.kind !== 'step') break;
+          if (out.step.tile === t && out.step.chord === c) {
+            closed = true;
+            break;
+          }
+          const k = out.step.tile * 64 + out.step.chord;
+          if (seen[k]) break;
+          seen[k] = 1;
+          len++;
+          cur = out.step;
+        }
+        if (closed) break;
+      }
+      if (len > longest) longest = len;
+      if (longest > cap) return longest;
+    }
+  }
+  return longest;
+}

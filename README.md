@@ -449,7 +449,7 @@ Cloud Run deploy once so the servers get `BOTS_URL`.
 
 The engine and the bots are plain shared code, so the whole game can run
 inside one browser tab: pick *Solo, in this tab* in the lobby (or open
-`/?solo`), choose the family, size and which bots, and play against them with
+`/?solo`), choose the size and which bots, and play against them with
 nothing shared. The static build on GitHub Pages
 (`.github/workflows/pages.yml`, published from `main`) is solo-only and links
 to the live arena when the repository variable `SPECTACLE_ONLINE_URL` is set.
