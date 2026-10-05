@@ -19,6 +19,7 @@
     "bench:stress": "tsx scripts/stress-bench.ts",
     "servers": "tsx scripts/servers.ts",
     "brains": "tsx scripts/brains.ts",
+    "small-rules": "tsx scripts/small-rules.ts",
     "feedback": "tsx scripts/feedback.ts"
   },
   "dependencies": {

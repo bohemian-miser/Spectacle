@@ -18,7 +18,8 @@
  *    (`sense.ts`), a slice per tick.
  *  - edgelord (#84): goes round the field's edge clockwise, tapping every
  *    edge start in turn until its line closes edge to edge, and jumps past
- *    whatever it has already claimed.
+ *    whatever it has already claimed. Never on a rule whose lines all stay
+ *    tiny (`EDGE_LORD_MIN_STRAND`, `small-rules.ts`): nothing would nest.
  *  - lazylord (#84): the same walk round the edge, but it taps every start in
  *    turn — inside its own claims too — and moves on once each has sent a
  *    line inwards, closed or not.
@@ -37,10 +38,11 @@ import type { Brain, BotContext } from '../bots';
 import type { Engine, Path, Player } from '../engine';
 import { onFieldBoundary, pathPolygon, pointInPolygon, tileCenter, tileNeighbours, type Box } from '../field';
 import type { GameEvent } from '../protocol';
-import { isInfiniteLineRule, randomCleanRule, ruleFromCombo, ruleKey, type PlayerRule } from '../rule';
+import { describeRule, isInfiniteLineRule, randomCleanRule, ruleFromCombo, ruleKey, type PlayerRule } from '../rule';
 import type { Rng } from '../rng';
 import { startStep, tileChords, walkStrand, type ChordTable, type WalkStep } from '../strand';
 import { EdgeIndex, EdgeWalk, WALK_COST, type EdgeLine, edgeIndexFor, fieldFrame, isBridgeClosed, probe, randomTileWithLine, scoutFor, stepMid, tileNear, type Probe } from './sense';
+import { SMALL_RULES } from './small-rules';
 import { leafOrder, validEdgeSubsets, type Pt, type TileFamilyId } from '../../tiles';
 
 export type BotKind = 'wanderer' | 'rotator' | 'hunter' | 'farmer' | 'bridge' | 'edgelord' | 'lazylord';
@@ -128,12 +130,12 @@ abstract class Bot implements Brain {
   /** A free head and the pause is over: tap (or decide not to). */
   protected abstract think(now: number, p: Player, ev: GameEvent[]): void;
 
-  /** A random clean rule, never an infinite-line one unless allowed. */
-  protected cleanRule(unlike?: PlayerRule): PlayerRule {
+  /** A random clean rule, never an infinite-line one unless allowed, nor one `reject` turns down. */
+  protected cleanRule(unlike?: PlayerRule, reject?: (rule: PlayerRule) => boolean): PlayerRule {
     const family = this.engine.field.family;
     let rule = randomCleanRule(family, this.rng);
     for (let k = 0; k < 20; k++) {
-      const bad = (!this.ctx.options.infiniteLines && isInfiniteLineRule(rule)) || (unlike && ruleKey(rule) === ruleKey(unlike));
+      const bad = (!this.ctx.options.infiniteLines && isInfiniteLineRule(rule)) || (unlike && ruleKey(rule) === ruleKey(unlike)) || reject?.(rule);
       if (!bad) break;
       rule = randomCleanRule(family, this.rng);
     }
@@ -778,6 +780,22 @@ function fwd(x: number, y: number, n: number): number {
 
 /** Edge starts an edge lord may look past in one turn (each a few µs) before it waits for the next. */
 const EDGE_LOOK = 64;
+/**
+ * The Edge Lords play no rule whose lines all stay shorter than this, in
+ * steps (`SMALL_RULES`, precomputed by `npm run small-rules`): every `15`
+ * and the tiniest `258`s, whose edge lines are a few tiles long — nothing
+ * nests in them. The rest of the short-line rules (up to 64 steps) are fine.
+ */
+export const EDGE_LORD_MIN_STRAND = 12;
+
+/** Are all of `rule`'s lines shorter than `min` steps? */
+export function isSmallRule(rule: PlayerRule, min: number): boolean {
+  const longest = SMALL_RULES[rule.family]?.[describeRule(rule)];
+  return longest !== undefined && longest < min;
+}
+
+const tooSmallForEdgeLord = (rule: PlayerRule): boolean => isSmallRule(rule, EDGE_LORD_MIN_STRAND);
+
 /** Taps it spends on one start (a tap that sends the line off the edge, another to turn it round, a retry after a cut)… */
 const EDGE_TAPS = 4;
 /** …and how long it waits on one before going on round. */
@@ -812,11 +830,22 @@ class EdgeLord extends Bot {
   /** Own circuits' outlines and boxes, kept while a circuit stays as it was. */
   private readonly shapes = new WeakMap<Path, { n: number; first: WalkStep; last: WalkStep; poly: readonly Pt[]; box: Box }>();
 
+  /** Has it looked at the rule it plays (one from before `SMALL_RULES`, or an older brain's, may be too small)? */
+  private ruleChecked = false;
+
   constructor(id: string, kind: BotKind, ctx: BotContext, private readonly lazy: boolean) {
     super(id, kind, ctx);
   }
 
+  override firstRule(): PlayerRule {
+    return this.cleanRule(undefined, tooSmallForEdgeLord);
+  }
+
   override update(now: number, p: Player, ev: GameEvent[]): void {
+    if (!this.ruleChecked) {
+      this.ruleChecked = true;
+      if (tooSmallForEdgeLord(p.rule)) ev.push(...this.engine.setRule(this.id, this.cleanRule(p.rule, tooSmallForEdgeLord)));
+    }
     const index = edgeIndexFor(this.engine.field, p.table);
     if (index !== this.index) {
       this.index = index;
