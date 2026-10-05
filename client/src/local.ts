@@ -37,18 +37,26 @@ const BOTS_KEY = 'spectacle.soloBots';
 
 /** Solo options to start with: `?bots=` if given, else the bots picked last time, else one of each. */
 export function initialSolo(): SoloOptions {
-  let raw: string | null = new URLSearchParams(location.search).get('bots');
-  if (raw === null) {
-    try {
-      raw = localStorage.getItem(BOTS_KEY);
-    } catch {
-      /* private mode */
-    }
+  const link = new URLSearchParams(location.search).get('bots');
+  if (link !== null) return { ...DEFAULT_SOLO, bots: soloBotsFrom(link, false) };
+  let saved: string | null = null;
+  try {
+    saved = localStorage.getItem(BOTS_KEY);
+  } catch {
+    /* private mode */
   }
-  if (raw === null) return DEFAULT_SOLO;
+  return saved === null ? DEFAULT_SOLO : { ...DEFAULT_SOLO, bots: soloBotsFrom(saved, true) };
+}
+
+/**
+ * The picker's counts from a `?bots=` link or a saved choice. A link means
+ * exactly what it says (a kind it leaves out: none). A saved choice lists
+ * every kind there was, zeros too (`saveSoloBots`), so a kind it leaves out
+ * came after it was saved: it starts at the default, one.
+ */
+export function soloBotsFrom(raw: string, saved: boolean): BotMix {
   const { mix } = parseBotMix(raw);
-  const bots = Object.fromEntries(BOT_KINDS.map((k) => [k, Math.min(SOLO_MAX_PER_KIND, mix[k] ?? 0)]));
-  return { ...DEFAULT_SOLO, bots };
+  return Object.fromEntries(BOT_KINDS.map((k) => [k, Math.min(SOLO_MAX_PER_KIND, mix[k] ?? (saved ? DEFAULT_SOLO_BOTS[k] : 0))]));
 }
 
 /** Remember the bots picked, for next time. */
