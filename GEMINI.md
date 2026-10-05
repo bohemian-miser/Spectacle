@@ -17,9 +17,6 @@ the PR it opened. See `docs/feedback-agent.md`.
   force-push a branch this run didn't create.
 - Leave `.github/workflows/` and `deploy/` alone (your token can't push
   workflow changes anyway).
-- The infinite-line rules are for players to discover (CLAUDE.md, "No FASS
-  preset, no hint"): never name them in an issue, PR, comment, the README or
-  anything a player sees, and never let a bot play one.
 
 ## Identity
 

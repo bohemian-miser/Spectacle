@@ -352,7 +352,7 @@ Server environment:
 | `BOTS` | `1` | bots per room: a number (that many wanderers) or kinds, e.g. `bridge+hunter:2+farmer` — see "Bots" below |
 | `BOTS_NORMAL`, `BOTS_CONQUEST` | `BOTS` | the same, for one game mode's rooms |
 | `BOT_ROTATE_MS` | `300000` | how long a rotator keeps a rule before starting over |
-| `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules |
+| `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules (off: a bot on one would dominate and drive play) |
 | `BOTS_URL` | unset | where hot-loaded bot brains are published (`gs://bucket/brains`) — see "Bots without a deploy" |
 | `BOTS_POLL_MS` | `60000` | how often a server looks there for a new build |
 | `BOT_WATCHDOG_HARD_MS`, `BOT_WATCHDOG_SOFT_MS`, `BOT_WATCHDOG_STRIKES`, `BOT_WATCHDOG_WINDOW` | `200`, `20`, `10`, `200` | a bot whose update takes over the hard limit once, or over the soft one `STRIKES` times within `WINDOW` ticks, is taken out of its room with every bot of its kind — see "Safety" under "Bots without a deploy" |
@@ -485,6 +485,9 @@ same player (`join.resume`; a dropped player is kept until `RESUME_GRACE_MS`,
 default 10 min, after their tiles last changed), so
 nobody notices. A page refresh does the same: the tab keeps its resume ticket
 in `sessionStorage`, and the server rotates the token on every resume. Cold start is a few seconds for the first arrival.
+Away longer than `AWAY_RULE_MS` (default 10 min), a player is switched onto
+one of the infinite-line rules until they come back — the game is for
+checking in between meetings, and not checking in leaves you exposed.
 
 *Watching it.* `/status` on the arena's address is a read-only page: rooms and
 who is in them, memory, how long a loop pass takes (and the worst pass and
@@ -505,13 +508,13 @@ which beats an instance that holds on to its players while answering
 nothing. A pause of a few seconds, or even twenty, doesn't trip it. Both
 deploy paths set the same probes.
 
-*Which patterns people play.* Set `STATS_KEY` and `/patterns?key=…` shows, per
-rule and mode, how many stints (one player on one rule) it had, the time spent
-on it, best and mean final score, and circuits — people and bots apart. It is
-off without the key, and never on `/status`. Every finished stint is also one
-JSON line in the logs (`jsonPayload.message="stint"` in Cloud Logging), which
-outlives restarts and covers every instance (the page shows only the instance
-that answered); on the VM, `STATS_FILE` keeps the table in a file.
+*Which patterns people play.* `/patterns` shows, per rule and mode, how many
+stints (one player on one rule) it had, the time spent on it, best and mean
+final score, and circuits — people and bots apart. It's a page of its own,
+not part of `/status`. Every finished stint is also one JSON line in the
+logs (`jsonPayload.message="stint"` in Cloud Logging), which outlives
+restarts and covers every instance (the page shows only the instance that
+answered); on the VM, `STATS_FILE` keeps the table in a file.
 
 *Private rooms.* `/?room=anything` puts everyone who opens it in the same room
 (a new one by that name if none exists); matchmaking never sends strangers

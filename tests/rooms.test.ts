@@ -11,7 +11,6 @@ import { defaultRule } from '../shared/game/rule';
 import { startServer, type TestServer } from './server';
 
 const PORT = 19000 + Math.floor(Math.random() * 1000);
-const STATS_KEY = 'test-key';
 let server: TestServer;
 
 const sockets: WebSocket[] = [];
@@ -32,7 +31,7 @@ async function join(mode?: GameMode, room?: string): Promise<Extract<ServerMessa
 }
 
 beforeAll(async () => {
-  server = await startServer(PORT, { BOTS: '1', FIELD_LEVEL: '3', ROOM_SIZE: '2', STATS_KEY });
+  server = await startServer(PORT, { BOTS: '1', FIELD_LEVEL: '3', ROOM_SIZE: '2' });
 }, 30_000);
 
 afterAll(async () => {
@@ -117,18 +116,16 @@ describe('rooms', () => {
     expect(await page.text()).toContain('Spectacle status');
   });
 
-  it('/patterns is only there with STATS_KEY, and counts the rules people play', async () => {
-    expect((await fetch(`http://127.0.0.1:${PORT}/patterns.json`)).status).toBe(404);
-    expect((await fetch(`http://127.0.0.1:${PORT}/patterns.json?key=wrong`)).status).toBe(404);
+  it('/patterns is public, and counts the rules people play', async () => {
     // Sampled once a second.
     await new Promise((r) => setTimeout(r, 1200));
-    const r = (await (await fetch(`http://127.0.0.1:${PORT}/patterns.json?key=${STATS_KEY}`)).json()) as {
+    const r = (await (await fetch(`http://127.0.0.1:${PORT}/patterns.json`)).json()) as {
       rows: { rule: string; bot: boolean; live: number }[];
     };
     const people = r.rows.filter((row) => !row.bot);
     expect(people.length).toBeGreaterThan(0);
     expect(people.reduce((n, row) => n + row.live, 0)).toBeGreaterThan(0);
-    const page = await fetch(`http://127.0.0.1:${PORT}/patterns?key=${STATS_KEY}`);
+    const page = await fetch(`http://127.0.0.1:${PORT}/patterns`);
     expect(await page.text()).toContain('Spectacle patterns');
   });
 });

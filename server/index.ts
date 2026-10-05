@@ -49,8 +49,8 @@
  *                            this long after their tiles last changed
  *   AWAY_RULE_MS  (600000)   a player dropped this long switches to the
  *                            infinite-line rule while away (-1 = never)
- *   STATS_KEY     (unset)    serves /patterns?key=… (which rules people play, and their scores); unset = off
- *   STATS_FILE    (unset)    keep those pattern stats in this JSON file across restarts
+ *   STATS_FILE    (unset)    keep /patterns' stats (which rules people play, and their scores)
+ *                            in this JSON file across restarts
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts);
  *                            wins over the live tuning (shared/game/brains/tuning.ts)
  *   EXIT_WITH_PARENT (unset) tests only (tests/server.ts): 1 = exit when stdin
@@ -259,11 +259,6 @@ const MAX_INSTANCE_PLAYERS = positiveInt(process.env.MAX_INSTANCE_PLAYERS, 400);
 const MAX_BUFFERED = Number(process.env.MAX_BUFFERED_MB ?? 4) * 1024 * 1024;
 // --- pattern stats -------------------------------------------------------------
 
-/**
- * The key for /patterns. Unset, the page doesn't exist: it ranks rules by
- * score.
- */
-const STATS_KEY = process.env.STATS_KEY ?? '';
 const STATS_FILE = process.env.STATS_FILE ?? '';
 
 function loadStats(): PatternStatsFile | null {
@@ -288,13 +283,6 @@ function saveStats(): void {
 /** Each finished stint as one JSON line: Cloud Logging keeps it as a structured entry. */
 function logStints(stints: ReturnType<PatternStats['finishAll']>): void {
   for (const s of stints) console.log(JSON.stringify({ message: 'stint', stint: s }));
-}
-
-function statsKeyOk(url: URL): boolean {
-  if (!STATS_KEY) return false;
-  const a = createHash('sha256').update(url.searchParams.get('key') ?? '').digest();
-  const b = createHash('sha256').update(STATS_KEY).digest();
-  return timingSafeEqual(a, b);
 }
 
 // --- feedback ------------------------------------------------------------------
@@ -405,11 +393,6 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (url.pathname === '/patterns' || url.pathname === '/patterns.json') {
-    if (!statsKeyOk(url)) {
-      res.writeHead(404, { 'content-type': 'text/plain' });
-      res.end('Not found');
-      return;
-    }
     const json = url.pathname.endsWith('.json');
     res.writeHead(200, { 'content-type': json ? 'application/json' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
     res.end(json ? JSON.stringify(patternStats.report(Date.now())) : PATTERNS_PAGE);
