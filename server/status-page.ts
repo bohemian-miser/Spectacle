@@ -37,6 +37,8 @@ export interface StatusReport {
   readonly rooms: readonly {
     readonly id: string;
     readonly mode: GameMode;
+    /** Its field's substitution level (absent from older servers). */
+    readonly level?: number;
     readonly named: boolean;
     readonly emptySince: number | null;
     readonly steps: number;
@@ -154,7 +156,7 @@ export const STATUS_PAGE = `<!doctype html>
         '<tr class="' + (p.connected ? '' : 'off') + '"><td>' + esc(p.name) + (p.bot ? ' <span class="muted">bot</span>' : p.connected ? '' : ' <span class="muted">reconnecting</span>') +
         '</td><td class="num">' + esc(p.score) + '</td><td class="num muted">' + esc(p.lines) + ' lines</td></tr>').join('');
       return '<div class="room"><div class="room-head"><a href="' + esc(link) + '" title="Join this room">' + esc(room.id) + '</a>' +
-        '<span><span class="tag">' + esc(room.mode) + '</span>' + (room.named ? ' <span class="tag">link</span>' : '') + '</span></div>' +
+        '<span><span class="tag">' + esc(room.mode) + '</span>' + (room.level != null ? ' <span class="tag">level ' + esc(room.level) + '</span>' : '') + (room.named ? ' <span class="tag">link</span>' : '') + '</span></div>' +
         '<div class="muted">' + people.length + ' / ' + r.limits.roomSize + ' people · ' + room.steps.toLocaleString() + ' steps on the board' +
         (room.emptySince ? ' · empty ' + esc(ago(r.now - room.emptySince)) : '') +
         (room.benched && room.benched.length ? ' · <span class="is-warn">benched as too slow: ' + esc(room.benched.join(', ')) + '</span>' : '') + '</div>' +

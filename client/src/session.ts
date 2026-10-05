@@ -30,6 +30,8 @@ export interface SavedSession {
   readonly mode?: GameMode;
   /** The room it was in, so a rejoin after the server forgot us lands there again. */
   readonly room?: string;
+  /** The field size it asked for (older sessions: the server's default). */
+  readonly level?: number;
 }
 
 const KEY = 'spectacle.session';
@@ -52,6 +54,7 @@ function parse(raw: string | null): SavedSession | null {
   const s = JSON.parse(raw) as Partial<SavedSession>;
   if (typeof s.name !== 'string' || !s.rule || typeof s.resume?.id !== 'string' || typeof s.resume.token !== 'string') return null;
   if (s.mode !== undefined && !isGameMode(s.mode)) return null;
+  if (s.level !== undefined && !Number.isInteger(s.level)) return null;
   return s as SavedSession;
 }
 

@@ -15,6 +15,9 @@ export interface LobbyProps {
   readonly mode: Mode;
   readonly solo: SoloOptions;
   readonly gameMode: GameMode;
+  /** The online field size picked (null: the server's default). */
+  readonly level: number | null;
+  onLevel(level: number): void;
   readonly rule: PlayerRule;
   readonly name: string;
   /** Already in the arena: this is a "new rule" restart, not a first entry. */
@@ -52,7 +55,8 @@ function LinkRoomNote({ room, store, gameMode }: { room: string; store: Store; g
     <p className="lobby-room">
       {there ? (
         <>
-          Joining room <b>{room}</b> · {MODE_LABELS[there.mode]} · {there.players} playing.
+          Joining room <b>{room}</b> · {MODE_LABELS[there.mode]}
+          {there.level !== undefined ? ` · level ${there.level}` : ''} · {there.players} playing.
         </>
       ) : (
         <>
@@ -69,11 +73,17 @@ function tileCount(family: TileFamilyId, level: number): number {
 }
 
 export function Lobby(props: LobbyProps): JSX.Element {
-  const { store, mode, solo, gameMode, rule, name, inArena, notice, struggling, onGiveUp, linkRoom, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } =
+  const { store, mode, solo, gameMode, level, onLevel, rule, name, inArena, notice, struggling, onGiveUp, linkRoom, onMode, onSolo, onGameMode, onRule, onName, onEnter, onSwap, onCancel, onLeave } =
     props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
   const hello = store.hello;
+  // The online size: the one picked if this server offers it, else its default.
+  const levels = hello?.levels ?? [];
+  const online = levels.find((l) => l.level === level) ?? levels.find((l) => l.level === hello?.field.level);
+  /** Humans in rooms of a level (rooms from older servers are the default's). */
+  const playingAt = (lv: number): number =>
+    (hello?.rooms ?? []).filter((r) => (r.level ?? hello?.field.level) === lv && r.mode === gameMode).reduce((n, r) => n + r.players, 0);
   const ready = rule.subset.length > 0 && name.trim().length > 0 && drafting.length === 0;
   // Before the server hands out a player colour, the chords wear Spectre's accent.
   const color = store.me?.color ?? '#6ea8fe';
@@ -87,7 +97,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
           <h1>Spectacle</h1>
           <p className="muted">
             A massively multiplayer strand-drawing game on {hello ? FAMILY_DISPLAY_NAMES[hello.field.family].toLowerCase() : 'tiles'}.
-            {hello && mode === 'online' ? ` ${hello.tiles.toLocaleString()} tiles, ${hello.players} playing.` : ''}
+            {hello && mode === 'online' ? ` ${(online?.tiles ?? hello.tiles).toLocaleString()} tiles, ${hello.players} playing.` : ''}
           </p>
         </div>
         <span className="head-buttons">
@@ -165,6 +175,23 @@ export function Lobby(props: LobbyProps): JSX.Element {
               );
             })}
           </div>
+          {mode === 'online' && levels.length > 1 && !linkRoom && (
+            <div className="solo-row">
+              <label>
+                Size
+                <select value={online?.level} onChange={(e) => onLevel(Number(e.target.value))}>
+                  {levels.map((l) => {
+                    const n = playingAt(l.level);
+                    return (
+                      <option key={l.level} value={l.level}>
+                        level {l.level} · {l.tiles.toLocaleString()} tiles{n > 0 ? ` · ${n} playing` : ''}
+                      </option>
+                    );
+                  })}
+                </select>
+              </label>
+            </div>
+          )}
           {mode === 'solo' && (
             <div className="solo-row">
               <label>

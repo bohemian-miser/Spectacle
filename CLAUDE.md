@@ -312,8 +312,16 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   `patterns.length + converted` — so the heads match Conquest while
   `patterns` stays `[own]`. `DEFAULT_KNOBS.mode` stays `'conquest'` so the
   engine tests keep pinning it; normal-mode tests set `mode: 'normal'`.
-- **Rooms.** The server keeps rooms per mode (`normal-1`, `conquest-1`, …),
-  all sharing one `Field`. A join goes to the fullest room of its mode under
+- **Rooms.** The server keeps rooms per mode and level (`normal-1`,
+  `conquest-1`, … at the default `FIELD_LEVEL`; `normal-l4-1` at another).
+  Every level on offer (`FIELD_LEVELS`, default 3 up to `FIELD_LEVEL`, which
+  is always in) is built at startup — one `Field` per level, shared by its
+  rooms; `hello.levels` lists them, the lobby's Size picker (online,
+  `?level=`, localStorage `spectacle.level`) sends `join.level`, and a level
+  not on offer gets the default. Only the default level keeps a room warm
+  per mode; the others open on demand and close when idle. With several
+  levels the client builds no field on `hello` — the welcome says which.
+  A link's new named room takes the joiner's level. A join goes to the fullest room of its mode under
   `ROOM_SIZE` (10) humans (held-for-resume players count), else a new room
   (up to `MAX_ROOMS`, 80), else the emptiest. A room with no sockets doesn't
   tick; an extra one empty for `ROOM_IDLE_MS` closes (one per mode stays).

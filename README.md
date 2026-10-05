@@ -175,7 +175,10 @@ line and you both die.
    nesting sinks deeper, so a circuit inside a circuit stands apart.
 7. **Capture.** What happens depends on the game mode, picked in the lobby
    (`?mode=normal` or `?mode=conquest` preselects it). Online, each mode has
-   its own rooms of up to 10 players; a new room opens when they fill.
+   its own rooms of up to 10 players; a new room opens when they fill. The
+   lobby's **Size** picks the board online too — levels 3 to 6 (≈500 to
+   242k hexagons; `?level=4` preselects one) — and each size has its own
+   rooms.
 
    **Normal** (the default): close a circuit round a rival's line and it is
    converted — it leaves the board, and your own pattern sprouts on the
@@ -343,7 +346,8 @@ Server environment:
 |---|---|---|
 | `PORT` | `8787` | HTTP + WebSocket port |
 | `FIELD_FAMILY` | `hex` | `hex` or `spectre` |
-| `FIELD_LEVEL` | `6` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 6 ≈ 273k |
+| `FIELD_LEVEL` | `6` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 6 ≈ 273k. The lobby's default size |
+| `FIELD_LEVELS` | `3` up to `FIELD_LEVEL` | the sizes players may pick online, e.g. `3+4+5+6`; each is built at startup and gets rooms of its own (`FIELD_LEVEL` is always offered) |
 | `FIELD_ROOT` | `Delta` | root tile of the patch |
 | `BOTS` | `1` | bots per room: a number (that many wanderers) or kinds, e.g. `bridge+hunter:2+farmer` — see "Bots" below |
 | `BOTS_NORMAL`, `BOTS_CONQUEST` | `BOTS` | the same, for one game mode's rooms |
