@@ -42,7 +42,7 @@ line and you both die.
 | ⭕ **Close circuits** | A line that comes back to where it began is a circuit. Run edge to edge and you claim the smaller side of the field. Close one round a rival's line and it's yours (below). |
 | ⚔️ **Cut and be cut** | Lines that cross both die, and their tiles are no longer anyone's. You can't start on a rival's line; you have to grow into it. |
 | 🏴 **Capture** | Close a circuit round a rival's line and it's yours. In **Normal** mode it turns into your own pattern on their tiles; in **Conquest (beta)** you take their pattern itself, a new way to draw. Either way, each new kind of line you capture is another head growing at once. |
-| 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. Nobody will tell you which. |
+| 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. |
 
 ## Screenshots
 
@@ -352,7 +352,7 @@ Server environment:
 | `BOTS` | `1` | bots per room: a number (that many wanderers) or kinds, e.g. `bridge+hunter:2+farmer` — see "Bots" below |
 | `BOTS_NORMAL`, `BOTS_CONQUEST` | `BOTS` | the same, for one game mode's rooms |
 | `BOT_ROTATE_MS` | `300000` | how long a rotator keeps a rule before starting over |
-| `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules (off: those are for players to find) |
+| `BOT_INFINITE_LINES` | `0` | `1` lets bots play the infinite-line rules |
 | `BOTS_URL` | unset | where hot-loaded bot brains are published (`gs://bucket/brains`) — see "Bots without a deploy" |
 | `BOTS_POLL_MS` | `60000` | how often a server looks there for a new build |
 | `BOT_WATCHDOG_HARD_MS`, `BOT_WATCHDOG_SOFT_MS`, `BOT_WATCHDOG_STRIKES`, `BOT_WATCHDOG_WINDOW` | `200`, `20`, `10`, `200` | a bot whose update takes over the hard limit once, or over the soft one `STRIKES` times within `WINDOW` ticks, is taken out of its room with every bot of its kind — see "Safety" under "Bots without a deploy" |

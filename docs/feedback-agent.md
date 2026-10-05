@@ -72,8 +72,8 @@ injection.
   and the Gemini key, nothing else. The agent records decisions in a local
   ledger; `apply` only acts on ids that `pull` handed out.
 - **Nothing public leaks.** `pull` drops the contact, and an infinite-line
-  rule in the context is replaced by a placeholder (they are for players to
-  find). Both briefs forbid naming one, even when a player's message does.
+  rule in the context is replaced by a placeholder. Both briefs forbid
+  naming one, even when a player's message does.
 - **The fixer can't reach production.** It refuses to start unless a ruleset
   makes `main` take a reviewed pull request: a push to `main` deploys to
   Cloud Run and ships bot code that runs inside the servers. Its token is a

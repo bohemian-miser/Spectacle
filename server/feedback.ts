@@ -263,7 +263,7 @@ export interface TriageItem {
 /**
  * A report as the triage agent may see it. The repo and its issues are
  * public, so the contact never leaves the store, and an infinite-line rule
- * is not named: those are for players to find.
+ * is not named.
  */
 export function toTriageItem(r: FeedbackRecord): TriageItem {
   const c = r.context;

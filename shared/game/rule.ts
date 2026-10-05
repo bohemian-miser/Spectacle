@@ -124,8 +124,7 @@ export function randomCleanRule(family: TileFamilyId, rng: Rng): PlayerRule {
 /**
  * The rule offered on entry: selection 15 — clean in both families, and it
  * only ever makes short closed loops (3, 6 or 9 segments on the spectre), so
- * it demonstrates circuits without giving away the long lines. The rules
- * that draw an infinite strand are for players to find.
+ * it demonstrates circuits rather than one of the long lines.
  */
 export function defaultRule(family: TileFamilyId): PlayerRule {
   const valid = validEdgeSubsets(family);
@@ -150,8 +149,8 @@ export function fassRule(family: TileFamilyId): PlayerRule {
 
 /**
  * The FASS family (hex `128`, spectre `1278`, any matching): the rules that
- * draw an endless line. They are for players to find, so no bot plays one
- * unless it is told it may (`BotOptions.infiniteLines`).
+ * draw an endless line. No bot plays one unless it is told it may
+ * (`BotOptions.infiniteLines`).
  */
 export function isInfiniteLineRule(rule: PlayerRule): boolean {
   const fass = fassRule(rule.family).subset;

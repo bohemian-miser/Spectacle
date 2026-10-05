@@ -261,7 +261,7 @@ const MAX_BUFFERED = Number(process.env.MAX_BUFFERED_MB ?? 4) * 1024 * 1024;
 
 /**
  * The key for /patterns. Unset, the page doesn't exist: it ranks rules by
- * score, which would give away the rules players are meant to discover.
+ * score.
  */
 const STATS_KEY = process.env.STATS_KEY ?? '';
 const STATS_FILE = process.env.STATS_FILE ?? '';

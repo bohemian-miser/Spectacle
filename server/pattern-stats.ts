@@ -8,8 +8,8 @@
  * finished stint is returned for the log and folded into a per (mode, rule,
  * bot) row: stints, time on it, best score, final scores, circuits.
  *
- * Kept off the public /status on purpose: a table of rules by score would
- * hand out the infinite-line rules that players are meant to find.
+ * Kept off the public /status on purpose; served instead behind STATS_KEY
+ * (see server/index.ts).
  */
 
 import type { GameMode } from '../shared/game/knobs';

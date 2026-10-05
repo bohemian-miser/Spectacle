@@ -207,8 +207,10 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
 
 ## Settled decisions (don't relitigate without the owner)
 
-- **No FASS preset, no hint.** `fassRule()` exists for tests and the away switch (see "Resume window") only; the
-  README must not name them. Default rule is selection `15`.
+- **No FASS preset.** The infinite-line rules (hex `128`, spectre `1278`)
+  have no preset button in the rule editor. `fassRule()` exists for tests
+  and the away switch (see "Resume window") only. Default rule is
+  selection `15`.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
 - **One head, unlimited lines.** A player has one growing line at a time
@@ -611,11 +613,10 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   restarts the clock whenever it moves — lines still growing (a room with
   others in it ticks) keep an absent player in. A player away
   `AWAY_RULE_MS` (10 min, -1 = never) is switched by the server to the
-  default rule — the owner's design: the game is for checking in
+  infinite-line rule — the owner's design: the game is for checking in
   between meetings, and not checking in leaves you exposed. It goes
   through `fassRule` and `setRule` (so it regrows) and is kept on resume;
-  the one place outside tests `fassRule` is used, and the README doesn't
-  mention it. Nothing stays on for idle players: once no socket is open,
+  the one place outside tests `fassRule` is used. Nothing stays on for idle players: once no socket is open,
   Cloud Run retires the instance after ~15 min and the rooms go with it
   (saving rooms to storage is open). `tests/resume.test.ts` has a second server
   with short timers for this.
