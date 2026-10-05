@@ -435,7 +435,7 @@ const BRIDGE_LIMIT = 20_000;
 const BRIDGE_GIVE_UP_MS = 90_000;
 /** …and one where this many turns in a row land no tap (inside a rival's circuit, say) much sooner. */
 const BRIDGE_IDLE_TURNS = 8;
-/** …and one cut back this many times while being laid (a rival keeps crossing it). */
+/** …and one whose lines are cut this many times without it ever getting further than before (a rival keeps crossing it). */
 const BRIDGE_CUTS = 10;
 /** A bridge given up isn't planned again for this long. */
 const BRIDGE_RETRY_MS = 5 * 60_000;
@@ -460,7 +460,11 @@ interface BridgePlan extends Arc {
   /** How many of its chords our lines held when last looked at, and when that last went up. */
   held: number;
   heldSince: number;
-  /** Times a rival has cut one of our lines since it was planned. */
+  /** The most of its chords our lines have held: a cut that sets it back is forgiven once it gets past this. */
+  best: number;
+  /** Our lines on it when last looked at (ids): only a cut of one of these counts. */
+  lines: Set<number>;
+  /** Times a rival has cut one of our lines on it since it last got further than ever. */
   cuts: number;
 }
 
@@ -477,7 +481,8 @@ interface BridgePlan extends Arc {
  * stepped over (the search goes on round it); one whose middle is inside a
  * rival's circuit or on a rival's line isn't planned; one that can't be
  * tapped for a while, makes no headway for too long, or is cut back by
- * rivals again and again, is given up, and a whole new nest starts: a short
+ * rivals again and again without ever getting further, is given up, and a
+ * whole new nest starts: a short
  * first one from anywhere on the edge. A finished bridge a rival cuts is laid again before anything
  * new (twice at most). Once nothing spans the last (that
  * would take more than half the edge), it starts small
@@ -512,7 +517,7 @@ class Bridge extends Bot {
   override update(now: number, p: Player, ev: GameEvent[]): void {
     // Planning runs whether or not a head is free.
     if (!this.plan) this.search(now, p, BRIDGE_BUDGET);
-    else for (const e of ev) if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined) this.plan.cuts++;
+    else for (const e of ev) if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined && this.plan.lines.has(e.path)) this.plan.cuts++;
     super.update(now, p, ev);
   }
 
@@ -525,12 +530,18 @@ class Bridge extends Bot {
       this.done(plan, true);
       return;
     }
-    const mine = this.ours(plan.steps);
+    const { mine, lines } = this.ours(plan.steps, p);
+    plan.lines = lines;
     let held = 0;
     for (const s of plan.steps) if (mine.has(s.tile * 64 + s.chord)) held++;
     // Headway is more than last time, not more than ever: a line cut and growing back is getting on.
     if (held > plan.held) plan.heldSince = now;
     plan.held = held;
+    // Past the furthest it ever got: the cuts so far didn't stop it (a big bridge takes many).
+    if (held > plan.best) {
+      plan.best = held;
+      plan.cuts = 0;
+    }
     if (now - plan.heldSince > BRIDGE_GIVE_UP_MS || this.idle >= BRIDGE_IDLE_TURNS || plan.cuts >= BRIDGE_CUTS) {
       this.done(plan, false);
       return;
@@ -539,13 +550,17 @@ class Bridge extends Bot {
     else this.idle++;
   }
 
-  /** The chords our lines on these steps' tiles hold (tile × 64 + chord). */
-  private ours(steps: readonly WalkStep[]): Set<number> {
+  /**
+   * The chords our lines of the bridge's rule on these steps' tiles hold
+   * (tile × 64 + chord), and those lines' ids. A captured pattern's line
+   * numbers its chords by its own table, so it holds none of ours.
+   */
+  private ours(steps: readonly WalkStep[], p: Player): { mine: Set<number>; lines: Set<number> } {
     const crossing = new Set<Path>();
-    for (const s of steps) for (const q of this.engine.pathsOn(s.tile)) if (q.owner === this.id) crossing.add(q);
+    for (const s of steps) for (const q of this.engine.pathsOn(s.tile)) if (q.owner === this.id && q.table === p.table) crossing.add(q);
     const mine = new Set<number>();
     for (const q of crossing) for (const s of q.steps) mine.add(s.tile * 64 + s.chord);
-    return mine;
+    return { mine, lines: new Set([...crossing].map((q) => q.id)) };
   }
 
   /** Drop the plan: the search goes on round the last bridge that closed (this one, if it did). */
@@ -604,6 +619,17 @@ class Bridge extends Bot {
         if (++tries >= 6) return false;
       }
     }
+    // No gap: our lines hold it all but haven't closed yet — slow pieces (a flip's or a regrow's)
+    // waiting their turn. A tap on one gives it a head, the longest first.
+    const slow = new Set<Path>();
+    for (const s of steps) {
+      for (const q of this.engine.pathsOn(s.tile)) {
+        if (q.owner === this.id && q.table === p.table && q.status === 'growing' && q.spawned) slow.add(q);
+      }
+    }
+    for (const q of [...slow].sort((x, y) => y.steps.length - x.steps.length)) {
+      if (this.tapStep(q.steps[q.steps.length - 1], ev)) return true;
+    }
     return false;
   }
 
@@ -643,7 +669,7 @@ class Bridge extends Bot {
         // Lay it again (the search for the next goes on where it was).
         if (this.walk && this.nest) this.nest.next = this.walk.from;
         this.walk = null;
-        this.plan = { ...cut, since: now, held: 0, heldSince: now, cuts: 0, repairs: cut.repairs + 1 };
+        this.plan = { ...cut, since: now, held: 0, heldSince: now, best: 0, lines: new Set(), cuts: 0, repairs: cut.repairs + 1 };
         this.idle = 0;
         return;
       }
@@ -712,7 +738,7 @@ class Bridge extends Bot {
   }
 
   private setPlan(now: number, arc: Arc, steps: readonly WalkStep[]): void {
-    this.plan = { steps, a: arc.a, b: arc.b, since: now, held: 0, heldSince: now, cuts: 0, repairs: 0 };
+    this.plan = { steps, a: arc.a, b: arc.b, since: now, held: 0, heldSince: now, best: 0, lines: new Set(), cuts: 0, repairs: 0 };
     this.tries = 0;
     this.idle = 0;
   }
