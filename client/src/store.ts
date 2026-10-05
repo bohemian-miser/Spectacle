@@ -10,7 +10,7 @@ import { chordTableFor, stepForward, type ChordTable } from '../../shared/game/s
 import type { PlayerRule } from '../../shared/game/rule';
 import { nextStep, unpackPaths, unpackStep } from '../../shared/game/wire';
 import type { Pt } from '../../shared/tiles';
-import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, RoomBots, RoomSummary, ServerMessage } from '../../shared/game/protocol';
+import type { GameEvent, PathStatus, PathStepWire, PatternPublic, PlayerPublic, LevelSummary, RoomBots, RoomSummary, ServerMessage } from '../../shared/game/protocol';
 
 export interface ClientPath {
   readonly id: number;
@@ -364,13 +364,27 @@ export class Store {
   }
 
   /** Arena description from `hello`, available before joining. */
-  hello: { field: import('../../shared/game/field').FieldSpec; tiles: number; players: number; rooms: readonly RoomSummary[] } | null = null;
+  hello: {
+    field: import('../../shared/game/field').FieldSpec;
+    tiles: number;
+    players: number;
+    rooms: readonly RoomSummary[];
+    /** The field sizes on offer online (the default's alone from older servers and solo). */
+    levels: readonly LevelSummary[];
+  } | null = null;
 
   handle(msg: ServerMessage): void {
     switch (msg.t) {
       case 'hello': {
-        this.hello = { field: msg.field, tiles: msg.tiles, players: msg.players, rooms: msg.rooms ?? [] };
+        const levels = msg.levels?.length ? msg.levels : [{ level: msg.field.level, tiles: msg.tiles }];
+        this.hello = { field: msg.field, tiles: msg.tiles, players: msg.players, rooms: msg.rooms ?? [], levels };
         this.knobs = msg.knobs;
+        // With sizes to pick from, the welcome says which field it is: don't
+        // build the default (level 6 takes seconds) for someone playing level 3.
+        if (levels.length > 1) {
+          this.emit();
+          return;
+        }
         if (!this.field || this.field.spec.family !== msg.field.family || this.field.spec.level !== msg.field.level || this.field.spec.rootTile !== msg.field.rootTile) {
           this.field = buildField(msg.field);
         }

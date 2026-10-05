@@ -7,7 +7,12 @@
  * Environment:
  *   PORT          (8787)     HTTP + WebSocket port
  *   FIELD_FAMILY  (hex)      hex | spectre
- *   FIELD_LEVEL   (6)        substitution level (hex: 5 ≈ 31k tiles, 6 ≈ 242k)
+ *   FIELD_LEVEL   (6)        substitution level (hex: 5 ≈ 31k tiles, 6 ≈ 242k):
+ *                            the lobby's default, and the biggest offered unless
+ *                            FIELD_LEVELS says otherwise
+ *   FIELD_LEVELS  (3..FIELD_LEVEL)  the levels players may pick online, e.g.
+ *                            `3+4+5+6` (`+` or `,`); each is built at startup
+ *                            and has rooms of its own. FIELD_LEVEL is always one
  *   FIELD_ROOT    (Delta)    root tile type
  *   BOTS          (1)        bots per room: a number (that many wanderers) or
  *                            kinds, e.g. `bridge+hunter:2+farmer` (wanderer,
@@ -75,9 +80,9 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { Engine } from '../shared/game/engine';
-import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../shared/game/field';
+import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type Field, type FieldSpec } from '../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, GAME_MODES, isGameMode, knobsChanged, knobsForMode, knobsFromEnv, retune, type GameMode, type Knobs } from '../shared/game/knobs';
-import type { ClientMessage, GameEvent, RoomBots, RoomSummary, ServerMessage } from '../shared/game/protocol';
+import type { ClientMessage, GameEvent, LevelSummary, RoomBots, RoomSummary, ServerMessage } from '../shared/game/protocol';
 import { fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
@@ -108,6 +113,16 @@ function fieldSpecFromEnv(): FieldSpec {
   if (!Number.isInteger(level) || level < 1 || level > 7) throw new Error('FIELD_LEVEL must be 1..7');
   const rootTile = (process.env.FIELD_ROOT ?? DEFAULT_FIELD_SPEC.rootTile) as TileTypeId;
   return { family, level, rootTile };
+}
+
+/** The levels on offer online: FIELD_LEVELS, else 3 up to the default level (and the default always). */
+function fieldLevelsFromEnv(level: number): number[] {
+  const raw = process.env.FIELD_LEVELS?.trim();
+  const listed = raw ? raw.split(/[+,\s]+/).map(Number) : [];
+  for (const lv of listed) if (!Number.isInteger(lv) || lv < 1 || lv > 7) throw new Error('FIELD_LEVELS must list levels 1..7');
+  const levels = new Set(listed.length ? listed : Array.from({ length: Math.max(0, level - 2) }, (_, i) => i + 3));
+  levels.add(level);
+  return [...levels].sort((a, b) => a - b);
 }
 
 // --- log ----------------------------------------------------------------------
@@ -148,14 +163,30 @@ let baseKnobs = tunedKnobs(BUILTIN_BRAINS, 'built-in');
   const pinned = knobsChanged(applyTuning(DEFAULT_KNOBS, BUILTIN_BRAINS.tuning).knobs, baseKnobs);
   if (pinned.length) note('info', `KNOB_* env pins ${pinned.join(', ')}: live tuning won't change them here`);
 }
+/** The default arena: the lobby's first choice, and the level a join that names none gets. */
 const spec = fieldSpecFromEnv();
-const t0 = Date.now();
-// One field for every room: it is deterministic from the spec and never
-// mutated, so a new room costs an engine's worth of state, not a field.
-const field = buildField(spec);
-// The outline is only needed when a line runs edge to edge; build it now, not mid-tick.
-fieldOutline(field);
-note('info', `field ${spec.family} level ${spec.level} root ${spec.rootTile}: ${field.count} tiles in ${Date.now() - t0} ms`);
+/**
+ * One field per level on offer, shared by every room of that level: it is
+ * deterministic from the spec and never mutated, so a new room costs an
+ * engine's worth of state, not a field. All built now (level 6 ≈ 10 s), not
+ * on a first join, which would stall every room's tick.
+ */
+const fields = new Map<number, Field>();
+for (const level of fieldLevelsFromEnv(spec.level)) {
+  const t0 = Date.now();
+  const f = buildField({ ...spec, level });
+  // The outline is only needed when a line runs edge to edge; build it now, not mid-tick.
+  fieldOutline(f);
+  fields.set(level, f);
+  note('info', `field ${spec.family} level ${level} root ${spec.rootTile}: ${f.count} tiles in ${Date.now() - t0} ms`);
+}
+const field = fields.get(spec.level)!;
+/** The levels on offer, for `hello`. */
+const LEVELS: LevelSummary[] = [...fields].map(([level, f]) => ({ level, tiles: f.count }));
+/** A join's level: one on offer, else the default. */
+function levelFor(raw: unknown): number {
+  return typeof raw === 'number' && fields.has(raw) ? raw : spec.level;
+}
 
 const seed = process.env.SEED ? Number(process.env.SEED) : (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
 const seedRng = mulberry32(seed);
@@ -184,10 +215,12 @@ function botOptions(set: BrainSet): BotOptions {
     infiniteLines: process.env.BOT_INFINITE_LINES === '1',
   };
 }
-for (const m of GAME_MODES) {
-  const t = Date.now();
-  prepareBots(field, botMix(m), brainSet);
-  if (Date.now() - t > 5) note('info', `bots scouted the field's rules in ${Date.now() - t} ms`);
+for (const f of fields.values()) {
+  for (const m of GAME_MODES) {
+    const t = Date.now();
+    prepareBots(f, botMix(m), brainSet);
+    if (Date.now() - t > 5) note('info', `bots scouted level ${f.spec.level}'s rules in ${Date.now() - t} ms`);
+  }
 }
 const botSummary = (): string => GAME_MODES.map((m) => `${m}: ${formatBotMix(botMix(m), brainSet.kinds)}`).join(' · ');
 /** Humans per room before the next joiner is put in a new one. */
@@ -400,6 +433,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
         atCapacity: atCapacity(),
         tiles: field.count,
         spec,
+        levels: LEVELS,
         brains: brainsVersion(),
         rooms: [...rooms.values()].map((r) => r.summary()),
       }),
@@ -481,6 +515,7 @@ function guard(what: string, fn: () => void): void {
  */
 class Room {
   readonly engine: Engine;
+  readonly field: Field;
   readonly bots: Bots;
   readonly clients = new Map<string, Client>();
   pending: GameEvent[] = [];
@@ -496,11 +531,14 @@ class Room {
   constructor(
     readonly id: string,
     readonly mode: GameMode,
+    /** Which of the fields on offer it is played on. */
+    readonly level: number,
     /** Opened by a `?room=` link: only links lead in, never matchmaking. */
     readonly named = false,
   ) {
     const rng = mulberry32((seedRng.next() * 0xffffffff) >>> 0);
-    this.engine = new Engine(field, knobsForMode(baseKnobs, mode), rng);
+    this.field = fields.get(level)!;
+    this.engine = new Engine(this.field, knobsForMode(baseKnobs, mode), rng);
     const options = botOptions(brainSet);
     this.bots = new Bots(this.engine, rng, options.aggression, options, brainSet);
     // One bot's brain throwing skips that bot's tick, not the room's.
@@ -544,7 +582,7 @@ class Room {
   }
 
   summary(): RoomSummary {
-    return { id: this.id, mode: this.mode, players: this.humans(), capacity: ROOM_SIZE };
+    return { id: this.id, mode: this.mode, level: this.level, players: this.humans(), capacity: ROOM_SIZE };
   }
 
   tick(now: number, dt: number): void {
@@ -567,7 +605,7 @@ class Room {
     let packed: string | null = null;
     const payloadFor = (c: Client): string =>
       c.packed
-        ? (packed ??= JSON.stringify({ t: 'events', ev: packEvents(field, ev, (owner, pattern) => this.engine.players.get(owner)?.patterns[pattern]?.table) } satisfies ServerMessage))
+        ? (packed ??= JSON.stringify({ t: 'events', ev: packEvents(this.field, ev, (owner, pattern) => this.engine.players.get(owner)?.patterns[pattern]?.table) } satisfies ServerMessage))
         : (plain ??= JSON.stringify({ t: 'events', ev } satisfies ServerMessage));
     for (const c of this.clients.values()) {
       if (!c.joined || c.ws.readyState !== c.ws.OPEN) continue;
@@ -583,54 +621,65 @@ class Room {
 }
 
 const rooms = new Map<string, Room>();
-const roomCount: Record<GameMode, number> = { normal: 0, conquest: 0 };
+/** Rooms opened so far per mode and level, for the next one's number. */
+const roomCount = new Map<string, number>();
+/** A matchmade room's id: `normal-3` at the default level, `normal-l4-3` at another. */
+function roomPrefix(mode: GameMode, level: number): string {
+  return level === spec.level ? mode : `${mode}-l${level}`;
+}
 /** Player id → the room holding them (connected or held for a resume). */
 const playerRoom = new Map<string, Room>();
 
-function openRoom(mode: GameMode, name?: string): Room {
+function openRoom(mode: GameMode, level: number, name?: string): Room {
   let id = name;
+  const prefix = roomPrefix(mode, level);
   // A link may already have taken the next number's name.
-  while (!id || rooms.has(id)) id = `${mode}-${++roomCount[mode]}`;
-  const room = new Room(id, mode, name !== undefined);
+  while (!id || rooms.has(id)) {
+    const n = (roomCount.get(prefix) ?? 0) + 1;
+    roomCount.set(prefix, n);
+    id = `${prefix}-${n}`;
+  }
+  const room = new Room(id, mode, level, name !== undefined);
   rooms.set(room.id, room);
   note('info', `opened room ${room.id}${room.named ? ' (from a link)' : ''} · ${rooms.size} rooms`);
   return room;
 }
 
-/** The room a new player of `mode` goes into: the fullest with space, else a new one, else the emptiest. */
-function roomFor(mode: GameMode): Room {
+/** The room a new player of `mode` at `level` goes into: the fullest with space, else a new one, else the emptiest. */
+function roomFor(mode: GameMode, level: number): Room {
   let best: Room | null = null;
   let emptiest: Room | null = null;
   for (const r of rooms.values()) {
-    if (r.mode !== mode || r.named) continue;
+    if (r.mode !== mode || r.level !== level || r.named) continue;
     const n = r.humans();
     if (n < ROOM_SIZE && (!best || n > best.humans())) best = r;
     if (n < r.knobs.maxPlayers && (!emptiest || n < emptiest.humans())) emptiest = r;
   }
   if (best) return best;
-  if (rooms.size < MAX_ROOMS || !emptiest) return openRoom(mode);
+  if (rooms.size < MAX_ROOMS || !emptiest) return openRoom(mode, level);
   return emptiest;
 }
 
 /**
  * The room a joiner goes into. A link names one: that room if it exists,
- * whatever its mode, else a new room by that name (while there is space for
- * one). Otherwise matchmaking by mode.
+ * whatever its mode and level, else a new room by that name (while there is
+ * space for one). Otherwise matchmaking by mode and level.
  */
-function roomForJoin(mode: GameMode, link: unknown): Room {
+function roomForJoin(mode: GameMode, level: number, link: unknown): Room {
   const name = cleanRoomName(link);
-  if (!name) return roomFor(mode);
+  if (!name) return roomFor(mode, level);
   const room = rooms.get(name);
   if (room) return room;
-  return rooms.size < MAX_ROOMS ? openRoom(mode, name) : roomFor(mode);
+  return rooms.size < MAX_ROOMS ? openRoom(mode, level, name) : roomFor(mode, level);
 }
 
 /** Close extra rooms that have sat empty — no one connected, no one held for a resume. */
 function reapRooms(now: number): void {
   for (const r of rooms.values()) {
     if (r.clients.size > 0 || r.humans() > 0 || r.emptySince === 0 || now - r.emptySince < ROOM_IDLE_MS) continue;
-    const others = [...rooms.values()].filter((q) => q.mode === r.mode && q !== r && !q.named);
-    if (!r.named && others.length === 0) continue; // keep one matchmade room of each mode warm
+    const others = [...rooms.values()].filter((q) => q.mode === r.mode && q.level === r.level && q !== r && !q.named);
+    // Keep one matchmade room of each mode warm at the default level; other levels open on demand.
+    if (!r.named && r.level === spec.level && others.length === 0) continue;
     rooms.delete(r.id);
     note('info', `closed idle room ${r.id} · ${rooms.size} rooms`);
   }
@@ -647,7 +696,7 @@ function atCapacity(): boolean {
   return humansOnline() >= MAX_INSTANCE_PLAYERS;
 }
 
-for (const mode of GAME_MODES) openRoom(mode);
+for (const mode of GAME_MODES) openRoom(mode, spec.level);
 
 // --- connections -------------------------------------------------------------
 
@@ -797,7 +846,7 @@ function cleanName(raw: unknown): string {
  * board's welcome was tens of MB); older clients still get them plain.
  */
 function welcome(client: Client, room: Room, packed: boolean): void {
-  const common = { t: 'welcome', you: client.id, token: issueToken(client.id), field: spec, knobs: room.knobs, room: room.id, bots: room.roomBots() } as const;
+  const common = { t: 'welcome', you: client.id, token: issueToken(client.id), field: room.field.spec, knobs: room.knobs, room: room.id, bots: room.roomBots() } as const;
   let message: ServerMessage;
   if (packed) {
     const snap = room.engine.packedSnapshot();
@@ -818,6 +867,7 @@ wss.on('connection', (ws) => {
     field: spec,
     knobs: knobsForMode(baseKnobs, 'normal'),
     tiles: field.count,
+    levels: LEVELS,
     players: humansOnline(),
     rooms: [...rooms.values()].map((r) => r.summary()),
   });
@@ -854,12 +904,12 @@ wss.on('connection', (ws) => {
           send(ws, { t: 'error', message: "This server is full right now — try again shortly, or play bots (no server needed).", code: 'full' });
           return;
         }
-        const rule = validateRule(msg.rule, field.family);
+        const rule = validateRule(msg.rule, spec.family);
         if (!rule) {
           send(ws, { t: 'error', message: 'invalid rule for this arena' });
           return;
         }
-        const target = roomForJoin(isGameMode(msg.mode) ? msg.mode : 'normal', msg.room);
+        const target = roomForJoin(isGameMode(msg.mode) ? msg.mode : 'normal', levelFor(msg.level), msg.room);
         if (target.engine.players.size >= target.knobs.maxPlayers) {
           send(ws, { t: 'error', message: 'This room is full — try again shortly, or play bots.', code: 'full' });
           return;
@@ -895,7 +945,7 @@ wss.on('connection', (ws) => {
       }
       case 'rule': {
         if (!client.joined || !room) return;
-        const rule = validateRule(msg.rule, field.family);
+        const rule = validateRule(msg.rule, spec.family);
         if (!rule) {
           send(ws, { t: 'events', ev: [{ t: 'refused', reason: 'invalid rule' }] });
           return;
@@ -905,7 +955,7 @@ wss.on('connection', (ws) => {
       }
       case 'swap': {
         if (!client.joined || !room) return;
-        const rule = validateRule(msg.rule, field.family);
+        const rule = validateRule(msg.rule, spec.family);
         const r = rule ? room.engine.swapPattern(client.id, Number(msg.index), rule) : { ok: false as const, reason: 'invalid rule' };
         if (!r.ok) send(ws, { t: 'events', ev: [{ t: 'refused', reason: r.reason }] });
         else room.pending.push(...r.events);
@@ -1112,7 +1162,7 @@ function statusReport(): StatusReport {
       players.sort((a, b) => b.score - a.score);
       let steps = 0;
       for (const p of r.engine.players.values()) for (const path of p.paths) steps += path.steps.length;
-      return { id: r.id, mode: r.mode, named: r.named, emptySince: r.emptySince || null, steps, players, benched: r.bots.benched().map((t) => t.kind) };
+      return { id: r.id, mode: r.mode, level: r.level, named: r.named, emptySince: r.emptySince || null, steps, players, benched: r.bots.benched().map((t) => t.kind) };
     }),
     recent: recent.slice(-150).reverse(),
   };

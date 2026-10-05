@@ -40,6 +40,19 @@ function initialGameMode(): GameMode {
   return 'normal';
 }
 
+/** The online field size: ?level=, else the last one picked, else null (the server's default). */
+function initialLevel(): number | null {
+  const q = Number(new URLSearchParams(location.search).get('level'));
+  if (Number.isInteger(q) && q > 0) return q;
+  try {
+    const saved = Number(localStorage.getItem('spectacle.level'));
+    if (Number.isInteger(saved) && saved > 0) return saved;
+  } catch {
+    /* private mode */
+  }
+  return null;
+}
+
 /** A room named by a `?room=` link, online only: that room, or a new one by that name. */
 export const LINK_ROOM = SOLO_ONLY ? null : cleanRoomName(new URLSearchParams(location.search).get('room'));
 
@@ -63,6 +76,8 @@ export function App(): JSX.Element {
   const [mode, setMode] = useState<Mode>(initialMode);
   const [solo, setSolo] = useState<SoloOptions>(initialSolo);
   const [gameMode, setGameMode] = useState<GameMode>(initialGameMode);
+  /** The online field size picked (null: the server's default); one the server doesn't offer falls back to its default. */
+  const [level, setLevel] = useState<number | null>(initialLevel);
   /** Bumped to start over with a fresh connection (leaving the arena). */
   const [epoch, setEpoch] = useState(0);
   const [screen, setScreen] = useState<Screen>('lobby');
@@ -76,7 +91,7 @@ export function App(): JSX.Element {
   const joined = useRef(false);
   const retry = useRef(0);
   /** What to send on reconnect so the player is picked up where they were. */
-  const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null; room?: string } | null>(null);
+  const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null; room?: string; level?: number } | null>(null);
 
   // One connection per (mode, solo options); reconnect online with backoff.
   useEffect(() => {
@@ -87,7 +102,7 @@ export function App(): JSX.Element {
     // A refresh lands here with the tab's saved session: go straight back in.
     // So does a new tab soon after the last one closed (the shared copy).
     const saved = mode === 'online' ? loadSession() : null;
-    rejoin.current = saved ? { name: saved.name, rule: saved.rule, resume: saved.resume, room: saved.room, mode: saved.mode ?? 'normal' } : null;
+    rejoin.current = saved ? { name: saved.name, rule: saved.rule, resume: saved.resume, room: saved.room, mode: saved.mode ?? 'normal', level: saved.level } : null;
     store.reset();
     setScreen(rejoin.current ? 'arena' : 'lobby');
     const connect = (): void => {
@@ -103,7 +118,7 @@ export function App(): JSX.Element {
           // lobby.
           const r = rejoin.current;
           if (r && conn.kind === 'online') {
-            conn.send({ t: 'join', name: r.name, rule: r.rule, mode: r.mode, resume: r.resume ?? undefined, room: r.room ?? LINK_ROOM ?? undefined, packed: true });
+            conn.send({ t: 'join', name: r.name, rule: r.rule, mode: r.mode, level: r.level, resume: r.resume ?? undefined, room: r.room ?? LINK_ROOM ?? undefined, packed: true });
             joined.current = true;
             setScreen('arena');
           }
@@ -171,7 +186,7 @@ export function App(): JSX.Element {
     r.resume = store.resume;
     if (store.room) r.room = store.room;
     const rule = store.me?.rule ?? r.rule;
-    saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume, room: r.room });
+    saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume, room: r.room, level: r.level });
   }, [mode, store.resume, store]);
 
   // Keep the shared ticket's clock running while this tab plays its player,
@@ -226,15 +241,18 @@ export function App(): JSX.Element {
     } catch {
       /* private mode */
     }
+    // Only a size the server offers; otherwise it picks its default.
+    const size = level !== null && store.hello?.levels.some((l) => l.level === level) ? level : undefined;
     if (joined.current) conn.send({ t: 'rule', rule });
     else {
-      conn.send({ t: 'join', name, rule, mode: gameMode, room: LINK_ROOM ?? undefined, packed: true });
+      conn.send({ t: 'join', name, rule, mode: gameMode, level: size, room: LINK_ROOM ?? undefined, packed: true });
       joined.current = true;
     }
     const playing = rejoin.current?.mode ?? gameMode;
+    const playingLevel = rejoin.current ? rejoin.current.level : size;
     const room = rejoin.current?.room ?? LINK_ROOM ?? undefined;
-    rejoin.current = { name, rule, mode: playing, resume: rejoin.current?.resume ?? null, room };
-    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, mode: playing, resume: rejoin.current.resume, room });
+    rejoin.current = { name, rule, mode: playing, resume: rejoin.current?.resume ?? null, room, level: playingLevel };
+    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, mode: playing, resume: rejoin.current.resume, room, level: playingLevel });
     setScreen('arena');
   };
 
@@ -296,6 +314,15 @@ export function App(): JSX.Element {
         setGameMode(m);
         try {
           localStorage.setItem('spectacle.mode', m);
+        } catch {
+          /* private mode */
+        }
+      }}
+      level={level}
+      onLevel={(lv) => {
+        setLevel(lv);
+        try {
+          localStorage.setItem('spectacle.level', String(lv));
         } catch {
           /* private mode */
         }

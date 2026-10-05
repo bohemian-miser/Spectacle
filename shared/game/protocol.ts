@@ -84,6 +84,8 @@ export type ClientMessage =
       readonly resume?: ResumeTicket;
       /** Which kind of arena to be put in (default normal); the server picks a room of it. */
       readonly mode?: GameMode;
+      /** Which field size (one of `hello.levels`; default `hello.field`'s); a room of it is picked. */
+      readonly level?: number;
       /**
        * A room by name, from a `?room=` link: that room whatever its mode, or
        * a new one of `mode` by that name. Matchmaking never sends anyone else in.
@@ -245,9 +247,17 @@ export interface RoomBots {
 export interface RoomSummary {
   readonly id: string;
   readonly mode: GameMode;
+  /** Its field's substitution level (absent from older servers: `hello.field`'s). */
+  readonly level?: number;
   /** Humans in it (bots aside), including ones who dropped and may resume. */
   readonly players: number;
   readonly capacity: number;
+}
+
+/** A field size the server offers online. */
+export interface LevelSummary {
+  readonly level: number;
+  readonly tiles: number;
 }
 
 export type ServerMessage =
@@ -257,6 +267,11 @@ export type ServerMessage =
       readonly field: FieldSpec;
       readonly knobs: Knobs;
       readonly tiles: number;
+      /**
+       * The levels a joiner may pick (`join.level`), each with rooms of its
+       * own; `field` is the default one. Absent from older servers and solo.
+       */
+      readonly levels?: readonly LevelSummary[];
       /** Humans playing across every room. */
       readonly players: number;
       /** What is running, per mode (absent from older servers and solo). */
