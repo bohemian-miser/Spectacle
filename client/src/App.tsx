@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { isGameMode, type GameMode } from '../../shared/game/knobs';
 import { defaultRule, type PlayerRule } from '../../shared/game/rule';
 import { Arena } from './Arena';
+import { installBackGuard, type BackGuard } from './back-guard';
 import { Lobby } from './Lobby';
 import { initialSolo, LocalConnection, saveSoloBots, type SoloOptions } from './local';
 import { Connection, STALE_CLOSE, type GameConnection } from './net';
@@ -91,6 +92,18 @@ export function App(): JSX.Element {
   const joined = useRef(false);
   const retry = useRef(0);
   /** What to send on reconnect so the player is picked up where they were. */
+  /** Swallows back (Android's edge swipe) while the arena is up. */
+  const backGuard = useRef<BackGuard | null>(null);
+  const inArena = useRef(false);
+  inArena.current = screen === 'arena';
+  useEffect(() => {
+    const g = installBackGuard(() => inArena.current, () => store.toast('Back is off in the arena — use the exit button to leave', 'info'));
+    backGuard.current = g;
+    return () => g.dispose();
+  }, []);
+  useEffect(() => {
+    if (screen === 'arena') backGuard.current?.arm();
+  }, [screen]);
   const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null; room?: string; level?: number } | null>(null);
 
   // One connection per (mode, solo options); reconnect online with backoff.

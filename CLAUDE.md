@@ -94,6 +94,10 @@ client/src/       Vite + React.
                   once-per-browser help flag (localStorage).
   net.ts          WebSocket GameConnection. local.ts: LocalConnection = the
                   same engine + bots inside the tab (solo mode / Pages build).
+  back-guard.ts   Swallows back in the arena (Android's edge-swipe back
+                  gesture can't be turned off, so a spare history entry is
+                  kept on top and re-pushed; a toast says so). In the lobby
+                  back still leaves. CSS adds `overscroll-behavior: none`.
   heartbeat.ts    Online liveness: ping, "not responding", give up (see
                   "Client fallback").
   store.ts        Applies events into plain mutable state; version counters.
