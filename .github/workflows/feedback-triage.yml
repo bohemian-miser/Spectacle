@@ -6,7 +6,7 @@
 #
 #   pull    looks for untriaged reports, and stops there when there are none
 #           (most runs); otherwise hands them on as the agent may see them —
-#           no contact, no infinite-line rule named (scripts/feedback.ts).
+#           no contact (scripts/feedback.ts).
 #   triage  a Gemini agent files, merges or skips each one
 #           (.github/gemini/feedback-triage.md) with GITHUB_TOKEN and nothing
 #           else, recording each decision as it goes.

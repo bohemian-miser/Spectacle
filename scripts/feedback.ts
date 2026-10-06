@@ -6,8 +6,7 @@
  *
  *   npm run feedback -- pull [--limit N]
  *       Untriaged reports, oldest first, as the agent may see them (no
- *       contact, an infinite-line rule left unnamed): JSON on stdout and in
- *       .triage/queue.json.
+ *       contact): JSON on stdout and in .triage/queue.json.
  *   npm run feedback -- mark <id> --issue <n>
  *   npm run feedback -- mark <id> --skip "<reason>"
  *       Record what became of a queued report in .triage/ledger.jsonl, at

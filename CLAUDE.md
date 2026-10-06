@@ -80,7 +80,7 @@ server/loop-stats.ts  `WindowMax`: the worst of a value over a sliding
                   minute (5 s buckets), for /status.
 server/pattern-stats.ts  Which rules people play and how they score: a
                   stint per (player, rule), sampled once a second; rows per
-                  (mode, rule, bot). /patterns(.json)?key=STATS_KEY, a JSON
+                  (mode, rule, bot). /patterns(.json), a JSON
                   `stint` line per finished stint on stdout, STATS_FILE.
 server/feedback.ts  POST /feedback: parseFeedback (whitelisted, capped
                   context), FeedbackLimiter, the store under FEEDBACK_URL
@@ -211,8 +211,10 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
 
 ## Settled decisions (don't relitigate without the owner)
 
-- **No FASS preset, no hint.** `fassRule()` exists for tests and the away switch (see "Resume window") only; the
-  README must not name them. Default rule is selection `15`.
+- **No FASS preset.** The infinite-line rules (hex `128`, spectre `1278`)
+  have no preset button in the rule editor. `fassRule()` exists for tests
+  and the away switch (see "Resume window") only. Default rule is
+  selection `15`.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
 - **One head, unlimited lines.** A player has one growing line at a time
@@ -240,8 +242,11 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   the same message (`LocalConnection`, caps as the lobby's picker) and saves
   it as the picker's choice. `tests/room-bots.test.ts`. Solo picks per kind in
   the lobby (localStorage `spectacle.soloBots`, `?bots=`), one of each by
-  default. 
-  (Before this, wanderers drew from every clean rule, the FASS subset included.)
+  default. **No bot plays an infinite-line rule** (the whole hex `128` /
+  spectre `1278` subset, any matching — `isInfiniteLineRule`) unless
+  `BOT_INFINITE_LINES=1`: a bot on one would dominate the board and drive
+  play. (Before this, wanderers drew from every clean rule, the FASS subset
+  included.)
   Bot work per tick stays in single-digit ms at hex level 6 —
   `scripts/bot-arena.ts` prints it (and each kind's slowest update, and any
   watchdog trips); keep it there. The watchdog (below) enforces a bound.
@@ -590,14 +595,19 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   message handler too) are the worst of the last minute (`WindowMax`), held
   the whole minute; a pass is stamped when it ends, so one longer than a
   minute still shows. (The old figure was zeroed every 60 s.)
-- **Pattern stats are private.** A table of rules by score is kept private, so it never goes on `/status`: `/patterns` 404s
-  unless `STATS_KEY` is set and `?key=` matches. On Cloud Run the durable
-  record is the log — one JSON line `{"message":"stint","stint":{…}}` per
-  finished stint (rule in `describeRule` form, mode, bot, ms, final and peak
-  score, circuits) — since memory and disk go with the instance, and with
-  several instances `/patterns` shows only the one that answered; the log
-  covers them all. `STATS_FILE` keeps the aggregate on the VM. Only players at the board are sampled, so a
-  reconnect splits a stint in two.
+- **Pattern stats are public.** `/patterns` (and `/patterns.json`) list which
+  rules people and bots play and how they do with them, including the
+  infinite-line rules — nothing about them is hidden. It's a separate page
+  from `/status`, not a gate: rows are aggregated by (mode, rule, bot), no
+  player ids or names, so there is nothing on it to protect; it's its own
+  page because it's bigger and built on demand, not part of `/status`'s
+  cheap snapshot. On Cloud Run the durable record is the log — one JSON line
+  `{"message":"stint","stint":{…}}` per finished stint (rule in
+  `describeRule` form, mode, bot, ms, final and peak score, circuits) — since
+  memory and disk go with the instance, and with several instances
+  `/patterns` shows only the one that answered; the log covers them all.
+  `STATS_FILE` keeps the aggregate on the VM. Only players at the board are
+  sampled, so a reconnect splits a stint in two.
 - **Every line is a stretch of one strand of its rule.** Lines only ever grow
   by `stepForward`, and joins, splits and folds keep unbroken stretches, and
   a clean rule never branches (a junction is a bug, not a choice). So the
@@ -620,11 +630,10 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   restarts the clock whenever it moves — lines still growing (a room with
   others in it ticks) keep an absent player in. A player away
   `AWAY_RULE_MS` (10 min, -1 = never) is switched by the server to the
-  default rule — the owner's design: the game is for checking in
+  infinite-line rule — the owner's design: the game is for checking in
   between meetings, and not checking in leaves you exposed. It goes
   through `fassRule` and `setRule` (so it regrows) and is kept on resume;
-  the one place outside tests `fassRule` is used, and the README doesn't
-  mention it. Nothing stays on for idle players: once no socket is open,
+  the one place outside tests `fassRule` is used. Nothing stays on for idle players: once no socket is open,
   Cloud Run retires the instance after ~15 min and the rooms go with it
   (saving rooms to storage is open). `tests/resume.test.ts` has a second server
   with short timers for this.

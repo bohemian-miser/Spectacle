@@ -14,7 +14,7 @@
 import { randomBytes } from 'node:crypto';
 import { mkdirSync, readdirSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describeRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule, type PlayerRule } from '../shared/game/rule';
+import { describeRule, PLAYABLE_FAMILIES, validateRule, type PlayerRule } from '../shared/game/rule';
 import type { TileFamilyId } from '../shared/tiles';
 import { parseGsUrl } from './gcp';
 
@@ -262,8 +262,7 @@ export interface TriageItem {
 
 /**
  * A report as the triage agent may see it. The repo and its issues are
- * public, so the contact never leaves the store, and an infinite-line rule
- * is not named: those are for players to find.
+ * public, so the contact never leaves the store.
  */
 export function toTriageItem(r: FeedbackRecord): TriageItem {
   const c = r.context;
@@ -272,7 +271,7 @@ export function toTriageItem(r: FeedbackRecord): TriageItem {
     const v = c[k];
     if (v) game[k] = v;
   }
-  if (c.rule) game.rule = isInfiniteLineRule(c.rule) ? '(an infinite-line rule: never name it in public)' : describeRule(c.rule);
+  if (c.rule) game.rule = describeRule(c.rule);
   if (c.userAgent) game.browser = c.userAgent;
   return { id: r.id, createdAt: r.createdAt, message: r.message, page: c.url ?? '', game, server: r.server.revision ?? r.server.instance };
 }

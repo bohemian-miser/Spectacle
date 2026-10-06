@@ -9,7 +9,7 @@ import { appendFileSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmS
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { defaultRule, fassRule } from '../shared/game/rule';
+import { defaultRule, describeRule, fassRule } from '../shared/game/rule';
 import {
   clientAddress,
   FEEDBACK_ID,
@@ -157,7 +157,7 @@ describe('Cloud Storage store', () => {
 });
 
 describe('toTriageItem', () => {
-  it('never shows the contact, and never names an infinite-line rule', () => {
+  it('never shows the contact, and passes the rule through like any other', () => {
     const plain = toTriageItem(record('20261002T093000Z-aaaaaa', { contact: 'me@example.com', context: { rule: defaultRule('hex'), mode: 'solo', userAgent: 'UA' } }));
     expect(JSON.stringify(plain)).not.toContain('me@example.com');
     expect(plain.game).toEqual({ mode: 'solo', rule: expect.stringMatching(/^15 · /), browser: 'UA' });
@@ -165,8 +165,7 @@ describe('toTriageItem', () => {
     for (const family of ['hex', 'spectre'] as const) {
       const fass = fassRule(family);
       const item = toTriageItem(record('20261002T093000Z-aaaaaa', { context: { rule: fass } }));
-      expect(item.game.rule).toMatch(/infinite-line rule/);
-      expect(JSON.stringify(item)).not.toContain(fass.subset.join(''));
+      expect(item.game.rule).toBe(describeRule(fass));
     }
   });
 });

@@ -25,9 +25,9 @@
  *    line inwards, closed or not.
  *
  * The farmer's short-loop rule comes from a scout (`sense.ts`) that tries a
- * spread of clean rules on the field once, a slice per tick. No bot
- * plays an infinite-line (FASS) rule unless `infiniteLines` says it may —
- * those are for players to find.
+ * spread of clean rules on the field once, a slice per tick. A bot on an
+ * infinite-line (FASS) rule would dominate the board and drive play, so
+ * none plays one unless `infiniteLines` says it may.
  *
  * Hot-loaded with the rest of `brains/`: import only *types* from
  * `../bots` (the host), so a build of this directory never carries its own
