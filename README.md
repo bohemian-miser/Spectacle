@@ -40,7 +40,7 @@ line and you both die.
 | 👆 **Tap a tile** | Your line starts there and grows by itself, one tile per step, following your rule. Press-and-hold then drag to paint starts across an area. |
 | 🟩 **Hold tiles** | Your score is the number of tiles your lines are on. |
 | ⭕ **Close circuits** | A line that comes back to where it began is a circuit. Run edge to edge and you claim the smaller side of the field. Close one round a rival's line and it's yours (below). |
-| ⚔️ **Cut and be cut** | Lines that cross both die, and their tiles are no longer anyone's. You can't start on a rival's line; you have to grow into it. |
+| ⚔️ **Cut and be cut** | A line that grows into a tile a rival's line is on dies, and so does theirs, and their tiles are no longer anyone's. You can't start on a rival's line; you have to grow into it. |
 | 🏴 **Capture** | Close a circuit round a rival's line and it's yours. In **Normal** mode it turns into your own pattern on their tiles; in **Conquest (beta)** you take their pattern itself, a new way to draw. Either way, each new kind of line you capture is another head growing at once. |
 | 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. Nobody will tell you which. |
 
@@ -162,8 +162,9 @@ line and you both die.
    layers them instead.
    Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
    next tap lands.
-6. **Crossing.** When a line enters a tile where another player's chord crosses
-   it (proper intersection, or a shared connection point — both are knobs),
+6. **Crossing.** When a line enters a tile another player's line is on
+   (`crossingMode: 'tile'`; `'geometric'` counts only chords that cross or
+   share a connection point, and lets lines that miss share the tile),
    both lines die — the one that was hit and the one that hit it — each with
    its points, and both combos reset (`mutualCut`; off makes it one-sided).
    You cannot *start* on a tile a rival's line passes through — any chord of

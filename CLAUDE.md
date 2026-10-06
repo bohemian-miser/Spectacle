@@ -410,6 +410,11 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   pin the points scoring set `scoreTiles: false`.
 - **Zero-sum** (points scoring). `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
+- **No two players on one tile** (`crossingMode: 'tile'` in `TUNING`): a
+  line growing into any tile a rival's line is on collides, whether or not
+  their chords cross — the same whole-tile rule as taps. (Under
+  `'geometric'`, still `DEFAULT_KNOBS` for the tests, lines that missed
+  each other shared tiles, and both scored them.)
 - **You can't start** on a rival's line or inside a rival's closed circuit —
   nor on a tile your own line is on (see below). A rival's line owns its
   whole tile: a tap on any tile one passes through is refused, even on a

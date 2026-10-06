@@ -51,7 +51,9 @@ export const TUNING: Tuning = {
   junctionPolicy: 'random',
 
   // --- collisions and your own lines -----------------------------------------
-  crossingMode: 'geometric',
+  // A rival's line owns its whole tile, for growing as for tapping: no two
+  // players' lines ever share one.
+  crossingMode: 'tile',
   touchCounts: true,
   mutualCut: true,
   tapOntoOthers: false,
