@@ -7,6 +7,11 @@ services:
     image: ghcr.io/bohemian-miser/spectacle:latest
     restart: unless-stopped
     env_file: .env
+    environment:
+      # /patterns' stats outlive Watchtower's container swaps (every deploy).
+      - STATS_FILE=/data/pattern-stats.json
+    volumes:
+      - spectacle_data:/data
     expose:
       - "8787"
     labels:
@@ -41,5 +46,6 @@ services:
     command: --label-enable --cleanup --interval 300
 
 volumes:
+  spectacle_data:
   caddy_data:
   caddy_config:

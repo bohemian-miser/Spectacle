@@ -1,7 +1,12 @@
 /** Pattern stats: stints open, close on a rule change or departure, and fold into rows. */
-import { describe, expect, it } from 'vitest';
+import { mkdtempSync, readFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import WebSocket from 'ws';
 import { defaultRule, describeRule, fassRule } from '../shared/game/rule';
-import { PatternStats } from '../server/pattern-stats';
+import { PatternStats, type PatternStatsFile, type PatternStatsReport } from '../server/pattern-stats';
+import { startServer, type TestServer } from './server';
 
 const a = defaultRule('hex');
 const b = fassRule('hex');
@@ -42,4 +47,53 @@ describe('PatternStats', () => {
     const row = again.report(7000).rows.find((r) => r.mode === 'normal' && !r.bot)!;
     expect(row).toMatchObject({ stints: 2, finished: 2, ms: 3000, finalScoreSum: 7 });
   });
+});
+
+describe('/patterns on the real server', () => {
+  const PORT = 23000 + Math.floor(Math.random() * 1000);
+  const statsFile = join(mkdtempSync(join(tmpdir(), 'spectacle-stats-')), 'stats.json');
+  let server: TestServer;
+
+  beforeAll(async () => {
+    server = await startServer(PORT, { BOTS: '1', FIELD_LEVEL: '3', STATS_FILE: statsFile });
+  }, 30_000);
+  afterAll(async () => {
+    await server?.stop();
+  });
+
+  const report = async () => (await (await fetch(`http://127.0.0.1:${PORT}/patterns.json`)).json()) as PatternStatsReport;
+  const until = async (f: (r: PatternStatsReport) => boolean) => {
+    let r = await report();
+    for (let i = 0; i < 60 && !f(r); i++) {
+      await new Promise((ok) => setTimeout(ok, 100));
+      r = await report();
+    }
+    expect(f(r)).toBe(true);
+    return r;
+  };
+
+  it('counts a player on their rule, closes the stint when they leave, and saves it on shutdown', async () => {
+    const page = await fetch(`http://127.0.0.1:${PORT}/patterns`);
+    expect(page.headers.get('content-type')).toMatch(/text\/html/);
+    expect(await page.text()).toContain('Spectacle patterns');
+
+    const rule = describeRule(defaultRule('hex'));
+    const person = (r: PatternStatsReport) => r.rows.find((x) => !x.bot && x.rule === rule && x.mode === 'normal');
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    await new Promise((r) => ws.once('open', r));
+    ws.send(JSON.stringify({ t: 'join', name: 'stats', rule: defaultRule('hex'), mode: 'normal' }));
+    const live = await until((r) => person(r)?.live === 1);
+    expect(person(live)).toMatchObject({ stints: 1, finished: 0 });
+    // The room's bot is sampled too, as a bot.
+    expect(live.rows.some((x) => x.bot && x.live === 1)).toBe(true);
+
+    ws.send(JSON.stringify({ t: 'leave' }));
+    ws.close();
+    const done = await until((r) => person(r)?.live === 0);
+    expect(person(done)).toMatchObject({ stints: 1, finished: 1 });
+
+    await server.stop();
+    const saved = JSON.parse(readFileSync(statsFile, 'utf8')) as PatternStatsFile;
+    expect(saved.rows.find((x) => !x.bot && x.rule === rule)).toMatchObject({ stints: 1, finished: 1 });
+  }, 30_000);
 });

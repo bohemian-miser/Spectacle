@@ -606,7 +606,8 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   `describeRule` form, mode, bot, ms, final and peak score, circuits) — since
   memory and disk go with the instance, and with several instances
   `/patterns` shows only the one that answered; the log covers them all.
-  `STATS_FILE` keeps the aggregate on the VM. Only players at the board are
+  `STATS_FILE` keeps the aggregate on the VM (compose points it at the
+  `spectacle_data` volume on `/data`, so Watchtower's swaps keep it). Only players at the board are
   sampled, so a reconnect splits a stint in two.
 - **Every line is a stretch of one strand of its rule.** Lines only ever grow
   by `stepForward`, and joins, splits and folds keep unbroken stretches, and
