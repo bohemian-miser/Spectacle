@@ -19,6 +19,10 @@
 # to it (they can't read, list or delete them), and CI's triage workflow
 # files them as GitHub issues (server/feedback.ts, docs/feedback-agent.md).
 #
+# And a log sink that keeps every finished stint in BigQuery: which rules get
+# played, their board coverage, the bots' share (stats-sink.sh,
+# docs/pattern-stats.md).
+#
 # Then prints the variables to add to the GitHub repo. Run once with `gcloud`
 # logged in:
 #
@@ -98,6 +102,8 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
   --quiet >/dev/null
 
 WIF="projects/$PNUM/locations/global/workloadIdentityPools/$POOL/providers/$PROVIDER"
+
+PROJECT="$PROJECT" REGION="$REGION" "$(dirname "$0")/stats-sink.sh"
 
 cat <<MSG
 

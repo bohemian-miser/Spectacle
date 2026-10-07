@@ -1037,7 +1037,14 @@ setInterval(() => {
 setInterval(() => guard('pattern stats', () => {
   const sampled = [...rooms.values()]
     .filter((r) => r.clients.size > 0)
-    .map((r) => ({ mode: r.mode, players: [...r.engine.players.values()].filter((p) => p.bot || r.clients.has(p.id)) }));
+    .map((r) => ({
+      mode: r.mode,
+      level: r.level,
+      boardTiles: r.field.count,
+      players: [...r.engine.players.values()]
+        .filter((p) => p.bot || r.clients.has(p.id))
+        .map((p) => ({ id: p.id, bot: p.bot, rule: p.rule, score: p.score, tiles: r.engine.tilesHeld(p.id) })),
+    }));
   logStints(patternStats.sample(Date.now(), sampled));
 }), 1000);
 if (STATS_FILE) setInterval(() => guard('save stats', saveStats), 60_000);
