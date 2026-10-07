@@ -8,7 +8,9 @@
  * finished stint is returned for the log and folded into a per (mode, rule,
  * bot) row: stints, time on it, best score, final scores, circuits, and how
  * much of the board it covered at its peak (tiles held / tiles on the board,
- * so stints on boards of different sizes compare).
+ * so stints on boards of different sizes compare), and whether it won the
+ * round. A round's end (`endRound`, on the engine's `restart`) closes the
+ * room's stints, so a stint never spans two rounds.
  *
  * Served at its own page, /patterns (server/index.ts) — not folded into
  * /status, since it's a bigger page built on demand rather than /status's
@@ -38,6 +40,9 @@ export interface SampledRoom {
   readonly players: Iterable<SampledPlayer>;
 }
 
+/** Why a stint ended. */
+export type StintEnd = 'rule' | 'left' | 'round' | 'shutdown';
+
 /** One finished stint: one player, one rule, start to end. */
 export interface StintRecord {
   readonly mode: GameMode;
@@ -54,6 +59,10 @@ export interface StintRecord {
   readonly peakTiles: number;
   /** `peakTiles / boardTiles`, 0–1. */
   readonly peakCoverage: number;
+  /** Did this stint win the round (`winFraction` of the board)? */
+  readonly won: boolean;
+  /** A new rule, the player gone, the round over (won by anyone), or the server stopping. */
+  readonly end: StintEnd;
 }
 
 /** Everything played on one rule in one mode, by people or by bots. */
@@ -75,6 +84,8 @@ export interface PatternRow {
   peakCoverage: number;
   /** Sum of finished stints' peak coverage (mean = / finished). */
   coverageSum: number;
+  /** Rounds won on it. */
+  wins: number;
   /** Players on it right now (report only). */
   live: number;
   lastPlayedAt: number;
@@ -105,6 +116,7 @@ interface Stint {
   peak: number;
   peakTiles: number;
   circuits: number;
+  won: boolean;
 }
 
 export class PatternStats {
@@ -115,8 +127,8 @@ export class PatternStats {
   constructor(now: number, saved?: PatternStatsFile | null) {
     this.since = saved?.since ?? now;
     for (const r of saved?.rows ?? []) {
-      // Files from before coverage was kept have no coverage fields.
-      this.rows.set(rowKey(r.mode, r.rule, r.bot), { ...r, peakCoverage: r.peakCoverage ?? 0, coverageSum: r.coverageSum ?? 0, live: 0 });
+      // Files from before coverage and wins were kept have no such fields.
+      this.rows.set(rowKey(r.mode, r.rule, r.bot), { ...r, peakCoverage: r.peakCoverage ?? 0, coverageSum: r.coverageSum ?? 0, wins: r.wins ?? 0, live: 0 });
     }
   }
 
@@ -134,13 +146,13 @@ export class PatternStats {
         const key = `${room.mode}|${room.level}|${ruleKey(p.rule)}`;
         let s = this.open.get(p.id);
         if (s && s.key !== key) {
-          done.push(this.close(p.id, s, now));
+          done.push(this.close(p.id, s, now, 'rule'));
           s = undefined;
         }
         if (!s) {
           s = {
             key, rule: describeRule(p.rule), mode: room.mode, level: room.level, boardTiles: room.boardTiles, bot: p.bot,
-            startedAt: now, lastSeen: now, lastScore: p.score, peak: p.score, peakTiles: p.tiles, circuits: 0,
+            startedAt: now, lastSeen: now, lastScore: p.score, peak: p.score, peakTiles: p.tiles, circuits: 0, won: false,
           };
           this.open.set(p.id, s);
           this.row(s).stints++;
@@ -151,7 +163,26 @@ export class PatternStats {
         s.peakTiles = Math.max(s.peakTiles, p.tiles);
       }
     }
-    for (const [id, s] of this.open) if (!seen.has(id)) done.push(this.close(id, s, now));
+    for (const [id, s] of this.open) if (!seen.has(id)) done.push(this.close(id, s, now, 'left'));
+    return done;
+  }
+
+  /** `id` won the round: their running stint counts it. */
+  win(id: string): void {
+    const s = this.open.get(id);
+    if (s) s.won = true;
+  }
+
+  /**
+   * The round is over (the engine's `restart`): close the stints of `ids`,
+   * the room's players. The next `sample` opens new ones for the new round.
+   */
+  endRound(now: number, ids: Iterable<string>): StintRecord[] {
+    const done: StintRecord[] = [];
+    for (const id of ids) {
+      const s = this.open.get(id);
+      if (s) done.push(this.close(id, s, now, 'round'));
+    }
     return done;
   }
 
@@ -163,7 +194,7 @@ export class PatternStats {
 
   /** Close every running stint (shutdown). */
   finishAll(now: number): StintRecord[] {
-    return [...this.open].map(([id, s]) => this.close(id, s, now));
+    return [...this.open].map(([id, s]) => this.close(id, s, now, 'shutdown'));
   }
 
   /** Every row, running stints included, most played first. */
@@ -178,6 +209,7 @@ export class PatternStats {
       r.circuits += s.circuits;
       r.peakScore = Math.max(r.peakScore, s.peak);
       r.peakCoverage = Math.max(r.peakCoverage, coverage(s));
+      if (s.won) r.wins++;
       r.lastPlayedAt = Math.max(r.lastPlayedAt, s.lastSeen);
     }
     return { now, since: this.since, rows: [...rows.values()].sort((a, b) => b.ms - a.ms) };
@@ -194,7 +226,7 @@ export class PatternStats {
     if (!r) {
       r = {
         mode: s.mode, rule: s.rule, bot: s.bot, stints: 0, ms: 0, peakScore: 0, finalScoreSum: 0, finished: 0, circuits: 0,
-        peakCoverage: 0, coverageSum: 0, live: 0, lastPlayedAt: s.startedAt,
+        peakCoverage: 0, coverageSum: 0, wins: 0, live: 0, lastPlayedAt: s.startedAt,
       };
       this.rows.set(k, r);
     }
@@ -202,7 +234,7 @@ export class PatternStats {
   }
 
   /** A stint ends at the sample that finds it over; its score is the last one seen. */
-  private close(id: string, s: Stint, now: number): StintRecord {
+  private close(id: string, s: Stint, now: number, end: StintEnd): StintRecord {
     this.open.delete(id);
     const ms = Math.max(0, now - s.startedAt);
     const r = this.row(s);
@@ -214,10 +246,11 @@ export class PatternStats {
     const cover = coverage(s);
     r.peakCoverage = Math.max(r.peakCoverage, cover);
     r.coverageSum += cover;
+    if (s.won) r.wins++;
     r.lastPlayedAt = Math.max(r.lastPlayedAt, now);
     return {
       mode: s.mode, level: s.level, rule: s.rule, bot: s.bot, startedAt: s.startedAt, ms, finalScore: s.lastScore, peakScore: s.peak,
-      circuits: s.circuits, boardTiles: s.boardTiles, peakTiles: s.peakTiles, peakCoverage: cover,
+      circuits: s.circuits, boardTiles: s.boardTiles, peakTiles: s.peakTiles, peakCoverage: cover, won: s.won, end,
     };
   }
 }
@@ -262,7 +295,7 @@ export const PATTERNS_PAGE = `<!doctype html>
   <h1>Spectacle patterns</h1>
   <div id="state" class="muted">loading…</div>
   <h2>By rule</h2>
-  <p class="muted">People and bots together. Cover is the most of the board a stint held at once (tiles held ÷ tiles on the board).</p>
+  <p class="muted">People and bots together. A stint is one player on one rule within one round. Cover is the most of the board a stint held at once (tiles held ÷ tiles on the board). Wins are rounds won (a player covering <code>winFraction</code> of the board).</p>
   <div class="wrap"><table id="rules"></table></div>
   <h2>People</h2>
   <div class="wrap"><table id="people"></table></div>
@@ -289,6 +322,7 @@ export const PATTERNS_PAGE = `<!doctype html>
     ['Mean final', (r) => r.finished ? r.finalScoreSum / r.finished : -1, (r) => r.finished ? Math.round(r.finalScoreSum / r.finished) : '–'],
     ['Circuits', (r) => r.circuits, (r) => r.circuits],
     ['Circuits / h', (r) => r.ms ? r.circuits / r.ms : 0, (r) => r.ms > 60000 ? (r.circuits / (r.ms / 3600000)).toFixed(1) : '–'],
+    ['Wins', (r) => r.wins || 0, (r) => r.wins || ''],
     ['Best cover', (r) => r.peakCoverage, (r) => pct(r.peakCoverage)],
     ['Mean cover', meanCover, (r) => r.finished ? pct(meanCover(r)) : '–'],
   ];
@@ -296,14 +330,16 @@ export const PATTERNS_PAGE = `<!doctype html>
   const ruleCols = [
     cols[0], cols[1], cols[2], cols[3], cols[4],
     ['Bot time', (r) => r.ms ? r.botMs / r.ms : 0, (r) => r.ms ? pct(r.botMs / r.ms) : '–'],
-    cols[9], cols[10],
+    ['Wins', (r) => r.wins, (r) => r.wins ? r.wins + (r.botWins ? ' (' + r.botWins + ' bot)' : '') : ''],
+    cols[10], cols[11],
   ];
   function byRule(rows) {
     const m = new Map();
     for (const r of rows) {
       const k = r.mode + '|' + r.rule;
-      const t = m.get(k) || { mode: r.mode, rule: r.rule, live: 0, stints: 0, ms: 0, botMs: 0, peakCoverage: 0, coverageSum: 0, finished: 0 };
+      const t = m.get(k) || { mode: r.mode, rule: r.rule, live: 0, stints: 0, ms: 0, botMs: 0, wins: 0, botWins: 0, peakCoverage: 0, coverageSum: 0, finished: 0 };
       t.live += r.live; t.stints += r.stints; t.ms += r.ms; if (r.bot) t.botMs += r.ms;
+      t.wins += r.wins || 0; if (r.bot) t.botWins += r.wins || 0;
       t.peakCoverage = Math.max(t.peakCoverage, r.peakCoverage || 0);
       t.coverageSum += r.coverageSum || 0; t.finished += r.finished;
       m.set(k, t);

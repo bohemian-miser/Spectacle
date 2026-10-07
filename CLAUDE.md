@@ -627,7 +627,11 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   cheap snapshot. On Cloud Run the durable record is the log — one JSON line
   `{"message":"stint","stint":{…}}` per finished stint (rule in
   `describeRule` form, mode, level, bot, ms, final and peak score, circuits,
-  `peakCoverage` = most tiles held at once ÷ the board's tiles) — since
+  `peakCoverage` = most tiles held at once ÷ the board's tiles, `won`, and
+  `end`: rule/left/round/shutdown) and one `{"message":"win","win":{…}}`
+  per won round (winner's rule, bot kind, coverage, `roundMs`, humans and
+  bots at the board). A round's `restart` closes the room's stints
+  (`PatternStats.endRound`), so a stint never spans rounds — since
   memory and disk go with the instance, and with several instances
   `/patterns` shows only the one that answered; the log covers them all.
   A log sink (`deploy/gcp/stats-sink.sh`, run by setup-ci.sh) keeps those

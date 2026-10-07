@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Pattern stats that outlive the servers: route every finished stint (the
-# `{"message":"stint",…}` line server/index.ts logs) from Cloud Run into a
+# Pattern stats that outlive the servers: route every finished stint and won
+# round (the `{"message":"stint",…}` and `{"message":"win",…}` lines
+# server/index.ts logs) from Cloud Run into a
 # BigQuery dataset, so which rules get played, how much of the board they
 # cover and how much of their time is bots' can be queried across every
 # instance and every deploy. docs/pattern-stats.md has the queries.
@@ -28,7 +29,7 @@ bq --project_id "$PROJECT" show --dataset "$PROJECT:$DATASET" >/dev/null 2>&1 ||
     --description "Spectacle pattern stats: one row per finished stint, from the $SINK log sink" \
     "$PROJECT:$DATASET"
 
-FILTER="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE\" AND jsonPayload.message=\"stint\""
+FILTER="resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"$SERVICE\" AND (jsonPayload.message=\"stint\" OR jsonPayload.message=\"win\")"
 DEST="bigquery.googleapis.com/projects/$PROJECT/datasets/$DATASET"
 if gcloud logging sinks describe "$SINK" --project "$PROJECT" >/dev/null 2>&1; then
   gcloud logging sinks update "$SINK" "$DEST" --log-filter "$FILTER" --project "$PROJECT" --quiet
@@ -57,7 +58,7 @@ fi
 
 cat <<MSG
 
-Stints from Cloud Run service "$SERVICE" now go to BigQuery:
+Stints and wins from Cloud Run service "$SERVICE" now go to BigQuery:
   $PROJECT.$DATASET.run_googleapis_com_stdout
 (the table appears with the first stint after this; docs/pattern-stats.md has the queries).
 MSG

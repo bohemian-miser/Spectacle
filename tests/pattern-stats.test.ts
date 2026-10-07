@@ -28,12 +28,12 @@ describe('PatternStats', () => {
     const done = s.sample(6000, [room('normal', [pl('p1', b)])]);
     expect(done).toEqual([{
       mode: 'normal', level: 3, rule: describeRule(a), bot: false, startedAt: 0, ms: 6000, finalScore: 40, peakScore: 40, circuits: 1,
-      boardTiles: 1000, peakTiles: 40, peakCoverage: 0.04,
+      boardTiles: 1000, peakTiles: 40, peakCoverage: 0.04, won: false, end: 'rule',
     }]);
     // Gone from the sample: closed.
     const gone = s.sample(9000, []);
     expect(gone).toHaveLength(1);
-    expect(gone[0]).toMatchObject({ rule: describeRule(b), ms: 3000, peakCoverage: 0 });
+    expect(gone[0]).toMatchObject({ rule: describeRule(b), ms: 3000, peakCoverage: 0, end: 'left' });
     const rows = s.report(9000).rows;
     expect(rows.map((r) => r.rule)).toEqual([describeRule(a), describeRule(b)]);
     expect(rows.every((r) => r.live === 0)).toBe(true);
@@ -68,10 +68,27 @@ describe('PatternStats', () => {
     expect(row).toMatchObject({ stints: 2, finished: 2, ms: 3000, finalScoreSum: 7, peakCoverage: 0.007 });
   });
 
+  it('counts a won round, and ends every stint in the room with it', () => {
+    const s = new PatternStats(0);
+    const players = [pl('p1', a, 900, 900), pl('b1', b, 50, 50, true)];
+    s.sample(0, [room('normal', players)]);
+    s.win('p1');
+    s.win('nobody'); // no stint: ignored
+    expect(s.report(500).rows.find((r) => !r.bot)?.wins).toBe(1);
+    const ended = s.endRound(1000, ['p1', 'b1']);
+    expect(ended.map((x) => [x.bot, x.won, x.end, x.peakCoverage])).toEqual([[false, true, 'round', 0.9], [true, false, 'round', 0.05]]);
+    // The next round opens new stints for the same players.
+    s.sample(2000, [room('normal', [pl('p1'), pl('b1', b, 0, 0, true)])]);
+    const rows = s.report(2000).rows;
+    expect(rows.find((r) => !r.bot)).toMatchObject({ stints: 2, finished: 1, wins: 1, live: 1 });
+    expect(rows.find((r) => r.bot)).toMatchObject({ stints: 2, wins: 0 });
+    expect(s.finishAll(3000).every((x) => x.end === 'shutdown' && !x.won)).toBe(true);
+  });
+
   it('loads a file saved before coverage was kept', () => {
     const old = { since: 0, rows: [{ mode: 'normal', rule: describeRule(a), bot: false, stints: 1, ms: 10, peakScore: 3, finalScoreSum: 3, finished: 1, circuits: 0, live: 0, lastPlayedAt: 10 }] };
     const s = new PatternStats(0, old as unknown as PatternStatsFile);
-    expect(s.report(0).rows[0]).toMatchObject({ peakCoverage: 0, coverageSum: 0 });
+    expect(s.report(0).rows[0]).toMatchObject({ peakCoverage: 0, coverageSum: 0, wins: 0 });
   });
 });
 
@@ -121,5 +138,37 @@ describe('/patterns on the real server', () => {
     await server.stop();
     const saved = JSON.parse(readFileSync(statsFile, 'utf8')) as PatternStatsFile;
     expect(saved.rows.find((x) => !x.bot && x.rule === rule)).toMatchObject({ stints: 1, finished: 1 });
+  }, 30_000);
+});
+
+describe('a won round on the real server', () => {
+  const PORT = 24000 + Math.floor(Math.random() * 1000);
+  let server: TestServer;
+
+  // A win at 0.5% of a level-3 board (3 tiles) comes within seconds; the restart a second later.
+  beforeAll(async () => {
+    server = await startServer(PORT, { BOTS: 'wanderer:2', FIELD_LEVEL: '3', KNOB_WIN_FRACTION: '0.005', KNOB_WIN_CELEBRATE_MS: '1000' });
+  }, 30_000);
+  afterAll(async () => {
+    await server?.stop();
+  });
+
+  it('shows the win in /patterns and starts new stints after the restart', async () => {
+    const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
+    await new Promise((r) => ws.once('open', r));
+    ws.send(JSON.stringify({ t: 'join', name: 'watcher', rule: defaultRule('hex'), mode: 'normal' }));
+    let rows: PatternStatsReport['rows'] = [];
+    for (let i = 0; i < 150; i++) {
+      rows = ((await (await fetch(`http://127.0.0.1:${PORT}/patterns.json`)).json()) as PatternStatsReport).rows;
+      // A win, the watcher's stint closed by the round's end, and their next one open.
+      if (rows.some((r) => r.wins > 0) && rows.some((r) => !r.bot && r.finished > 0 && r.stints > 1)) break;
+      await new Promise((ok) => setTimeout(ok, 100));
+    }
+    ws.close();
+    expect(rows.some((r) => r.bot && r.wins > 0)).toBe(true);
+    const watcher = rows.find((r) => !r.bot)!;
+    expect(watcher).toMatchObject({ wins: 0 });
+    expect(watcher.finished).toBeGreaterThan(0);
+    expect(watcher.stints).toBeGreaterThan(1);
   }, 30_000);
 });

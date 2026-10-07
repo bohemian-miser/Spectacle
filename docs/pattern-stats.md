@@ -1,40 +1,60 @@
 # Pattern stats
 
-Which rules (patterns) get played, how far they spread, and how much of
-their play is bots'.
+Which rules (patterns) get played, how far they spread, which win rounds,
+and how much of their play is bots'.
 
 ## Where they come from
 
 Every server samples each player at the board once a second. A *stint* is one
-player on one rule: it starts when they join or pick a rule, and ends when
-they pick another, leave, or the server shuts down
-(`server/pattern-stats.ts`). Each finished stint is logged as one JSON line:
+player on one rule within one round: it starts when they join, pick a rule
+or a new round begins, and ends (`end`) when they pick another (`rule`),
+leave (`left`), the round ends (`round`: someone won it), or the server
+shuts down (`shutdown`) (`server/pattern-stats.ts`). Each finished stint is
+logged as one JSON line:
 
 ```json
 {"message":"stint","stint":{"mode":"normal","level":6,"rule":"258 · 001000110","bot":true,
  "startedAt":1791339975121,"ms":15006,"finalScore":42,"peakScore":42,"circuits":2,
- "boardTiles":242144,"peakTiles":42,"peakCoverage":0.000173}}
+ "boardTiles":242144,"peakTiles":42,"peakCoverage":0.000173,"won":false,"end":"round"}}
 ```
+
+A round is won when one player's lines cover `winFraction` of the board
+(0.9 by default; the engine's `win` event). Each win is logged too:
+
+```json
+{"message":"win","win":{"mode":"normal","level":6,"round":3,"rule":"03456 · 000000000",
+ "bot":true,"kind":"wanderer","tiles":217930,"boardTiles":242144,"coverage":0.9,
+ "roundMs":1963000,"humans":2,"bots":1}}
+```
+
+`rule` is the winner's own rule (captured patterns may have helped),
+`kind` the bot's kind (`null` for a person), `round` counts rounds in that
+room since it opened, `roundMs` is the time played in the round (a room
+nobody is in stands still and doesn't count), and `humans`/`bots` are who
+was at the board.
 
 - `rule` is `describeRule` form: the edge classes, then the matching per tile type.
 - `peakCoverage` is the most of the board the stint held at once: tiles its
   lines were on ÷ tiles on the board (0–1), so stints on different board
   sizes compare. `peakTiles` / `boardTiles` are the raw counts.
 - `bot` says whether a bot played it. `ms` is how long the stint lasted.
+- `won` says whether the stint won its round.
 
 You can read them in three places:
 
 - **`/patterns`** (and `/patterns.json`) on a server: the totals since that
   process started (or since `STATS_FILE` began, on the VM). There's a table
-  per rule (uses, time, bot share of the time, best and mean coverage), then
-  people and bots separately. With several Cloud Run instances it shows only
+  per rule (uses, time, bot share of the time, wins, best and mean
+  coverage), then people and bots separately. With several Cloud Run instances it shows only
   the one that answered.
-- **Cloud Logging**: `jsonPayload.message="stint"`, kept 30 days.
+- **Cloud Logging**: `jsonPayload.message="stint"` (or `"win"`), kept 30 days.
 - **BigQuery**, once `deploy/gcp/stats-sink.sh` has run (`setup-ci.sh` runs
-  it): every stint from every instance, kept indefinitely, in
+  it): every stint and win from every instance, kept indefinitely, in
   `PROJECT.spectacle_stats.run_googleapis_com_stdout`. Stints logged before
   the sink existed aren't copied in. A server older than the coverage fields
-  logs stints without them, and those rows have `NULL` coverage.
+  logs stints without them, and those rows have `NULL` coverage. The sink
+  script picks up `win` lines too; if the sink was made before that, rerun
+  the script to widen its filter.
 
 ## Queries
 
@@ -54,6 +74,8 @@ SELECT
   mode, rule,
   COUNT(*)                                   AS uses,
   COUNTIF(NOT bot)                           AS human_uses,
+  COUNTIF(won)                               AS wins,
+  COUNTIF(won AND bot)                       AS bot_wins,
   ROUND(SUM(ms) / 3.6e6, 2)                  AS hours,
   ROUND(100 * SAFE_DIVIDE(SUM(IF(bot, ms, 0)), SUM(ms)), 1) AS bot_time_pct,
   ROUND(100 * MAX(peakCoverage), 2)          AS best_cover_pct,
@@ -75,6 +97,32 @@ GROUP BY day, rule
 ORDER BY day DESC, uses DESC;
 ```
 
+### Rounds won: by whom, and how fast
+
+```sql
+SELECT jsonPayload.win.mode AS mode, jsonPayload.win.rule AS rule,
+       IF(jsonPayload.win.bot, jsonPayload.win.kind, 'person') AS winner,
+       COUNT(*) AS wins,
+       ROUND(AVG(jsonPayload.win.roundMs) / 60000, 1) AS mean_minutes,
+       ROUND(MIN(jsonPayload.win.roundMs) / 60000, 1) AS fastest_minutes,
+       ROUND(AVG(jsonPayload.win.humans), 1) AS mean_humans
+FROM `PROJECT.spectacle_stats.run_googleapis_com_stdout`
+WHERE jsonPayload.message = 'win'
+GROUP BY mode, rule, winner
+ORDER BY wins DESC;
+```
+
+### Bots' share of the wins, per day
+
+```sql
+SELECT DATE(timestamp) AS day, COUNT(*) AS rounds,
+       ROUND(100 * COUNTIF(jsonPayload.win.bot) / COUNT(*), 1) AS bot_win_pct
+FROM `PROJECT.spectacle_stats.run_googleapis_com_stdout`
+WHERE jsonPayload.message = 'win'
+GROUP BY day
+ORDER BY day DESC;
+```
+
 ### The biggest single uses
 
 ```sql
@@ -91,7 +139,7 @@ LIMIT 50;
 ## Caveats
 
 - A reconnect splits a stint in two, since only players at the board are
-  sampled.
+  sampled. So does a round's end, on purpose.
 - Sampling is once a second, so a stint shorter than that may not show.
 - Coverage is tiles held, any line status (growing, stuck or closed), which
   is the score under `scoreTiles`.
