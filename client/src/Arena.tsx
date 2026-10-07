@@ -321,6 +321,9 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
   const meRow = me && rank > top.length ? board[rank - 1] : null;
   const active = me ? (me.patterns[me.active] ?? me.patterns[0]) : undefined;
   const heads = store.heads();
+  // Share of the board you control (your score is your tiles): 90% wins the round. Rounded down from 10 up, so 90 means won.
+  const share = me && store.knobs?.scoreTiles && store.field ? (100 * me.score) / store.field.count : null;
+  const controlled = share === null ? null : share < 10 ? share.toFixed(1) : String(Math.floor(share));
   // A player's swatch colour: theirs, or their team's (you blue, the rest red).
   const swatch = (color: string, mine: boolean): string =>
     strandColor(scheme, settings.teams ? (mine ? scheme.teamMe : scheme.teamRival) : color);
@@ -353,37 +356,56 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
       />
 
       <div className="hud hud-me" style={{ ['--me' as string]: me ? swatch(me.color, true) : 'var(--text)' }}>
-        <div className="hud-corner">
-          {store.room && (
-            <button type="button" className="hud-icon" onClick={() => void invite()} title="Invite: copy a link that brings people into this room" aria-label="Copy an invite link to this room">
+        <div className="hud-top">
+          <div className="hud-name">
+            <span className="swatch" /> <span className="hud-name-text">{me?.name ?? '…'}</span>
+          </div>
+          <div className="hud-corner">
+            {store.room && (
+              <button type="button" className="hud-icon" onClick={() => void invite()} title="Invite: copy a link that brings people into this room" aria-label="Copy an invite link to this room">
+                <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+                  <g fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+                    <circle cx="12" cy="3.5" r="1.8" />
+                    <circle cx="4" cy="8" r="1.8" />
+                    <circle cx="12" cy="12.5" r="1.8" />
+                    <path d="M5.6 7.1l4.8-2.7M5.6 8.9l4.8 2.7" />
+                  </g>
+                </svg>
+              </button>
+            )}
+            <FeedbackButton
+              icon
+              game={() => ({
+                mode,
+                gameMode,
+                room: store.room,
+                field: store.field?.spec,
+                rule: active?.rule,
+                renderer: rendererRef.current?.layerKind,
+              })}
+            />
+            <SettingsButton icon />
+            <button type="button" className="hud-icon hud-leave" onClick={onLeave} title="Leave the arena: game mode, online or solo" aria-label="Leave the arena">
               <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-                <g fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
-                  <circle cx="12" cy="3.5" r="1.8" />
-                  <circle cx="4" cy="8" r="1.8" />
-                  <circle cx="12" cy="12.5" r="1.8" />
-                  <path d="M5.6 7.1l4.8-2.7M5.6 8.9l4.8 2.7" />
-                </g>
+                <path
+                  d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6M10.5 11l3-3-3-3M13.2 8H6"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.4"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
               </svg>
             </button>
-          )}
-          <button type="button" className="hud-icon hud-leave" onClick={onLeave} title="Leave the arena: game mode, online or solo" aria-label="Leave the arena">
-            <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
-              <path
-                d="M6 2H3.5A1.5 1.5 0 0 0 2 3.5v9A1.5 1.5 0 0 0 3.5 14H6M10.5 11l3-3-3-3M13.2 8H6"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="1.4"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          </button>
-        </div>
-        <div className="hud-name">
-          <span className="swatch" /> {me?.name ?? '…'}
+          </div>
         </div>
         <div className="hud-score-row">
           <div className="hud-score">{me?.score ?? 0}</div>
+          {controlled !== null && (
+            <span className="hud-pct" title="Share of the board your lines are on — cover 90% to win the round">
+              {controlled}%
+            </span>
+          )}
           <span className="hud-heads" title="Heads free / total — lines you can start now">
             {heads.total === 0 ? '∞' : `${heads.free}/${heads.total}`} {heads.total === 1 ? 'head' : 'heads'}
           </span>
@@ -402,17 +424,6 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
             New rule
           </button>
           <BotsButton store={store} conn={conn} />
-          <SettingsButton />
-          <FeedbackButton
-            game={() => ({
-              mode,
-              gameMode,
-              room: store.room,
-              field: store.field?.spec,
-              rule: active?.rule,
-              renderer: rendererRef.current?.layerKind,
-            })}
-          />
         </div>
       </div>
 

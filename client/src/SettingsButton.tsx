@@ -10,7 +10,8 @@ import { createPortal } from 'react-dom';
 import { CIRCUIT_STYLES, parseCircuitStyle, useSettings } from './settings';
 import { parseTheme, useTheme } from './theme';
 
-export function SettingsButton(): JSX.Element {
+/** `icon`: a bare gear for the arena HUD's icon row; otherwise a labelled button (the lobby). */
+export function SettingsButton({ icon = false }: { icon?: boolean }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [theme, setTheme] = useTheme();
   const [settings, update] = useSettings();
@@ -26,9 +27,21 @@ export function SettingsButton(): JSX.Element {
 
   return (
     <>
-      <button type="button" className="btn settings-btn" aria-label="Settings" title="Settings" onClick={() => setOpen(true)}>
-        <span aria-hidden="true">⚙</span> Settings
-      </button>
+      {icon ? (
+        <button type="button" className="hud-icon" aria-label="Settings" title="Settings" onClick={() => setOpen(true)}>
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <g fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="8" cy="8" r="2.2" />
+              <path d="M8 1.5v1.8M8 12.7v1.8M1.5 8h1.8M12.7 8h1.8M3.4 3.4l1.3 1.3M11.3 11.3l1.3 1.3M3.4 12.6l1.3-1.3M11.3 4.7l1.3-1.3" />
+              <circle cx="8" cy="8" r="4.6" />
+            </g>
+          </svg>
+        </button>
+      ) : (
+        <button type="button" className="btn settings-btn" aria-label="Settings" title="Settings" onClick={() => setOpen(true)}>
+          <span aria-hidden="true">⚙</span> Settings
+        </button>
+      )}
       {open &&
         createPortal(
           <div className="modal-backdrop" onClick={() => setOpen(false)}>

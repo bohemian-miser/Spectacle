@@ -200,7 +200,9 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   max-width: min(92vw, 360px);
 }
 .hud-me { left: 12px; top: 12px; border-left: 4px solid var(--me); position: relative; }
-.hud-corner { position: absolute; top: 6px; right: 6px; display: flex; gap: 2px; }
+/* Name, then the icons (share, feedback, settings, leave); on a narrow card the name wraps under them. */
+.hud-top { display: flex; flex-wrap: wrap-reverse; align-items: center; gap: 2px 6px; margin: -4px -6px 0 0; }
+.hud-corner { display: flex; gap: 2px; margin-left: auto; }
 .hud-icon {
   width: 22px;
   height: 22px;
@@ -215,10 +217,13 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   cursor: pointer;
 }
 .hud-icon:hover { background: var(--panel-2); color: var(--text); }
-.hud-name { padding-right: 48px; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.hud-name { flex: 1 1 60px; min-width: 0; font-weight: 600; display: flex; align-items: center; gap: 6px; }
+.hud-name-text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hud-name .swatch { flex: none; }
 .hud-name .swatch { background: var(--me); }
 .hud-score-row { display: flex; align-items: baseline; gap: 8px; }
 .hud-score { font-size: 34px; font-weight: 700; line-height: 1.1; }
+.hud-pct { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .hud-heads { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .hud-line { font-size: 13px; color: var(--muted); }
 .hud-status { color: var(--text); }
@@ -281,6 +286,10 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   .hud-board li { font-size: 12px; gap: 5px; }
   .hud-board li:nth-child(n + 6):not(.is-me):not(.board-gap) { display: none; }
   .hud-score { font-size: 26px; }
+  .hud-icon { width: 26px; height: 26px; }
+  /* Toasts come thick and fast; at the top centre of a phone they sat on the score. */
+  .toasts { top: auto; bottom: 14px; }
+  .hud-help { bottom: 12px; width: calc(100vw - 32px); max-height: 45vh; overflow-y: auto; font-size: 14px; }
   .rule-buttons { margin-left: 0; }
 }
 

@@ -106,7 +106,9 @@ client/src/       Vite + React.
   Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
                   numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
                   cropped to ~97% tiles, arrows, edge-number toggle).
-  Arena.tsx       Two stacked canvases + pointer handling + HUD. A lone
+  Arena.tsx       Two stacked canvases + pointer handling + HUD (player card:
+                  name and an icon row — share, feedback, settings gear,
+                  leave — then score and % of the board controlled). A lone
                   pointer taps, drags to pan, or held still for `HOLD_MS`
                   (300 ms) paints (each tile entered is the next tap, sent
                   once `store.hasFreeHead()`, ≥120 ms apart for the server's
