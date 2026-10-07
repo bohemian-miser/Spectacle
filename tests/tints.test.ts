@@ -48,7 +48,11 @@ describe('tile tints', () => {
   it.each(['normal', 'conquest'] as const)('%s: re-tinting only the touched tiles matches a full rebuild all game long', (mode) => {
     const spec = { family: 'hex', level: 3, rootTile: 'Delta' } as const;
     const field = buildField(spec);
-    const knobs = { ...DEFAULT_KNOBS, mode, maxHeads: 0 };
+    // Geometric: this seeded game is pinned to reliably reach a convert/take
+    // (exercising those tint paths) within the tick budget; tile mode cuts
+    // rivals sooner and this one never does. Not a crossingMode test — the
+    // tint sync is.
+    const knobs = { ...DEFAULT_KNOBS, mode, maxHeads: 0, crossingMode: 'geometric' as const };
     const e = new Engine(field, knobs, mulberry32(11));
     const rng = mulberry32(12);
     const bots = new Bots(e, mulberry32(13), 0.1);

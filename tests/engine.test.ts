@@ -165,6 +165,48 @@ describe('engine', () => {
     }
   });
 
+  it("tile mode (the default): a line entering a rival's tile on a disjoint chord is cut too, mutually — but not your own", () => {
+    const { tile } = loopTile();
+    const table = chordTableFor(FIELD, SEL15);
+    const chords = tileChords(FIELD, table, tile);
+    if (chords.length < 2) throw new Error('loopTile has only one chord');
+    const mid = (c: number) => {
+      const [p, q] = chords[c];
+      const M = FIELD.xforms.subarray(tile * 6, tile * 6 + 6);
+      const lx = (p.x + q.x) / 2;
+      const ly = (p.y + q.y) / 2;
+      return { x: M[0] * lx + M[1] * ly + M[2], y: M[3] * lx + M[4] * ly + M[5] };
+    };
+    // A rival's: unlike geometric mode (above), tile mode cuts both lines
+    // even though their chords neither cross nor touch.
+    const e = make({ crossingMode: 'tile', tapOntoOthers: true });
+    e.addPlayer('a', 'Ann', SEL15);
+    e.addPlayer('b', 'Bob', SEL15);
+    e.tap('a', tile, mid(0));
+    const r = e.tap('b', tile, mid(1));
+    const wipes = r.events.filter((x) => x.t === 'wipe');
+    expect(wipes).toHaveLength(2);
+    expect(wipes).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ owner: 'a', by: 'b' }),
+        expect.objectContaining({ owner: 'b', by: 'a' }),
+      ]),
+    );
+    expect(e.players.get('a')!.paths).toHaveLength(0);
+    expect(e.players.get('b')!.paths).toHaveLength(0);
+
+    // Your own: crossingMode only ever decides what counts as a *rival's*
+    // line owning a tile (default overlapOwnLines keeps it per chord), so
+    // the same disjoint chords of the same tile, same player, cut nothing.
+    const e2 = make({ crossingMode: 'tile', maxHeads: 2 });
+    e2.addPlayer('a', 'Ann', SEL15);
+    e2.tap('a', tile, mid(0));
+    const r2 = e2.tap('a', tile, mid(1));
+    expect(r2.result.ok).toBe(true);
+    expect(r2.events.some((x) => x.t === 'wipe')).toBe(false);
+    expect(e2.players.get('a')!.paths).toHaveLength(2);
+  });
+
   it('a new rule wipes paths and resets the score (regrowOnRule off)', () => {
     const e = make({ regrowOnRule: false });
     e.addPlayer('a', 'Ann', SEL15);
@@ -355,7 +397,10 @@ describe('engine', () => {
       return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2 };
     };
     const setup = () => {
-      const e = make({ tapInsideRivalCircuits: true, overlapOwnLines: false });
+      // Geometric: the older, non-overlap mode's own-line conflict test is the
+      // same test as a rival hit, so in the default tile mode it would block
+      // the whole tile too — pin geometric to test the per-chord claim itself.
+      const e = make({ tapInsideRivalCircuits: true, overlapOwnLines: false, crossingMode: 'geometric' });
       e.addPlayer('a', 'Ann', SEL15);
       e.addPlayer('b', 'Bob', SEL15);
       return e;

@@ -26,7 +26,10 @@ describe('scoreTiles: the score is the tiles you control', () => {
   for (const mode of ['conquest', 'normal'] as const) {
     it(`matches every player's tiles after every tick of a busy game, and the client agrees (${mode})`, () => {
       // Bots holding several patterns in conquest: flips, splits, joins, takes; normal: conversions.
-      const knobs: Knobs = { ...DEFAULT_KNOBS, mode, maxHeads: 0 };
+      // Geometric: this seeded game is pinned to reliably reach a take/convert
+      // within the tick budget; tile mode cuts rivals sooner and this one
+      // never does. Not a crossingMode test — scoreTiles is.
+      const knobs: Knobs = { ...DEFAULT_KNOBS, mode, maxHeads: 0, crossingMode: 'geometric' };
       const e = new Engine(FIELD, knobs, mulberry32(3));
       const rng = mulberry32(4);
       const bots = new Bots(e, mulberry32(5), 0.1);
