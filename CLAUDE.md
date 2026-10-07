@@ -419,11 +419,16 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   pin the points scoring set `scoreTiles: false`.
 - **Zero-sum** (points scoring). `path.points` leaves with the path. `stealFraction` default 0.
 - **Collisions are mutual** (`mutualCut: true`): the hitter dies too.
-- **No two players on one tile** (`crossingMode: 'tile'` in `TUNING`): a
-  line growing into any tile a rival's line is on collides, whether or not
-  their chords cross — the same whole-tile rule as taps. (Under
-  `'geometric'`, still `DEFAULT_KNOBS` for the tests, lines that missed
-  each other shared tiles, and both scored them.)
+- **No two players on one tile** (`crossingMode: 'tile'`, `DEFAULT_KNOBS`
+  and `TUNING` agree): a line growing into any tile a rival's line is on
+  collides, whether or not their chords cross — the same whole-tile rule as
+  taps (`cutRivals`); own lines are never rivals to themselves, so this is
+  unconditional there regardless of the knob. Under `'geometric'`, a chord
+  cuts only when the two segments properly cross or touch, so lines that
+  missed each other could share a tile and both score it; tests pinning
+  that narrower behaviour set `crossingMode: 'geometric'` explicitly.
+  `TUNING` still spells out `'tile'` (every knob must be there), it just no
+  longer overrides the default.
 - **You can't start** on a rival's line or inside a rival's closed circuit —
   nor on a tile your own line is on (see below). A rival's line owns its
   whole tile: a tap on any tile one passes through is refused, even on a
@@ -462,8 +467,10 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   loose end just behind its start turns round and joins it by itself
   (`joinBehind`) — no tap on the joint needed. With the knob off (the older
   mode), a growing line entering a tile where another of your lines conflicts (same test as a
-  rival hit) goes `stuck` — no cut — and your own lines block taps per chord.
-  Tests that pin the older mode set `overlapOwnLines: false`.
+  rival hit — so `crossingMode` governs own lines too, here) goes `stuck` —
+  no cut — and your own lines block taps per chord. Tests that pin the
+  older mode's per-chord conflict set both `overlapOwnLines: false` and
+  `crossingMode: 'geometric'`.
 - **Flip, don't layer, across your own patterns** (`flipOwnLines: true`, the
   default, on top of `overlapOwnLines`). Your lines of different patterns
   never share a tile. Every path has a `wave` (tap order; pieces inherit the

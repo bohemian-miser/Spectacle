@@ -163,8 +163,9 @@ line and you both die.
    Losing your head in a collision costs `respawnDelayMs` (500 ms) before the
    next tap lands.
 6. **Crossing.** When a line enters a tile another player's line is on
-   (`crossingMode: 'tile'`; `'geometric'` counts only chords that cross or
-   share a connection point, and lets lines that miss share the tile),
+   (`crossingMode: 'tile'`, the default; `'geometric'` counts only chords
+   that cross or share a connection point, and lets lines that miss share
+   the tile),
    both lines die — the one that was hit and the one that hit it — each with
    its points, and both combos reset (`mutualCut`; off makes it one-sided).
    You cannot *start* on a tile a rival's line passes through — any chord of

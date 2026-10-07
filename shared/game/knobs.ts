@@ -108,9 +108,17 @@ export interface Knobs {
 
   // --- conflict ------------------------------------------------------------
   /**
-   * `geometric`: another player's chord cuts yours only when the two segments
-   * properly cross or share a connection point inside the same tile.
-   * `tile`: entering a tile that carries any of your steps cuts you.
+   * `tile` (the default): another player's line owns its whole tile —
+   * entering a tile that carries any of their steps cuts you, chords
+   * touching or not — the same rule a tap already plays by against a rival.
+   * `geometric`: a chord cuts yours only when the two segments properly
+   * cross or share a connection point inside the same tile, so lines that
+   * miss each other can share a tile. With `overlapOwnLines` on (the
+   * default), your own lines are never checked by either mode — they run on
+   * over each other per chord regardless (`freeChord`, `chordBlocked`); this
+   * knob only reaches your own lines in the older `overlapOwnLines: false`
+   * mode, where a growing line meeting another of yours uses the same test
+   * as a rival hit.
    */
   crossingMode: 'geometric' | 'tile';
   /** In geometric mode, does sharing a connection point count as a cross? */
@@ -205,7 +213,7 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   maxPathLength: 0,
   junctionPolicy: 'random',
 
-  crossingMode: 'geometric',
+  crossingMode: 'tile',
   touchCounts: true,
   mutualCut: true,
   tapOntoOthers: false,
