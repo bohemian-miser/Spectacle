@@ -75,8 +75,8 @@ describe('engine', () => {
     expect(p.score).toBe(length * k.pointsPerTile + expected);
     expect(p.combo).toBe(k.comboStart + k.comboStep);
     expect(p.paths[0].status).toBe('closed');
-    // Closed paths stop consuming time.
-    expect(e.tick(10_000)).toEqual([]);
+    // Closed paths stop consuming time (what the player controls is still reported, once a second).
+    expect(e.tick(10_000).filter((x) => x.t !== 'cover')).toEqual([]);
   });
 
   it('gets stuck at a tail', () => {

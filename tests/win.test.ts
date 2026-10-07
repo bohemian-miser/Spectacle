@@ -1,10 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import { flipOrder, flippedBy } from '../client/src/celebration';
 import { Store } from '../client/src/store';
-import { Bots } from '../shared/game/bots';
+import { Bots, botTuningOf, BUILTIN_BRAINS } from '../shared/game/bots';
 import { Engine } from '../shared/game/engine';
 import { buildField, DEFAULT_FIELD_SPEC, tileNeighbours } from '../shared/game/field';
-import { DEFAULT_KNOBS, type Knobs } from '../shared/game/knobs';
+import { applyTuning, DEFAULT_KNOBS, type Knobs } from '../shared/game/knobs';
 import type { GameEvent } from '../shared/game/protocol';
 import { mulberry32 } from '../shared/game/rng';
 import { fassRule } from '../shared/game/rule';
@@ -40,7 +40,8 @@ describe('winning a round', () => {
           wonAt = now;
           expect(x.of).toBe(FIELD.count);
           expect(x.tiles).toBeGreaterThanOrEqual(Math.ceil(0.05 * FIELD.count));
-          expect(e.tilesHeld(x.id)).toBe(x.tiles);
+          expect(e.tilesControlled(x.id)).toBe(x.tiles);
+          expect(e.tilesControlled(x.id)).toBeGreaterThanOrEqual(e.tilesHeld(x.id));
           // The tail is on one of the winner's lines.
           expect(e.players.get(x.id)!.paths.some((q) => q.steps.some((s) => s.tile === x.tail))).toBe(true);
           expect(e.winner).toBe(x.id);
@@ -66,6 +67,7 @@ describe('winning a round', () => {
       expect(p.score).toBe(0);
       expect(p.patterns.length).toBe(1);
       expect(e.tilesHeld(p.id)).toBe(0);
+      expect(e.tilesControlled(p.id)).toBe(0);
     }
     expect(store.paths.size).toBe(0);
     expect(store.occupancy.size).toBe(0);
@@ -83,6 +85,65 @@ describe('winning a round', () => {
     }
     expect(steps).toBeGreaterThan(0);
   });
+
+  it('control counts the free tiles inside your circuits too, and the client is told', () => {
+    const knobs: Knobs = { ...DEFAULT_KNOBS, mode: 'normal', winFraction: 0 };
+    const e = new Engine(FIELD, knobs, mulberry32(5));
+    const bots = new Bots(e, mulberry32(6), 0.1);
+    const store = new Store();
+    store.handle({ t: 'welcome', you: 'viewer', token: '', field: SPEC, knobs, players: [], paths: [] });
+    store.handle({ t: 'events', ev: bots.add(2, 0) });
+    let now = 0;
+    let inside = 0;
+    for (let t = 0; t < 3000; t++) {
+      now += knobs.tickMs;
+      const ev: GameEvent[] = [];
+      bots.update(now, ev);
+      ev.push(...e.tick(knobs.tickMs));
+      store.handle({ t: 'events', ev });
+      if (!ev.some((x) => x.t === 'cover')) continue;
+      for (const p of e.players.values()) {
+        const c = e.tilesControlled(p.id);
+        // Never less than the tiles its lines are on, never more than the board.
+        expect(c).toBeGreaterThanOrEqual(e.tilesHeld(p.id));
+        expect(c).toBeLessThanOrEqual(FIELD.count);
+        inside = Math.max(inside, c - e.tilesHeld(p.id));
+        expect(store.players.get(p.id)!.cover).toBe(c);
+      }
+    }
+    // Circuits closed round free tiles at some point.
+    expect(inside).toBeGreaterThan(0);
+  });
+
+  // Seeds whose bot draws `258` (tiny loops and short lines that wall in
+  // gaps but enclose nothing: its lines stalled at ~84% of the board and it
+  // never won before the pockets counted), and one on `15`.
+  for (const seed of [3, 8, 10]) {
+    it(`a lone bot on a live-tuned board wins in the end — lines alone stall short of 90% (seed ${seed})`, () => {
+      const knobs: Knobs = { ...applyTuning(DEFAULT_KNOBS, BUILTIN_BRAINS.tuning).knobs, mode: 'normal' };
+      expect(knobs.winFraction).toBe(0.9);
+      const e = new Engine(FIELD, knobs, mulberry32(seed));
+      const bots = new Bots(e, mulberry32(seed + 100), undefined, botTuningOf(BUILTIN_BRAINS));
+      bots.add({ wanderer: 1 }, 0);
+      const id = [...e.players.keys()][0];
+      let now = 0;
+      let won = false;
+      let early = true;
+      for (let t = 0; t < (20 * 60_000) / knobs.tickMs && !won; t++) {
+        now += knobs.tickMs;
+        const ev: GameEvent[] = [];
+        bots.update(now, ev);
+        ev.push(...e.tick(knobs.tickMs));
+        // A lone line on an open board doesn't own the board: pockets are small, and only looked for past POCKET_FROM.
+        if (early && ev.some((x) => x.t === 'cover')) {
+          expect(e.tilesControlled(id)).toBeLessThan(FIELD.count / 2);
+          early = e.tilesHeld(id) < FIELD.count / 10;
+        }
+        won = ev.some((x) => x.t === 'win');
+      }
+      expect(won).toBe(true);
+    });
+  }
 
   it('winFraction 0 never wins', () => {
     const knobs: Knobs = { ...DEFAULT_KNOBS, mode: 'normal', winFraction: 0 };

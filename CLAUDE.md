@@ -227,9 +227,21 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   the infinite-line rule is one single strand through every tile (Delta's
   board has four), which the win celebration grows. Tests and benches name
   their own root (mostly Delta) and are unaffected.
-- **A round is won at `winFraction` (0.9) of the board** — tiles held
-  (`tilesHeld`), whatever `scoreTiles` says. `flushScores` checks it
-  (`checkWin`) after every public call: the first there gets a `win` event
+- **A round is won at `winFraction` (0.9) of the board controlled**: the
+  tiles your lines are on, plus the tiles inside your closed circuits that
+  no rival's line is on, plus — once anyone controls `POCKET_FROM` (half)
+  the board — every free *pocket* (tiles no line is on, joined across edges,
+  at most `POCKET_MAX` = 24 tiles) whose lined neighbours are all yours, as
+  territory in Go (`tilesControlled`) — the board as it looks. Lines alone
+  stall: ~80% for a lone bot at hex 4, and a `258` bot (tiny loops and short
+  lines, enclosing nothing) stalled at 84% at hex 3 with only 1–10-tile
+  gaps left — so a win on `tilesHeld`, or on circuits alone, never came.
+  Big open areas aren't pockets, or a lone player would own the empty board. `tick`
+  runs `updateCover` every `COVER_MS` (1 s): per player a stamped union of
+  line tiles and circuit interiors (`tilesEnclosed`, cached per closed path
+  while its steps are unchanged), a `cover` event when it changed
+  (`PlayerPublic.cover`, `ClientPlayer.cover`; the HUD's % is it), and the
+  win check: the first there gets a `win` event
   (`tail`: the last tile of their longest line), the engine holds still
   (`tick` only counts time, `tap` refuses, `Bots.update` skips) for
   `winCelebrateMs` (7 s), then `restart`s: every line gone with no wipes, every
@@ -241,6 +253,11 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   `flipOrder`'s order, accelerating (`WIN_SPREAD_MS`, 5 s; a tile `d` steps
   out at `sqrt(d / D)`), and after the `restart` it fades over the fresh
   board (`WIN_FADE_MS`). Keep `winCelebrateMs` ≥ `WIN_IN_MS + WIN_SPREAD_MS`.
+  `updateCover` is ~0.5 ms a pass at hex 5 (the pocket pass walks every free
+  tile, hence `POCKET_FROM`); a newly closed giant claim's
+  first fill is the spike (~25 ms at hex 5), and only because `warmEdges`
+  (startup, server and solo, ~1.4 s at hex 6) built `acrossEdge` up front —
+  lazily it was 60–75 ms.
   `winFraction: 0` turns winning off. `tests/win.test.ts`.
 - **One head, unlimited lines.** A player has one growing line at a time
   (`maxHeads: 1`) until they capture a pattern (then `headsWithCapture: 2`,

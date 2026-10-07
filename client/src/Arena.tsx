@@ -321,8 +321,9 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
   const meRow = me && rank > top.length ? board[rank - 1] : null;
   const active = me ? (me.patterns[me.active] ?? me.patterns[0]) : undefined;
   const heads = store.heads();
-  // Share of the board you control (your score is your tiles): 90% wins the round. Rounded down from 10 up, so 90 means won.
-  const share = me && store.knobs?.scoreTiles && store.field ? (100 * me.score) / store.field.count : null;
+  // Share of the board you control — your lines' tiles and the free tiles inside your circuits, what wins the
+  // round at 90%. Rounded down from 10 up, so 90 means won.
+  const share = me && store.field ? (100 * me.cover) / store.field.count : null;
   const controlled = share === null ? null : share < 10 ? share.toFixed(1) : String(Math.floor(share));
   // A player's swatch colour: theirs, or their team's (you blue, the rest red).
   const swatch = (color: string, mine: boolean): string =>
@@ -402,7 +403,7 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
         <div className="hud-score-row">
           <div className="hud-score">{me?.score ?? 0}</div>
           {controlled !== null && (
-            <span className="hud-pct" title="Share of the board your lines are on — cover 90% to win the round">
+            <span className="hud-pct" title="Share of the board you control: tiles your lines are on and inside your circuits. Control 90% to win the round">
               {controlled}%
             </span>
           )}

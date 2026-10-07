@@ -66,6 +66,8 @@ export interface PlayerPublic {
   readonly converted?: number;
   /** Head slots kept from earlier rules, counted like captured patterns (absent = 0). */
   readonly kept?: number;
+  /** Tiles they control — their lines' and the free tiles inside their circuits (absent = 0; `cover` events update it). */
+  readonly cover?: number;
 }
 
 // --- client → server ---------------------------------------------------------
@@ -226,7 +228,12 @@ export type GameEvent =
     }
   | { readonly t: 'score'; readonly id: string; readonly score: number; readonly combo: number }
   /**
-   * `id`'s lines are on `tiles` of the board's `of` tiles — past
+   * The tiles `id` controls changed: their lines' tiles and the tiles inside
+   * their circuits no rival's line is on (worked out once a second).
+   */
+  | { readonly t: 'cover'; readonly id: string; readonly tiles: number }
+  /**
+   * `id` controls `tiles` of the board's `of` tiles (see `cover`) — past
    * `winFraction`: the round is won. Play stops (taps are refused) until a
    * `restart`, `winCelebrateMs` later. `tail` is the tile at the end of the
    * winner's longest line, where the celebration starts.

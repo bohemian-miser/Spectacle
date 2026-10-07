@@ -331,6 +331,11 @@ function edgeNeighbours(field: Field): EdgeNeighbours {
   return e;
 }
 
+/** How many edges `acrossEdge` takes per tile: the most any tile has (a smaller tile's spare ones answer -1 or less). */
+export function edgeSlots(field: Field): number {
+  return edgeNeighbours(field).per;
+}
+
 /** The tile across edge `k` of tile `i`, or -1 on the board's edge. */
 export function acrossEdge(field: Field, i: number, k: number): number {
   const e = edgeNeighbours(field);
@@ -347,6 +352,17 @@ export function acrossEdge(field: Field, i: number, k: number): number {
     }
   }
   return e.nb[o + k];
+}
+
+/**
+ * Work out every tile's `acrossEdge` now. It is lazy, so the first fill
+ * through a region pays for it — a claim round a fifth of a hex-5 board
+ * took 60–75 ms in the engine's once-a-second `updateCover`, ~25 ms warm.
+ * ~1.4 s at hex level 6: the server and solo do it at startup, with
+ * `fieldOutline`.
+ */
+export function warmEdges(field: Field): void {
+  for (let i = 0; i < field.count; i++) acrossEdge(field, i, 0);
 }
 
 /** Which tiles a fill has already reached (or may not enter): `mark[tile] === stamp`. */
