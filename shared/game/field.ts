@@ -349,6 +349,17 @@ export function acrossEdge(field: Field, i: number, k: number): number {
   return e.nb[o + k];
 }
 
+/**
+ * Work out every tile's `acrossEdge` now. It is lazy, so the first fill
+ * through a region pays for it — a claim round a fifth of a hex-5 board
+ * took 60–75 ms in the engine's once-a-second `updateCover`, ~25 ms warm.
+ * ~1.4 s at hex level 6: the server and solo do it at startup, with
+ * `fieldOutline`.
+ */
+export function warmEdges(field: Field): void {
+  for (let i = 0; i < field.count; i++) acrossEdge(field, i, 0);
+}
+
 /** Which tiles a fill has already reached (or may not enter): `mark[tile] === stamp`. */
 const fillMarks = new WeakMap<Field, { mark: Uint32Array; stamp: number }>();
 

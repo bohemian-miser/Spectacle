@@ -30,7 +30,9 @@ export interface ClientPath {
   table?: ChordTable;
 }
 
-export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active' | 'converted' | 'kept'> {
+export interface ClientPlayer extends Omit<PlayerPublic, 'score' | 'combo' | 'rule' | 'patterns' | 'active' | 'converted' | 'kept' | 'cover'> {
+  /** Tiles they control: their lines' and the free tiles inside their circuits (`cover` events, once a second). */
+  cover: number;
   rule: PlayerPublic['rule'];
   /** Normal mode: kinds of rival line converted (a head each). */
   converted: number;
@@ -744,6 +746,11 @@ export class Store {
         this.geometryVersion++;
         return;
       }
+      case 'cover': {
+        const p = this.players.get(ev.id);
+        if (p) p.cover = ev.tiles;
+        return;
+      }
       case 'score': {
         const p = this.players.get(ev.id);
         if (p) {
@@ -772,6 +779,6 @@ export class Store {
 }
 
 function clientPlayer(p: PlayerPublic): ClientPlayer {
-  const { converted, kept, ...rest } = p;
-  return { ...rest, patterns: [...p.patterns], converted: converted ?? 0, kept: kept ?? 0 };
+  const { converted, kept, cover, ...rest } = p;
+  return { ...rest, patterns: [...p.patterns], converted: converted ?? 0, kept: kept ?? 0, cover: cover ?? 0 };
 }

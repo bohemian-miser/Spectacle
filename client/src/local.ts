@@ -9,7 +9,7 @@
 
 import { BOT_KINDS, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, parseBotMix, prepareBots, type BotMix, type WatchdogOptions } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
-import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../../shared/game/field';
+import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, warmEdges, type FieldSpec } from '../../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
 import type { ClientMessage, GameEvent, RoomBots, ServerMessage } from '../../shared/game/protocol';
 import { validateRule } from '../../shared/game/rule';
@@ -106,6 +106,8 @@ export class LocalConnection implements GameConnection {
     const field = buildField(spec);
     // Edge-to-edge claims need the outline; build it with the field, not mid-game.
     fieldOutline(field);
+    // …and the edge table every circuit's interior fill walks (the engine's `updateCover`).
+    warmEdges(field);
     const rng = mulberry32((Date.now() ^ (Math.random() * 0xffffffff)) >>> 0);
     this.engine = new Engine(field, this.knobs, rng);
     prepareBots(field, this.opts.bots);

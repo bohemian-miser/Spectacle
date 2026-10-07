@@ -80,7 +80,7 @@ import { extname, join, normalize, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { Engine } from '../shared/game/engine';
-import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type Field, type FieldSpec } from '../shared/game/field';
+import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, warmEdges, type Field, type FieldSpec } from '../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, GAME_MODES, isGameMode, knobsChanged, knobsForMode, knobsFromEnv, retune, type GameMode, type Knobs } from '../shared/game/knobs';
 import type { ClientMessage, GameEvent, LevelSummary, RoomBots, RoomSummary, ServerMessage } from '../shared/game/protocol';
 import { describeRule, fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
@@ -177,6 +177,8 @@ for (const level of fieldLevelsFromEnv(spec.level)) {
   const f = buildField({ ...spec, level });
   // The outline is only needed when a line runs edge to edge; build it now, not mid-tick.
   fieldOutline(f);
+  // …and the edge table every circuit's interior fill walks (the engine's `updateCover`).
+  warmEdges(f);
   fields.set(level, f);
   note('info', `field ${spec.family} level ${level} root ${spec.rootTile}: ${f.count} tiles in ${Date.now() - t0} ms`);
 }

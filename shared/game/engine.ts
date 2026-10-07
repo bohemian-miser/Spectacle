@@ -63,7 +63,7 @@
 
 import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
-import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesInBox, type Box, type Field } from './field';
+import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesEnclosed, tilesInBox, type Box, type Field } from './field';
 import { headLimit, knobsChanged, stepIntervalMs, type Knobs } from './knobs';
 import { circuitBonus, planRegrow } from './regrow';
 import { packStep } from './wire';
@@ -220,6 +220,9 @@ function sameSeg(a: Segment, b: Segment): boolean {
   return (samePt(a[0], b[0]) && samePt(a[1], b[1])) || (samePt(a[0], b[1]) && samePt(a[1], b[0]));
 }
 
+/** How often what each player controls is worked out (`updateCover`), engine ms. */
+export const COVER_MS = 1000;
+
 export class Engine {
   readonly players = new Map<string, Player>();
   private readonly pathsById = new Map<number, Path>();
@@ -241,6 +244,15 @@ export class Engine {
   private colorIndex = 0;
   /** The round's winner (`winFraction`) and when they won: play holds still until the restart. */
   private won: { id: string; at: number } | null = null;
+  /** Engine time of the next `updateCover` (once every `COVER_MS`). */
+  private coverAt = 0;
+  /** Each player's tiles controlled (`updateCover`), as last sent. */
+  private readonly covered = new Map<string, number>();
+  /** A closed line's interior (`tilesEnclosed`), for as long as its steps stay as they were. */
+  private readonly interiors = new WeakMap<Path, { n: number; first: WalkStep; tiles: readonly number[] }>();
+  /** Scratch marks for `updateCover`'s union, one stamp per player per pass. */
+  private coverMarks: Uint32Array | null = null;
+  private coverStamp = 0;
   private readonly pickJunction: (options: readonly import('./strand').ChordEnd[]) => import('./strand').ChordEnd;
 
   constructor(
@@ -393,6 +405,8 @@ export class Engine {
     const out: { -readonly [K in keyof PlayerPublic]: PlayerPublic[K] } = pub;
     if (p.converted.length > 0) out.converted = p.converted.length;
     if (p.keptHeads > 0) out.kept = p.keptHeads;
+    const cover = this.covered.get(p.id);
+    if (cover) out.cover = cover;
     return out;
   }
 
@@ -751,6 +765,10 @@ export class Engine {
       this.settle(p, ev);
     }
     this.flushScores(ev);
+    if (this.now >= this.coverAt) {
+      this.coverAt = this.now + COVER_MS;
+      this.updateCover(ev);
+    }
     return ev;
   }
 
@@ -1461,7 +1479,6 @@ export class Engine {
       if (p) ev.push({ t: 'score', id, score: p.score, combo: p.combo });
     }
     this.scoreDirty.clear();
-    this.checkWin(ev);
   }
 
   /** The round's winner while it is being celebrated (null in play). */
@@ -1469,31 +1486,72 @@ export class Engine {
     return this.won?.id ?? null;
   }
 
+  /** Tiles `id` controls (`updateCover`): their lines' tiles and the free tiles inside their circuits. */
+  tilesControlled(id: string): number {
+    return this.covered.get(id) ?? 0;
+  }
+
   /**
-   * Does anyone's lines cover `winFraction` of the board? The first to (the
-   * most tiles, should two get there in one call) wins the round: a `win`
-   * event, and play stops until `restart`.
+   * What each player controls — the tiles their lines are on, and the tiles
+   * inside their closed circuits that no rival's line is on: the board as it
+   * looks, their colour on it — sent as `cover` when it changed. Lines alone
+   * stall short of a whole board (a lone bot's at ~80%: the gaps between its
+   * strands are walled in, not drawn on), so this is what wins the round:
+   * the first to control `winFraction` of the board (the most, should two
+   * get there at once) gets a `win`, and play stops until `restart`. Once
+   * every `COVER_MS`; a circuit's interior is worked out once and kept.
    */
-  private checkWin(ev: GameEvent[]): void {
+  private updateCover(ev: GameEvent[]): void {
+    const n = this.field.count;
+    const marks = (this.coverMarks ??= new Uint32Array(n));
     const f = this.knobs.winFraction;
-    if (this.won || !(f > 0)) return;
-    const need = Math.ceil(f * this.field.count);
+    const need = f > 0 ? Math.ceil(f * n) : Infinity;
     let best: Player | null = null;
     let most = 0;
     for (const p of this.players.values()) {
-      const n = this.tilesHeld(p.id);
-      if (n >= need && n > most) {
+      if (this.coverStamp >= 0xfffffffe) (marks.fill(0), (this.coverStamp = 0));
+      const stamp = ++this.coverStamp;
+      let count = 0;
+      for (const q of p.paths) {
+        for (const st of q.steps) {
+          if (marks[st.tile] === stamp) continue;
+          marks[st.tile] = stamp;
+          count++;
+        }
+      }
+      for (const q of p.paths) {
+        if (q.status !== 'closed') continue;
+        for (const t of this.interiorOf(q)) {
+          if (marks[t] === stamp || this.rivalOn(t, p.id)) continue;
+          marks[t] = stamp;
+          count++;
+        }
+      }
+      if (this.covered.get(p.id) !== count) {
+        this.covered.set(p.id, count);
+        ev.push({ t: 'cover', id: p.id, tiles: count });
+      }
+      if (count >= need && count > most) {
         best = p;
-        most = n;
+        most = count;
       }
     }
-    if (!best) return;
+    if (!best || this.won) return;
     this.won = { id: best.id, at: this.now };
     // The celebration starts at the loose end of the winner's longest line.
     let longest: Path | null = null;
     for (const q of best.paths) if (!longest || q.steps.length > longest.steps.length) longest = q;
     const tail = longest ? longest.steps[longest.steps.length - 1].tile : 0;
-    ev.push({ t: 'win', id: best.id, tiles: most, of: this.field.count, tail });
+    ev.push({ t: 'win', id: best.id, tiles: most, of: n, tail });
+  }
+
+  /** The tiles inside a closed line (cached while its steps are unchanged). */
+  private interiorOf(q: Path): readonly number[] {
+    const hit = this.interiors.get(q);
+    if (hit && hit.n === q.steps.length && hit.first === q.steps[0]) return hit.tiles;
+    const tiles = tilesEnclosed(this.field, q.steps, q.region).tiles;
+    this.interiors.set(q, { n: q.steps.length, first: q.steps[0], tiles });
+    return tiles;
   }
 
   /**
@@ -1503,6 +1561,8 @@ export class Engine {
    */
   private restart(ev: GameEvent[]): void {
     this.won = null;
+    this.covered.clear();
+    this.coverAt = this.now + COVER_MS;
     this.pathsById.clear();
     this.occupancy.clear();
     this.heldTiles.clear();
