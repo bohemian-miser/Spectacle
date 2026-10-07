@@ -73,6 +73,11 @@ export const TUNING: Tuning = {
   // --- rooms -----------------------------------------------------------------
   maxPlayers: 200,
   maxNameLength: 16,
+
+  // --- the end of a round ----------------------------------------------------
+  /** Cover this fraction of the board and you win: a celebration, then a fresh board. */
+  winFraction: 0.9,
+  winCelebrateMs: 7000,
 };
 
 /**

@@ -32,7 +32,10 @@ export interface FieldSpec {
 export const DEFAULT_FIELD_SPEC: FieldSpec = Object.freeze({
   family: 'hex' as TileFamilyId,
   level: 6,
-  rootTile: 'Delta' as TileTypeId,
+  // Rooted at Psi, the infinite-line rule (hex `128`) draws one single line
+  // through every tile — the end-of-round celebration grows it (Delta's
+  // board splits it into four).
+  rootTile: 'Psi' as TileTypeId,
 });
 
 export interface Box {

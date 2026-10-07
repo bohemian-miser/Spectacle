@@ -161,6 +161,8 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
   const tap = (sx: number, sy: number): void => {
     const r = rendererRef.current;
     if (!r || !store.field) return;
+    // A won round holds still until the fresh board is in.
+    if (store.win && store.win.restartAt === undefined) return;
     const at = r.pick(sx, sy);
     if (!at) {
       store.toast('Nothing there', 'bad');
@@ -185,7 +187,7 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
   const paintFlush = (): void => {
     const g = gesture.current;
     const now = performance.now();
-    if (!g.target || now - g.lastSent < PAINT_TAP_MS || !store.hasFreeHead()) return;
+    if (!g.target || now - g.lastSent < PAINT_TAP_MS || !store.hasFreeHead() || (store.win && store.win.restartAt === undefined)) return;
     g.lastSent = now;
     store.quietRefusalsUntil = Date.now() + 1500;
     conn.send({ t: 'tap', ...g.target });
@@ -470,6 +472,15 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
           <button type="button" className="btn" onClick={hideHelp}>
             Got it
           </button>
+        </div>
+      )}
+
+      {store.win && store.win.restartAt === undefined && (
+        <div className="win-banner" role="status">
+          <div className="win-title">{store.win.id === store.you ? 'You win!' : `${store.win.name} wins!`}</div>
+          <div className="win-sub">
+            {Math.round((100 * store.win.tiles) / store.win.of)}% of the board — a fresh one is coming
+          </div>
         </div>
       )}
 
