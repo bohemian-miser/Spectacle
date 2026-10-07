@@ -171,6 +171,17 @@ export interface Knobs {
   regrowDiscount: number;
   maxPlayers: number;
   maxNameLength: number;
+
+  // --- the end of a round ----------------------------------------------------
+  /**
+   * A player whose lines are on this fraction of the board's tiles wins the
+   * round (0 = no winning: the board just plays on). Play stops, everyone
+   * sees the win, and after `winCelebrateMs` the board starts again empty —
+   * same players, same rules, scores at 0.
+   */
+  winFraction: number;
+  /** How long the board holds still after a win before it starts again, ms. */
+  winCelebrateMs: number;
 }
 
 export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
@@ -221,6 +232,8 @@ export const DEFAULT_KNOBS: Readonly<Knobs> = Object.freeze({
   regrowDiscount: 0.99,
   maxPlayers: 200,
   maxNameLength: 16,
+  winFraction: 0.9,
+  winCelebrateMs: 7000,
 });
 
 /** Top speed (tiles per second) on a field of `fieldTiles` tiles: `maxSpeed`, scaled by log field size. */

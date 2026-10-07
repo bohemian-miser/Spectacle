@@ -173,6 +173,24 @@ export function flow(from: readonly Pt[], to: readonly Pt[], cap: readonly numbe
   return out;
 }
 
+/**
+ * A won round, being celebrated (the `win` event) — `performance.now()` time.
+ * The renderer plays it: the winner's pattern on every tile, then the
+ * infinite line flipping the board from `tail`; after the `restart`
+ * (`restartAt`) it fades away over the fresh board, and the renderer drops it.
+ */
+export interface Win {
+  readonly id: string;
+  readonly name: string;
+  readonly color: string;
+  readonly rule: PlayerRule;
+  readonly tail: number;
+  readonly tiles: number;
+  readonly of: number;
+  readonly born: number;
+  restartAt?: number;
+}
+
 export type Listener = () => void;
 
 export class Store {
@@ -200,6 +218,8 @@ export class Store {
   dying: Dying[] = [];
   bursts: Burst[] = [];
   coalesce: Coalesce[] = [];
+  /** The round just won, while it is celebrated (null in play). */
+  win: Win | null = null;
   /** The arena's camera when it was last left for the rule screen (`fieldKey` of its field). */
   lastCamera: { field: string; camera: { x: number; y: number; scale: number } } | null = null;
   /** Within one batch of events: tiles of lines wiped without a cutter, per owner… */
@@ -353,6 +373,7 @@ export class Store {
     this.occupancy.clear();
     this.dying = [];
     this.bursts = [];
+    this.win = null;
     this.you = '';
     this.room = '';
     this.roomBots = null;
@@ -398,6 +419,7 @@ export class Store {
         this.dying = [];
         this.bursts = [];
         this.coalesce = [];
+        this.win = null;
         // A new session (or a resume) starts from the whole field, not a view kept from before.
         if (msg.you !== this.you) this.lastCamera = null;
         this.you = msg.you;
@@ -506,6 +528,27 @@ export class Store {
         this.players.delete(ev.id);
         this.touchAll();
         return;
+      case 'win': {
+        const p = this.players.get(ev.id);
+        if (!p) return;
+        this.win = { id: ev.id, name: p.name, color: p.color, rule: p.rule, tail: ev.tail, tiles: ev.tiles, of: ev.of, born: performance.now() };
+        this.toast(ev.id === this.you ? 'You win the round!' : `${p.name} wins the round`, ev.id === this.you ? 'good' : 'info');
+        return;
+      }
+      case 'restart': {
+        for (const path of this.paths.values()) this.unoccupy(path);
+        this.paths.clear();
+        this.occupancy.clear();
+        this.dying = [];
+        this.bursts = [];
+        this.coalesce = [];
+        this.players.clear();
+        for (const p of ev.players) this.players.set(p.id, clientPlayer(p));
+        if (this.win) this.win.restartAt = performance.now();
+        this.geometryVersion++;
+        this.touchAll();
+        return;
+      }
       case 'rule': {
         const p = this.players.get(ev.id);
         if (p) {

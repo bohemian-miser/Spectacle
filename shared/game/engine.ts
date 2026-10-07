@@ -239,6 +239,8 @@ export class Engine {
   /** Engine clock: the sum of every `tick` dt, ms. */
   private now = 0;
   private colorIndex = 0;
+  /** The round's winner (`winFraction`) and when they won: play holds still until the restart. */
+  private won: { id: string; at: number } | null = null;
   private readonly pickJunction: (options: readonly import('./strand').ChordEnd[]) => import('./strand').ChordEnd;
 
   constructor(
@@ -473,6 +475,7 @@ export class Engine {
   // --- taps ----------------------------------------------------------------
 
   tap(id: string, tile: number, at: Pt, ev: GameEvent[] = []): { result: TapResult; events: GameEvent[] } {
+    if (this.won) return { result: { ok: false, reason: 'the round is over' }, events: ev };
     const out = this.tapOnce(id, tile, at, ev);
     this.flushScores(out.events);
     return out;
@@ -704,6 +707,11 @@ export class Engine {
   tick(dtMs: number): GameEvent[] {
     const ev: GameEvent[] = [];
     this.now += dtMs;
+    // A won round holds still while everyone sees it, then starts again.
+    if (this.won) {
+      if (this.now - this.won.at >= this.knobs.winCelebrateMs) this.restart(ev);
+      return ev;
+    }
     const shared = this.knobs.flipPieceHeads > 0;
     for (const p of this.players.values()) {
       for (const path of [...p.paths]) {
@@ -1446,13 +1454,75 @@ export class Engine {
     return this.heldTiles.get(id)?.size ?? 0;
   }
 
-  /** A `score` event for everyone whose tile count changed during this call. */
+  /** A `score` event for everyone whose tile count changed during this call — and a `win`, once someone covers enough. */
   private flushScores(ev: GameEvent[]): void {
     for (const id of this.scoreDirty) {
       const p = this.players.get(id);
       if (p) ev.push({ t: 'score', id, score: p.score, combo: p.combo });
     }
     this.scoreDirty.clear();
+    this.checkWin(ev);
+  }
+
+  /** The round's winner while it is being celebrated (null in play). */
+  get winner(): string | null {
+    return this.won?.id ?? null;
+  }
+
+  /**
+   * Does anyone's lines cover `winFraction` of the board? The first to (the
+   * most tiles, should two get there in one call) wins the round: a `win`
+   * event, and play stops until `restart`.
+   */
+  private checkWin(ev: GameEvent[]): void {
+    const f = this.knobs.winFraction;
+    if (this.won || !(f > 0)) return;
+    const need = Math.ceil(f * this.field.count);
+    let best: Player | null = null;
+    let most = 0;
+    for (const p of this.players.values()) {
+      const n = this.tilesHeld(p.id);
+      if (n >= need && n > most) {
+        best = p;
+        most = n;
+      }
+    }
+    if (!best) return;
+    this.won = { id: best.id, at: this.now };
+    // The celebration starts at the loose end of the winner's longest line.
+    let longest: Path | null = null;
+    for (const q of best.paths) if (!longest || q.steps.length > longest.steps.length) longest = q;
+    const tail = longest ? longest.steps[longest.steps.length - 1].tile : 0;
+    ev.push({ t: 'win', id: best.id, tiles: most, of: this.field.count, tail });
+  }
+
+  /**
+   * A new round on the same board: every line goes (no events — the
+   * `restart` says it), every player keeps their own rule alone, with no
+   * score, captures, kept heads or cooldown.
+   */
+  private restart(ev: GameEvent[]): void {
+    this.won = null;
+    this.pathsById.clear();
+    this.occupancy.clear();
+    this.heldTiles.clear();
+    this.scoreDirty.clear();
+    for (const p of this.players.values()) {
+      p.paths.length = 0;
+      p.unsettled.length = 0;
+      p.burning.clear();
+      p.score = 0;
+      p.combo = this.knobs.comboStart;
+      p.respawnAt = 0;
+      p.pieceProgress = 0;
+      p.pieceCursor = 0;
+      p.patterns.length = 1;
+      p.active = 0;
+      p.converted.length = 0;
+      p.keptHeads = 0;
+      p.tileChanges++;
+    }
+    ev.push({ t: 'restart', players: this.publicPlayers() });
   }
 
   /** Is any line of someone other than `id` on `tile`? */

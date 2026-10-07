@@ -9,7 +9,7 @@
 
 import { BOT_KINDS, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, parseBotMix, prepareBots, type BotMix, type WatchdogOptions } from '../../shared/game/bots';
 import { Engine } from '../../shared/game/engine';
-import { buildField, fieldOutline, type FieldSpec } from '../../shared/game/field';
+import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type FieldSpec } from '../../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, knobsForMode, type GameMode, type Knobs } from '../../shared/game/knobs';
 import type { ClientMessage, GameEvent, RoomBots, ServerMessage } from '../../shared/game/protocol';
 import { validateRule } from '../../shared/game/rule';
@@ -102,7 +102,7 @@ export class LocalConnection implements GameConnection {
   }
 
   open(onOpen: () => void, _onClose: (code: number) => void): void {
-    const spec: FieldSpec = { family: this.opts.family, level: this.opts.level, rootTile: 'Delta' };
+    const spec: FieldSpec = { family: this.opts.family, level: this.opts.level, rootTile: DEFAULT_FIELD_SPEC.rootTile };
     const field = buildField(spec);
     // Edge-to-edge claims need the outline; build it with the field, not mid-game.
     fieldOutline(field);
