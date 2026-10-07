@@ -15,6 +15,9 @@ COPY --from=build /app/dist ./dist
 COPY shared ./shared
 COPY server ./server
 COPY tsconfig.json ./
+# /data: where a volume can keep STATS_FILE across image updates (owned by node,
+# so a new named volume mounted there is writable).
+RUN mkdir -p /data && chown node:node /data
 USER node
 EXPOSE 8787
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s \

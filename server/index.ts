@@ -83,7 +83,7 @@ import { Engine } from '../shared/game/engine';
 import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, type Field, type FieldSpec } from '../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, GAME_MODES, isGameMode, knobsChanged, knobsForMode, knobsFromEnv, retune, type GameMode, type Knobs } from '../shared/game/knobs';
 import type { ClientMessage, GameEvent, LevelSummary, RoomBots, RoomSummary, ServerMessage } from '../shared/game/protocol';
-import { fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
+import { describeRule, fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import { packEvents } from '../shared/game/wire';
@@ -510,6 +510,9 @@ class Room {
    * new bot brains and their `LIVE_MIX` included.
    */
   botChoice: BotMix | null = null;
+  /** Rounds finished in this room (a win and its restart), and the time played in this one (ticked time only). */
+  rounds = 0;
+  roundMs = 0;
 
   constructor(
     readonly id: string,
@@ -568,6 +571,44 @@ class Room {
     return { id: this.id, mode: this.mode, level: this.level, players: this.humans(), capacity: ROOM_SIZE };
   }
 
+  /** What the pattern stats and the log need from a batch of events: circuits, a won round, its restart. */
+  private recordStats(ev: readonly GameEvent[]): void {
+    for (const e of ev) {
+      if (e.t === 'circuit') patternStats.circuit(e.owner);
+      else if (e.t === 'win') {
+        patternStats.win(e.id);
+        this.logWin(e);
+      } else if (e.t === 'restart') {
+        logStints(patternStats.endRound(Date.now(), e.players.map((p) => p.id)));
+        this.rounds++;
+        this.roundMs = 0;
+      }
+    }
+  }
+
+  /** One JSON line per won round: what won it and how fast. No names or ids. */
+  private logWin(e: Extract<GameEvent, { t: 'win' }>): void {
+    const winner = this.engine.players.get(e.id);
+    const players = [...this.engine.players.values()].filter((p) => p.bot || this.clients.has(p.id));
+    console.log(JSON.stringify({
+      message: 'win',
+      win: {
+        mode: this.mode,
+        level: this.level,
+        round: this.rounds + 1,
+        rule: winner ? describeRule(winner.rule) : null,
+        bot: winner?.bot ?? false,
+        kind: winner?.bot ? (this.bots.list().find((b) => b.id === e.id)?.kind ?? null) : null,
+        tiles: e.tiles,
+        boardTiles: e.of,
+        coverage: Math.round((e.tiles / e.of) * 1e6) / 1e6,
+        roundMs: Math.round(this.roundMs),
+        humans: players.filter((p) => !p.bot).length,
+        bots: players.filter((p) => p.bot).length,
+      },
+    }));
+  }
+
   tick(now: number, dt: number): void {
     // Nobody watching: the board holds still (bots included) and costs nothing.
     if (this.clients.size === 0) {
@@ -575,13 +616,16 @@ class Room {
       if (this.pending.length === 0) return;
     } else this.emptySince = 0;
     const ev = this.clients.size > 0 ? this.engine.tick(dt) : [];
-    if (this.clients.size > 0) this.bots.update(now, ev);
+    if (this.clients.size > 0) {
+      this.bots.update(now, ev);
+      this.roundMs += dt;
+    }
     if (this.pending.length) {
       ev.unshift(...this.pending);
       this.pending = [];
     }
     if (ev.length === 0) return;
-    for (const e of ev) if (e.t === 'circuit') patternStats.circuit(e.owner);
+    this.recordStats(ev);
     // Clients that joined with `packed` get steps as `begin`/`grow` (a
     // fraction of the bytes); older ones the plain events. Each is built once.
     let plain: string | null = null;
@@ -1037,7 +1081,14 @@ setInterval(() => {
 setInterval(() => guard('pattern stats', () => {
   const sampled = [...rooms.values()]
     .filter((r) => r.clients.size > 0)
-    .map((r) => ({ mode: r.mode, players: [...r.engine.players.values()].filter((p) => p.bot || r.clients.has(p.id)) }));
+    .map((r) => ({
+      mode: r.mode,
+      level: r.level,
+      boardTiles: r.field.count,
+      players: [...r.engine.players.values()]
+        .filter((p) => p.bot || r.clients.has(p.id))
+        .map((p) => ({ id: p.id, bot: p.bot, rule: p.rule, score: p.score, tiles: r.engine.tilesHeld(p.id) })),
+    }));
   logStints(patternStats.sample(Date.now(), sampled));
 }), 1000);
 if (STATS_FILE) setInterval(() => guard('save stats', saveStats), 60_000);

@@ -79,9 +79,10 @@ server/status-page.ts  /status (HTML, polls /status.json): rooms, players,
 server/loop-stats.ts  `WindowMax`: the worst of a value over a sliding
                   minute (5 s buckets), for /status.
 server/pattern-stats.ts  Which rules people play and how they score: a
-                  stint per (player, rule), sampled once a second; rows per
-                  (mode, rule, bot). /patterns(.json), a JSON
-                  `stint` line per finished stint on stdout, STATS_FILE.
+                  stint per (player, rule), sampled once a second, with its
+                  peak board coverage; rows per (mode, rule, bot).
+                  /patterns(.json), a JSON `stint` line per finished stint
+                  on stdout (→ BigQuery, docs/pattern-stats.md), STATS_FILE.
 server/feedback.ts  POST /feedback: parseFeedback (whitelisted, capped
                   context), FeedbackLimiter, the store under FEEDBACK_URL
                   (gs:// create-only, or a dir: new/<id>.json → triaged/),
@@ -168,7 +169,8 @@ scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
                   metric, /health, recent joins/leaves, via gcloud's token
                   over REST. `--url` reads one server's /status.json instead.
 deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
-                  (create-vm.sh, startup.sh, compose with Caddy + Watchtower).
+                  (create-vm.sh, startup.sh, compose with Caddy + Watchtower),
+                  stats-sink.sh (stint log lines → BigQuery).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
                   solo). The three deploys, publish.yml (GHCR image; the VM's
                   Watchtower pulls it), pages.yml (solo build) and
@@ -626,10 +628,20 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   page because it's bigger and built on demand, not part of `/status`'s
   cheap snapshot. On Cloud Run the durable record is the log — one JSON line
   `{"message":"stint","stint":{…}}` per finished stint (rule in
-  `describeRule` form, mode, bot, ms, final and peak score, circuits) — since
+  `describeRule` form, mode, level, bot, ms, final and peak score, circuits,
+  `peakCoverage` = most tiles held at once ÷ the board's tiles, `won`, and
+  `end`: rule/left/round/shutdown) and one `{"message":"win","win":{…}}`
+  per won round (winner's rule, bot kind, coverage, `roundMs`, humans and
+  bots at the board). A round's `restart` closes the room's stints
+  (`PatternStats.endRound`), so a stint never spans rounds — since
   memory and disk go with the instance, and with several instances
   `/patterns` shows only the one that answered; the log covers them all.
-  `STATS_FILE` keeps the aggregate on the VM. Only players at the board are
+  A log sink (`deploy/gcp/stats-sink.sh`, run by setup-ci.sh) keeps those
+  lines in BigQuery (`spectacle_stats`); docs/pattern-stats.md has the
+  queries (uses per rule, coverage, bots' share of the time). No code path
+  writes there — keep it that way, the servers need no new permissions.
+  `STATS_FILE` keeps the aggregate on the VM (compose points it at the
+  `spectacle_data` volume on `/data`, so Watchtower's swaps keep it). Only players at the board are
   sampled, so a reconnect splits a stint in two.
 - **Every line is a stretch of one strand of its rule.** Lines only ever grow
   by `stepForward`, and joins, splits and folds keep unbroken stretches, and
