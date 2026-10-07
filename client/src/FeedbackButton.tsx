@@ -13,7 +13,8 @@ import { BACKLOG_URL, feedbackContext, feedbackUrl, issueSearchUrl, ISSUES_URL, 
 
 type Sending = { t: 'idle' } | { t: 'sending' } | { t: 'sent'; id: string } | { t: 'failed'; error: string };
 
-export function FeedbackButton({ game }: { game: () => GameContext }): JSX.Element {
+/** `icon`: a bare speech bubble for the arena HUD's icon row; otherwise a labelled button (the lobby). */
+export function FeedbackButton({ game, icon = false }: { game: () => GameContext; icon?: boolean }): JSX.Element {
   const [open, setOpen] = useState(false);
   const [message, setMessage] = useState('');
   const [contact, setContact] = useState('');
@@ -49,9 +50,23 @@ export function FeedbackButton({ game }: { game: () => GameContext }): JSX.Eleme
 
   return (
     <>
-      <button type="button" className="btn" aria-label="Feedback" title="Report a bug or suggest something" onClick={show}>
-        Feedback
-      </button>
+      {icon ? (
+        <button type="button" className="hud-icon" aria-label="Feedback" title="Feedback: report a bug or suggest something" onClick={show}>
+          <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true">
+            <path
+              d="M3 2.5h10A1.5 1.5 0 0 1 14.5 4v6A1.5 1.5 0 0 1 13 11.5H7.5L4.5 14v-2.5H3A1.5 1.5 0 0 1 1.5 10V4A1.5 1.5 0 0 1 3 2.5z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.4"
+              strokeLinejoin="round"
+            />
+          </svg>
+        </button>
+      ) : (
+        <button type="button" className="btn" aria-label="Feedback" title="Report a bug or suggest something" onClick={show}>
+          Feedback
+        </button>
+      )}
       {/* Portalled to <body>, as Settings' and Bots': the HUD's backdrop-filter traps a fixed child inside the panel. */}
       {open &&
         createPortal(
