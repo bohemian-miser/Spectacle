@@ -225,6 +225,15 @@ export type GameEvent =
       readonly region?: readonly Pt[];
     }
   | { readonly t: 'score'; readonly id: string; readonly score: number; readonly combo: number }
+  /**
+   * `id`'s lines are on `tiles` of the board's `of` tiles — past
+   * `winFraction`: the round is won. Play stops (taps are refused) until a
+   * `restart`, `winCelebrateMs` later. `tail` is the tile at the end of the
+   * winner's longest line, where the celebration starts.
+   */
+  | { readonly t: 'win'; readonly id: string; readonly tiles: number; readonly of: number; readonly tail: number }
+  /** A new round: every line is gone, every score 0, every player back to their own rule alone. */
+  | { readonly t: 'restart'; readonly players: readonly PlayerPublic[] }
   /** Your tap was refused, with a reason to show. */
   | { readonly t: 'refused'; readonly reason: string }
   /** The room's bots changed: what plays now, and who changed it (a player id; absent for the server, e.g. new bot brains). */

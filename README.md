@@ -43,6 +43,7 @@ line and you both die.
 | ⚔️ **Cut and be cut** | A line that grows into a tile a rival's line is on dies, and so does theirs, and their tiles are no longer anyone's. You can't start on a rival's line; you have to grow into it. |
 | 🏴 **Capture** | Close a circuit round a rival's line and it's yours. In **Normal** mode it turns into your own pattern on their tiles; in **Conquest (beta)** you take their pattern itself, a new way to draw. Either way, each new kind of line you capture is another head growing at once. |
 | 🔍 **Discover** | Somewhere in the rule space are rules that draw one endless line. |
+| 🏆 **Win** | Cover 90% of the board and the round is yours: your pattern spreads over every tile, the one endless line flips the board from your line's loose end, and a fresh board starts. |
 
 ## Screenshots
 
@@ -349,7 +350,7 @@ Server environment:
 | `FIELD_FAMILY` | `hex` | `hex` or `spectre` |
 | `FIELD_LEVEL` | `6` | substitution level: hex 5 ≈ 31k tiles, 6 ≈ 242k; spectre 6 ≈ 273k. The lobby's default size |
 | `FIELD_LEVELS` | `3` up to `FIELD_LEVEL` | the sizes players may pick online, e.g. `3+4+5+6`; each is built at startup and gets rooms of its own (`FIELD_LEVEL` is always offered) |
-| `FIELD_ROOT` | `Delta` | root tile of the patch |
+| `FIELD_ROOT` | `Psi` | root tile of the patch (rooted at Psi, the endless-line rule is one line through every tile) |
 | `BOTS` | `1` | bots per room: a number (that many wanderers) or kinds, e.g. `bridge+hunter:2+farmer` — see "Bots" below |
 | `BOTS_NORMAL`, `BOTS_CONQUEST` | `BOTS` | the same, for one game mode's rooms |
 | `BOT_ROTATE_MS` | `300000` | how long a rotator keeps a rule before starting over |

@@ -61,7 +61,7 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
                   (`applyTuning`, `retune`, `ROOM_FIXED_KNOBS`).
   protocol.ts     Wire types. Server → client: hello, welcome(+resume token),
                   events (step/wipe/circuit/score/status/join/leave/rule/
-                  capture/convert/take/swap/active/split/refused). Client → server adds
+                  capture/convert/take/swap/active/split/refused/win/restart). Client → server adds
                   `pattern` and `swap`.
 server/index.ts   Node + ws. Rooms per game mode (`Room`: engine + bots +
                   clients), one 50 ms loop ticking them all, batched broadcast
@@ -102,6 +102,8 @@ client/src/       Vite + React.
   heartbeat.ts    Online liveness: ping, "not responding", give up (see
                   "Client fallback").
   store.ts        Applies events into plain mutable state; version counters.
+  celebration.ts  A won round's flip order (pure): the infinite line from the
+                  winner's tail, a chord a step both ways, `sqrt` timing.
   Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
                   numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
                   cropped to ~97% tiles, arrows, edge-number toggle).
@@ -219,6 +221,25 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   selection `15`.
 - **Server is authoritative**; clients only draw events. Field is
   deterministic from (family, level, rootTile) so only the spec travels.
+  The board is rooted at **Psi** (`DEFAULT_FIELD_SPEC`, solo too): there
+  the infinite-line rule is one single strand through every tile (Delta's
+  board has four), which the win celebration grows. Tests and benches name
+  their own root (mostly Delta) and are unaffected.
+- **A round is won at `winFraction` (0.9) of the board** — tiles held
+  (`tilesHeld`), whatever `scoreTiles` says. `flushScores` checks it
+  (`checkWin`) after every public call: the first there gets a `win` event
+  (`tail`: the last tile of their longest line), the engine holds still
+  (`tick` only counts time, `tap` refuses, `Bots.update` skips) for
+  `winCelebrateMs` (7 s), then `restart`s: every line gone with no wipes, every
+  score 0, every player keeps only their own rule (no captures, kept heads,
+  cooldowns) — one `restart` event with the players. The client plays it
+  (`Renderer.drawWin`, over a veil, on a layer of its own that only adds the
+  tiles flipped since the last frame): the winner's chords on every tile
+  (`WIN_IN_MS`), then the infinite line flips the board from `tail` in
+  `flipOrder`'s order, accelerating (`WIN_SPREAD_MS`, 5 s; a tile `d` steps
+  out at `sqrt(d / D)`), and after the `restart` it fades over the fresh
+  board (`WIN_FADE_MS`). Keep `winCelebrateMs` ≥ `WIN_IN_MS + WIN_SPREAD_MS`.
+  `winFraction: 0` turns winning off. `tests/win.test.ts`.
 - **One head, unlimited lines.** A player has one growing line at a time
   (`maxHeads: 1`) until they capture a pattern (then `headsWithCapture: 2`,
   plus one per further captured pattern up to `maxHeadsTotal: 12` while

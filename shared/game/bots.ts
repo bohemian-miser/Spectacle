@@ -419,6 +419,8 @@ export class Bots {
 
   /** Called once per server tick. With the watchdog on, each brain's call is timed (see `WatchdogOptions`). */
   update(now: number, ev: GameEvent[]): void {
+    // A won round holds still until it restarts: nothing to play.
+    if (this.engine.winner) return;
     this.ticks++;
     // Made only when something trips: the usual tick allocates nothing here.
     let trips: { kind: string; ms: number; why: 'hard' | 'soft'; source: 'update' | 'scout' }[] | null = null;

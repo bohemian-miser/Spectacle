@@ -11,14 +11,16 @@
  * Zoomed in close, your own rule is sketched faintly over the free tiles.
  */
 
-import { fieldOutline, tileAt, tilesEnclosed, tilesInBox, type Box, type Field } from '../../shared/game/field';
+import { fieldOutline, tileAt, tileCenter, tilePolygon, tilesEnclosed, tilesInBox, type Box, type Field } from '../../shared/game/field';
+import { fassRule } from '../../shared/game/rule';
+import { flipOrder, flippedBy, type FlipOrder } from './celebration';
 import { chordTableFor, tileChords, worldChord, type ChordTable } from '../../shared/game/strand';
 import { getSettings, type CircuitStyle, type Settings } from './settings';
 import { circuitLengthRgb, rgbToHex, type Pt } from '../../shared/tiles';
 import type { Camera } from './camera';
-import type { Burst, ClientPath, ClientPlayer, Coalesce, Store } from './store';
+import type { Burst, ClientPath, ClientPlayer, Coalesce, Store, Win } from './store';
 import type { PathStepWire } from '../../shared/game/protocol';
-import { spectreView, viewChord, viewOutline, viewPoint, viewStep, viewTap, viewTileAt, type SpectreView } from './spectre-view';
+import { spectreView, viewChord, viewOutline, viewPoint, viewPolygon, viewStep, viewTap, viewTileAt, type SpectreView } from './spectre-view';
 import { boardTheme, type BoardTheme } from './theme';
 import { createCanvasTiles } from './tiles-2d';
 import { createGlTiles } from './tiles-gl';
@@ -93,6 +95,17 @@ const TRACE_MIN_PX = 1;
 
 /** How long the board takes to morph between hexagons and Spectres (ms). */
 const MORPH_MS = 1200;
+/**
+ * A won round (`drawWin`): the board veils over and the winner's pattern
+ * shows on every tile (`WIN_IN_MS`), then the infinite line flips it all
+ * from the winner's loose end, accelerating (`WIN_SPREAD_MS`); once the
+ * fresh board is in (`restart`) it fades away (`WIN_FADE_MS`). The engine's
+ * `winCelebrateMs` is how long it holds still for this.
+ */
+const WIN_IN_MS = 1000;
+const WIN_SPREAD_MS = 5000;
+const WIN_FADE_MS = 1500;
+const WIN_VEIL = 0.88;
 
 function prefersReducedMotion(): boolean {
   return typeof matchMedia === 'function' && matchMedia('(prefers-reduced-motion: reduce)').matches;
@@ -184,6 +197,19 @@ export class Renderer {
   private readonly labelWidths = new Map<string, number>();
   /** A player whose name found no place: when to look again (the search walks all their steps). */
   private readonly labelRetry = new Map<string, number>();
+  /** The win being played (see `drawWin`): its flip order, chords and the layer it builds up. */
+  private celebration: {
+    readonly win: Win;
+    readonly plan: FlipOrder;
+    readonly winner: ChordTable;
+    readonly fass: ChordTable;
+    readonly hue: number;
+    /** When it started playing: after the flip order was worked out (~0.25 s at level 6). */
+    readonly start: number;
+    layer: Layer;
+    /** How many of `plan.order` the layer shows flipped. */
+    drawn: number;
+  } | null = null;
 
   constructor(
     private readonly tileCanvas: HTMLCanvasElement,
@@ -1091,6 +1117,147 @@ export class Renderer {
       for (const c of store.coalesce) this.drawCoalesce(c, now, toScreen, inView);
     }
     this.drawNames(toScreen);
+    if (store.win) this.drawWin(store.win, now, box, toScreen);
+  }
+
+  /**
+   * A won round. Over a veil, every tile shows the winner's pattern; then,
+   * from the loose end of their longest line, the infinite line (hex `128`)
+   * flips the board tile by tile — each flipped tile takes a colour that
+   * walks the spectrum as it spreads, with the line drawn over it — faster
+   * and faster, until it has everything. When the fresh board arrives it
+   * all fades away over it. The tiles accumulate on a layer of their own:
+   * a frame draws only the tiles that flipped since the last, and a camera
+   * move redraws what is in view.
+   */
+  private drawWin(win: Win, now: number, box: Box, toScreen: (x: number, y: number) => [number, number]): void {
+    const field = this.field;
+    if (!field) return;
+    const fade = win.restartAt === undefined ? 1 : 1 - (now - win.restartAt) / WIN_FADE_MS;
+    if (fade <= 0) {
+      this.store.win = null;
+      this.celebration = null;
+      return;
+    }
+    const W = this.overlay.width;
+    const H = this.overlay.height;
+    let c = this.celebration;
+    if (!c || c.win !== win) {
+      const fass = chordTableFor(field, fassRule(field.family));
+      const plan = flipOrder(field, fass, win.tail);
+      const hue = Number(/hsl\(\s*([\d.]+)/.exec(win.color)?.[1] ?? 0);
+      c = this.celebration = { win, plan, winner: chordTableFor(field, win.rule), fass, hue, start: performance.now(), layer: this.layer(W, H), drawn: 0 };
+    }
+    const t = now - c.start;
+    const shown = Math.min(1, Math.max(0, t / WIN_IN_MS)) * fade;
+    const p = t < WIN_IN_MS ? -1 : prefersReducedMotion() ? 1 : Math.min(1, (t - WIN_IN_MS) / WIN_SPREAD_MS);
+    const k = p < 0 ? 0 : flippedBy(c.plan.at, p);
+    const L = c.layer;
+    if (L.canvas.width !== W || L.canvas.height !== H) Object.assign(L, this.layer(W, H));
+    const cam = this.camera;
+    const view = `${cam.x}|${cam.y}|${cam.scale}|${W}x${H}|${this.morphT}|${this.looksEpoch}`;
+    const s = cam.scale * this.dpr;
+    const pad = 2;
+    const inBox = (i: number): boolean => {
+      const q = tileCenter(field, i);
+      return q.x > box.minX - pad && q.x < box.maxX + pad && q.y > box.minY - pad && q.y < box.maxY + pad;
+    };
+    const lctx = L.ctx;
+    const pts = this.stepScratch;
+    const viewOn = this.view && this.viewT > 0 ? this.view : null;
+    const chords = (into: Path2D, table: ChordTable, i: number): void => {
+      const n = tileChords(field, table, i).length;
+      for (let ch = 0; ch < n; ch++) {
+        if (viewOn) {
+          viewChord(viewOn, table, i, ch, this.viewT, pts);
+          for (let m = 0; m < pts.length; m += 2) {
+            const [x, y] = toScreen(pts[m], pts[m + 1]);
+            if (m === 0) into.moveTo(x, y);
+            else into.lineTo(x, y);
+          }
+          continue;
+        }
+        const [a, b] = worldChord(field, table, i, ch);
+        const [ax, ay] = toScreen(a.x, a.y);
+        const [bx, by] = toScreen(b.x, b.y);
+        into.moveTo(ax, ay);
+        into.lineTo(bx, by);
+      }
+    };
+    const poly: Pt[] = [];
+    const outline = (into: Path2D, i: number): void => {
+      // Tiles a few pixels across: a square does, and costs far less.
+      if (s < 3) {
+        const q = toScreen(tileCenter(field, i).x, tileCenter(field, i).y);
+        const r = Math.max(0.75, 1.05 * s);
+        into.rect(q[0] - r, q[1] - r, 2 * r, 2 * r);
+        return;
+      }
+      const shapes: Pt[][] = [];
+      if (viewOn) for (let piece = viewOn.first[i]; piece < viewOn.first[i + 1]; piece++) shapes.push([...viewPolygon(viewOn, piece, this.viewT, poly)]);
+      else shapes.push(tilePolygon(field, i));
+      for (const shape of shapes) {
+        shape.forEach((q, m) => {
+          const [x, y] = toScreen(q.x, q.y);
+          if (m === 0) into.moveTo(x, y);
+          else into.lineTo(x, y);
+        });
+        into.closePath();
+      }
+    };
+    const n = c.plan.order.length;
+    /** Flipped tiles `tiles` (order indices), filled by where they come in the spread, the line over them. */
+    const flip = (js: Iterable<number>): void => {
+      const fills = new Map<number, Path2D>();
+      const line = new Path2D();
+      for (const j of js) {
+        const i = c!.plan.order[j];
+        const band = Math.floor((24 * j) / n);
+        let f = fills.get(band);
+        if (!f) fills.set(band, (f = new Path2D()));
+        outline(f, i);
+        if (s >= 1.5) chords(line, c!.fass, i);
+      }
+      for (const [band, f] of fills) {
+        lctx.fillStyle = `hsl(${(c!.hue + (300 * band) / 24) % 360}, 85%, 58%)`;
+        lctx.fill(f);
+      }
+      lctx.strokeStyle = this.board.inkCss;
+      lctx.lineWidth = Math.max(1, 0.16 * s);
+      lctx.lineCap = 'round';
+      lctx.stroke(line);
+    };
+    if (L.view !== view) {
+      L.view = view;
+      lctx.setTransform(1, 0, 0, 1, 0, 0);
+      lctx.clearRect(0, 0, W, H);
+      const visible = tilesInBox(field, box, this.visible);
+      const theirs = new Path2D();
+      const flipped: number[] = [];
+      for (const i of visible) {
+        const j = c.plan.rank[i];
+        if (j < k) flipped.push(j);
+        else if (s >= 1.5) chords(theirs, c.winner, i);
+      }
+      lctx.strokeStyle = strandColor(this.board, this.teams ? this.teamColor(win.id === this.store.you) : win.color);
+      lctx.lineWidth = Math.max(1, 0.12 * s);
+      lctx.lineCap = 'round';
+      lctx.stroke(theirs);
+      flip(flipped);
+    } else if (k > c.drawn) {
+      const fresh: number[] = [];
+      for (let j = c.drawn; j < k; j++) if (inBox(c.plan.order[j])) fresh.push(j);
+      flip(fresh);
+    }
+    c.drawn = k;
+    const ctx = this.ctx;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.globalAlpha = WIN_VEIL * shown;
+    ctx.fillStyle = this.board.bgCss;
+    ctx.fillRect(0, 0, W, H);
+    ctx.globalAlpha = shown;
+    ctx.drawImage(L.canvas as CanvasImageSource, 0, 0);
+    ctx.globalAlpha = 1;
   }
 
   /**
