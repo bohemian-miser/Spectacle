@@ -115,23 +115,35 @@ describe('winning a round', () => {
     expect(inside).toBeGreaterThan(0);
   });
 
-  it('a lone bot on a live-tuned board wins in the end (its lines alone stall short of 90%)', () => {
-    const knobs: Knobs = { ...applyTuning(DEFAULT_KNOBS, BUILTIN_BRAINS.tuning).knobs, mode: 'normal' };
-    expect(knobs.winFraction).toBe(0.9);
-    const e = new Engine(FIELD, knobs, mulberry32(3));
-    const bots = new Bots(e, mulberry32(4), undefined, botTuningOf(BUILTIN_BRAINS));
-    bots.add({ wanderer: 1 }, 0);
-    let now = 0;
-    let won = false;
-    for (let t = 0; t < (15 * 60_000) / knobs.tickMs && !won; t++) {
-      now += knobs.tickMs;
-      const ev: GameEvent[] = [];
-      bots.update(now, ev);
-      ev.push(...e.tick(knobs.tickMs));
-      won = ev.some((x) => x.t === 'win');
-    }
-    expect(won).toBe(true);
-  });
+  // Seeds whose bot draws `258` (tiny loops and short lines that wall in
+  // gaps but enclose nothing: its lines stalled at ~84% of the board and it
+  // never won before the pockets counted), and one on `15`.
+  for (const seed of [3, 8, 10]) {
+    it(`a lone bot on a live-tuned board wins in the end — lines alone stall short of 90% (seed ${seed})`, () => {
+      const knobs: Knobs = { ...applyTuning(DEFAULT_KNOBS, BUILTIN_BRAINS.tuning).knobs, mode: 'normal' };
+      expect(knobs.winFraction).toBe(0.9);
+      const e = new Engine(FIELD, knobs, mulberry32(seed));
+      const bots = new Bots(e, mulberry32(seed + 100), undefined, botTuningOf(BUILTIN_BRAINS));
+      bots.add({ wanderer: 1 }, 0);
+      const id = [...e.players.keys()][0];
+      let now = 0;
+      let won = false;
+      let early = true;
+      for (let t = 0; t < (20 * 60_000) / knobs.tickMs && !won; t++) {
+        now += knobs.tickMs;
+        const ev: GameEvent[] = [];
+        bots.update(now, ev);
+        ev.push(...e.tick(knobs.tickMs));
+        // A lone line on an open board doesn't own the board: pockets are small, and only looked for past POCKET_FROM.
+        if (early && ev.some((x) => x.t === 'cover')) {
+          expect(e.tilesControlled(id)).toBeLessThan(FIELD.count / 2);
+          early = e.tilesHeld(id) < FIELD.count / 10;
+        }
+        won = ev.some((x) => x.t === 'win');
+      }
+      expect(won).toBe(true);
+    });
+  }
 
   it('winFraction 0 never wins', () => {
     const knobs: Knobs = { ...DEFAULT_KNOBS, mode: 'normal', winFraction: 0 };

@@ -63,7 +63,7 @@
 
 import type { Pt, Segment } from '../tiles';
 import { mixHsl } from './color';
-import { boundaryRegion, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesEnclosed, tilesInBox, type Box, type Field } from './field';
+import { acrossEdge, boundaryRegion, edgeSlots, onFieldBoundary, pathPolygon, pointInPolygon, polygonArea, tileCenter, tilesEnclosed, tilesInBox, type Box, type Field } from './field';
 import { headLimit, knobsChanged, stepIntervalMs, type Knobs } from './knobs';
 import { circuitBonus, planRegrow } from './regrow';
 import { packStep } from './wire';
@@ -222,6 +222,15 @@ function sameSeg(a: Segment, b: Segment): boolean {
 
 /** How often what each player controls is worked out (`updateCover`), engine ms. */
 export const COVER_MS = 1000;
+/**
+ * A free pocket — tiles no line is on, walled in by one player's lines (and
+ * the board's edge) alone — of at most this many tiles is that player's
+ * (`updateCover`): the gaps between their strands. A bigger open area isn't,
+ * or a lone player would own the empty board.
+ */
+export const POCKET_MAX = 24;
+/** Pockets are only looked for once someone controls this share of the board (the pass walks every free tile). */
+export const POCKET_FROM = 0.5;
 
 export class Engine {
   readonly players = new Map<string, Player>();
@@ -253,6 +262,9 @@ export class Engine {
   /** Scratch marks for `updateCover`'s union, one stamp per player per pass. */
   private coverMarks: Uint32Array | null = null;
   private coverStamp = 0;
+  /** Scratch for the pocket pass: visited stamps, and the region being filled. */
+  private pocketSeen: Uint32Array | null = null;
+  private pocketStamp = 0;
   private readonly pickJunction: (options: readonly import('./strand').ChordEnd[]) => import('./strand').ChordEnd;
 
   constructor(
@@ -1508,6 +1520,9 @@ export class Engine {
     const need = f > 0 ? Math.ceil(f * n) : Infinity;
     let best: Player | null = null;
     let most = 0;
+    let lead = 0;
+    for (const c of this.covered.values()) lead = Math.max(lead, c);
+    const pockets = lead >= POCKET_FROM * n ? this.pockets() : null;
     for (const p of this.players.values()) {
       if (this.coverStamp >= 0xfffffffe) (marks.fill(0), (this.coverStamp = 0));
       const stamp = ++this.coverStamp;
@@ -1527,6 +1542,11 @@ export class Engine {
           count++;
         }
       }
+      for (const t of pockets?.get(p.id) ?? []) {
+        if (marks[t] === stamp) continue;
+        marks[t] = stamp;
+        count++;
+      }
       if (this.covered.get(p.id) !== count) {
         this.covered.set(p.id, count);
         ev.push({ t: 'cover', id: p.id, tiles: count });
@@ -1543,6 +1563,54 @@ export class Engine {
     for (const q of best.paths) if (!longest || q.steps.length > longest.steps.length) longest = q;
     const tail = longest ? longest.steps[longest.steps.length - 1].tile : 0;
     ev.push({ t: 'win', id: best.id, tiles: most, of: n, tail });
+  }
+
+  /**
+   * The free pockets each player owns: regions of tiles no line is on,
+   * joined across shared edges, of at most `POCKET_MAX` tiles, whose lined
+   * neighbours are all one player's. Walks every free tile once.
+   */
+  private pockets(): Map<string, number[]> {
+    const field = this.field;
+    const n = field.count;
+    const per = edgeSlots(field);
+    const seen = (this.pocketSeen ??= new Uint32Array(n));
+    if (this.pocketStamp >= 0xfffffffe) (seen.fill(0), (this.pocketStamp = 0));
+    const stamp = ++this.pocketStamp;
+    const out = new Map<string, number[]>();
+    const region: number[] = [];
+    for (let s = 0; s < n; s++) {
+      if (seen[s] === stamp || this.occupancy.has(s)) continue;
+      region.length = 0;
+      region.push(s);
+      seen[s] = stamp;
+      let owner: string | null = null;
+      let mixed = false;
+      for (let h = 0; h < region.length; h++) {
+        const i = region[h];
+        for (let k = 0; k < per; k++) {
+          const t = acrossEdge(field, i, k);
+          if (t < 0) continue;
+          const occ = this.occupancy.get(t);
+          if (occ) {
+            if (mixed) continue;
+            for (const q of occ) {
+              if (owner === null) owner = q.owner;
+              else if (q.owner !== owner) mixed = true;
+            }
+            continue;
+          }
+          if (seen[t] === stamp) continue;
+          seen[t] = stamp;
+          region.push(t);
+        }
+      }
+      if (mixed || owner === null || region.length > POCKET_MAX) continue;
+      let list = out.get(owner);
+      if (!list) out.set(owner, (list = []));
+      list.push(...region);
+    }
+    return out;
   }
 
   /** The tiles inside a closed line (cached while its steps are unchanged). */

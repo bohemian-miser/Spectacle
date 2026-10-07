@@ -331,6 +331,11 @@ function edgeNeighbours(field: Field): EdgeNeighbours {
   return e;
 }
 
+/** How many edges `acrossEdge` takes per tile: the most any tile has (a smaller tile's spare ones answer -1 or less). */
+export function edgeSlots(field: Field): number {
+  return edgeNeighbours(field).per;
+}
+
 /** The tile across edge `k` of tile `i`, or -1 on the board's edge. */
 export function acrossEdge(field: Field, i: number, k: number): number {
   const e = edgeNeighbours(field);
