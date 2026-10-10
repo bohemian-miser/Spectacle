@@ -38,7 +38,10 @@ shared/game/      The game. Pure TypeScript; runs in server, browser, tests.
                   the `Brain`/`BrainSet` interface, and `Bots` — a room's
                   bot players, driving their brains; `setBrains` swaps
                   brains live (players kept), `reconcile` matches a mix;
-                  the watchdog (`Bots.watchdog`, see "settled").
+                  the watchdog (`Bots.watchdog`, see "settled"); and
+                  what a brain sees and does (#87): `BoardView` (read-only
+                  board; `Engine` satisfies it as is) and `BotActions` (its
+                  own player's tap/rule/active/swap, events into the tick's).
   brains/         HOT-LOADED (see "settled"): how bots play. kinds.ts (seven
                   kinds: wanderer, rotator, hunter, farmer, bridge,
                   edgelord, lazylord — the Edge Lords walk the edge index
@@ -313,8 +316,12 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   `manifest.json`), and servers with `BOTS_URL` poll and swap it in. A server
   loads only a build whose `key` (hash of `shared/` minus `brains/`) is its
   own, so brains always see the engine they were compiled against: code in
-  `brains/` may import anything in `shared/` but only *types* from
-  `../bots`. `BrainSet.mix` (`brains/mix.ts`, `LIVE_MIX`) overrides `BOTS`
+  `brains/` may import anything in `shared/` but the engine, and only
+  *types* from `../bots`. **Brains never touch the engine** (#87, step one
+  of moving them to a worker thread): they read `ctx.board` (`BoardView`)
+  and play through `ctx.act` (`BotActions`), so a mirror of the board on
+  another thread can stand in for the engine later;
+  `tests/brains-api.test.ts` fails a brain that imports `../engine`. `BrainSet.mix` (`brains/mix.ts`, `LIVE_MIX`) overrides `BOTS`
   per mode and live rooms reconcile to it. `Bots.onError` (set by the
   server) makes one brain's exception skip only that bot; 20 in a minute
   revert to the built-in brains and blacklist that build. **The game's

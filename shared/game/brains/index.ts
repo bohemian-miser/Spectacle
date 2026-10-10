@@ -9,14 +9,16 @@
  * what solo play and the tests use.
  *
  * Rules for code in here:
- *  - Import anything from the rest of `shared/`, but only *types* from
+ *  - Import anything from the rest of `shared/` but the engine, and only *types* from
  *    `../bots` (the host side). A build is only loaded by a server made from
  *    the same `shared/` source outside this directory, so the engine it sees
  *    is the one it was compiled against.
- *  - A brain plays through the engine it is handed, for its own player id —
- *    the same calls a client's messages make (`tap`, `setRule`, `setActive`,
- *    `swapPattern`) — and reads whatever it likes. It must not change engine
- *    state any other way.
+ *  - A brain never touches the engine (#87): it reads the board through
+ *    `ctx.board` (`BoardView`: read-only) and plays through `ctx.act`
+ *    (`BotActions`: a client's moves — tap, rule, active, swap — for its own
+ *    player). Don't import from `../engine`; `tests/brains-api.test.ts`
+ *    checks. That narrow surface is what lets brains move off the game
+ *    loop's thread.
  *  - Keep each tick's work small: every room on the server waits for it.
  *  - `tuning.ts` is the game's live numbers (every knob), shipped the same
  *    way: retuning running games is a push here, not a deploy.
