@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BUILTIN_BRAINS, DEFAULT_BOT_OPTIONS } from '../shared/game/bots';
+import { BUILTIN_BRAINS, DEFAULT_BOT_OPTIONS, type BotActions } from '../shared/game/bots';
 import { EDGE_LORD_MIN_STRAND, isSmallRule } from '../shared/game/brains/kinds';
 import { longestStrand } from '../shared/game/brains/sense';
 import { SMALL_RULES } from '../shared/game/brains/small-rules';
@@ -35,6 +35,14 @@ describe('SMALL_RULES (npm run small-rules)', () => {
   });
 });
 
+/** A brain that only picks a rule never moves. */
+const NO_MOVES: BotActions = {
+  tap: () => false,
+  setRule: () => {},
+  setActive: () => {},
+  swapPattern: () => false,
+};
+
 describe('Edge Lords', () => {
   for (const family of ['hex', 'spectre'] as const) {
     it(`never pick a small rule (${family})`, () => {
@@ -43,7 +51,7 @@ describe('Edge Lords', () => {
       const rng = mulberry32(7);
       for (const kind of ['edgelord', 'lazylord']) {
         for (let i = 0; i < 300; i++) {
-          const brain = BUILTIN_BRAINS.make(kind, `b${i}`, { engine, rng, options: DEFAULT_BOT_OPTIONS });
+          const brain = BUILTIN_BRAINS.make(kind, `b${i}`, { board: engine, act: NO_MOVES, rng, options: DEFAULT_BOT_OPTIONS });
           expect(isSmallRule(brain.firstRule(), EDGE_LORD_MIN_STRAND)).toBe(false);
         }
       }

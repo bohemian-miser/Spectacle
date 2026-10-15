@@ -12,12 +12,14 @@
  * the server must agree on belongs here, and changing it is a full deploy.
  */
 
-import type { Engine, Player } from './engine';
+import type { Pt } from '../tiles';
+import type { Engine } from './engine';
 import type { Field } from './field';
-import type { GameMode, Tuning } from './knobs';
-import type { GameEvent, RoomBots } from './protocol';
+import type { GameMode, Knobs, Tuning } from './knobs';
+import type { GameEvent, PathStatus, RoomBots } from './protocol';
 import type { PlayerRule } from './rule';
 import type { Rng } from './rng';
+import type { ChordTable, WalkStep } from './strand';
 import { brains as BUILTIN_BRAINS, BOT_INFO, BOT_KINDS, type BotKind } from './brains';
 
 export { BUILTIN_BRAINS, BOT_INFO, BOT_KINDS, type BotKind };
@@ -116,14 +118,93 @@ export function botTuningOf(set: Pick<BrainSet, 'botTuning'>): Partial<BotOption
 // `brains/` (`server/brains.ts`'s source key), so these types — and the
 // engine's — are always the ones the build was compiled against.
 
-/** What a brain is handed: the room's engine (read it, call its player methods for its own id), a random source, the options. */
+// --- what a brain sees, and what it may do (#87) -----------------------------------
+//
+// Brains don't touch the engine. They read the board through `BoardView`
+// (read-only: the field, the knobs, players and their lines, a few questions
+// the engine answers) and act through `BotActions` — the same moves a
+// client's messages make, for their own player only. Today both are the room's
+// engine, in-process (`Engine` satisfies `BoardView` as it is, at no cost; the
+// actions call its player methods), which keeps games deterministic for the
+// tests, benches and the brains check. The narrow surface is what lets the
+// brains move off the game loop's thread later (#87): a mirror of the board
+// in a worker can implement `BoardView`, and the actions become messages.
+// Nothing outside these two may be reached from `brains/`.
+
+/** A line, as a brain may see it. */
+export interface PathView {
+  readonly id: number;
+  readonly owner: string;
+  readonly status: PathStatus;
+  readonly steps: readonly WalkStep[];
+  readonly points: number;
+  /** An edge-to-edge line's claimed region, once closed. */
+  readonly region?: readonly Pt[];
+  /** The pattern it grows by (compare tables by identity: a player's own is `PlayerView.table`). */
+  readonly table: ChordTable;
+  readonly pattern: number;
+  /** Made by a flip or a regrow, not a tap: it takes no head. */
+  readonly spawned?: boolean;
+}
+
+/** A pattern a player can draw with. */
+export interface PatternView {
+  readonly rule: PlayerRule;
+  readonly table: ChordTable;
+}
+
+/** A player, as a brain may see it. */
+export interface PlayerView {
+  readonly id: string;
+  readonly name: string;
+  readonly bot: boolean;
+  readonly score: number;
+  readonly rule: PlayerRule;
+  readonly table: ChordTable;
+  /** `patterns[0]` is the own rule; captured ones follow. */
+  readonly patterns: readonly PatternView[];
+  readonly active: number;
+  readonly paths: readonly PathView[];
+}
+
+/** The board, read-only: everything a brain may look at. */
+export interface BoardView {
+  readonly field: Field;
+  readonly knobs: Readonly<Knobs>;
+  readonly players: ReadonlyMap<string, PlayerView>;
+  /** The lines on `tile`, any player's. */
+  pathsOn(tile: number): readonly PathView[];
+  /** Is `at` inside a closed circuit of anyone but `me`? (A tap there is refused.) */
+  insideRivalCircuit(me: string, at: Pt): boolean;
+  /** How many lines `p` may have growing at once (0 = unlimited). */
+  headLimit(p: PlayerView): number;
+  /** How many of those `p` has growing. */
+  headsInUse(p: PlayerView): number;
+}
+
+/**
+ * What a brain may do, for its own player: a client's moves (`tap`, `rule`,
+ * `active`, `swap`). What they set off goes into the room's events, which
+ * the brain sees in its next `update` (or later in this one).
+ */
+export interface BotActions {
+  /** Tap `tile` at `at` with the active pattern; did it land? */
+  tap(tile: number, at: Pt): boolean;
+  setRule(rule: PlayerRule): void;
+  setActive(index: number): void;
+  /** Swap captured pattern `index` for `rule`; was it taken? */
+  swapPattern(index: number, rule: PlayerRule): boolean;
+}
+
+/** What a brain is handed: the board to read, its own player's moves, a random source, the options. */
 export interface BotContext {
-  readonly engine: Engine;
+  readonly board: BoardView;
+  readonly act: BotActions;
   readonly rng: Rng;
   readonly options: BotOptions;
 }
 
-/** One bot's mind. Its player lives in the engine under `id`; the brain only decides. */
+/** One bot's mind. Its player lives on the board under `id`; the brain only decides, and acts through `BotContext.act`. */
 export interface Brain {
   readonly id: string;
   readonly kind: string;
@@ -136,8 +217,12 @@ export interface Brain {
    * earlier brain (a hot swap) — carry on with what it has rather than start over.
    */
   start(now: number, resumed: boolean): void;
-  /** Once a tick: act for `p` (this brain's player), pushing what the engine returns onto `ev`. */
-  update(now: number, p: Player, ev: GameEvent[]): void;
+  /**
+   * Once a tick: decide for `me` (this brain's player) and act. `seen` is
+   * the room's events so far this tick, the brain's own moves' included as
+   * they happen.
+   */
+  update(now: number, me: PlayerView, seen: readonly GameEvent[]): void;
 }
 
 /** Every kind of brain a build offers. `brains/index.ts` exports one as `brains`. */
@@ -294,6 +379,9 @@ export class Bots {
   private readonly bench = new Map<string, BotTrip>();
   private readonly watches = new Map<string, Watch>();
   private ticks = 0;
+  /** Where the bots' moves' events go: this tick's events while `update` runs, else held for the next. */
+  private sink: GameEvent[] = [];
+  private held: GameEvent[] = [];
 
   constructor(
     private readonly engine: Engine,
@@ -316,8 +404,23 @@ export class Bots {
     return this.set;
   }
 
-  private get ctx(): BotContext {
-    return { engine: this.engine, rng: this.rng, options: this.options };
+  /** Bot `id`'s context: the engine to read, and its player's moves, whose events go to the sink. */
+  private ctx(id: string): BotContext {
+    const engine = this.engine;
+    const push = (events: readonly GameEvent[]): void => {
+      for (const e of events) this.sink.push(e);
+    };
+    const act: BotActions = {
+      tap: (tile, at) => engine.tap(id, tile, at, this.sink).result.ok,
+      setRule: (rule) => push(engine.setRule(id, rule)),
+      setActive: (index) => push(engine.setActive(id, index)),
+      swapPattern: (index, rule) => {
+        const r = engine.swapPattern(id, index, rule);
+        if (r.ok) push(r.events);
+        return r.ok;
+      },
+    };
+    return { board: engine, act, rng: this.rng, options: this.options };
   }
 
   /** Add bots: a mix, or (as ever) a number of wanderers. Kinds the brains don't have, or the watchdog benched, are skipped. */
@@ -329,7 +432,7 @@ export class Bots {
       for (let k = 0; k < (m[kind] ?? 0); k++) {
         const id = `bot-${++this.made}`;
         const nth = (this.counts[kind] = (this.counts[kind] ?? 0) + 1);
-        const bot = this.set.make(kind, id, this.ctx);
+        const bot = this.set.make(kind, id, this.ctx(id));
         ev.push(...this.engine.addPlayer(id, this.set.name(kind, nth), bot.firstRule(), true));
         bot.start(now, false);
         this.bots.push(bot);
@@ -387,7 +490,7 @@ export class Bots {
         ev.push(...this.engine.removePlayer(old.id));
         continue;
       }
-      const bot = set.make(old.kind, old.id, this.ctx);
+      const bot = set.make(old.kind, old.id, this.ctx(old.id));
       bot.start(now, true);
       kept.push(bot);
     }
@@ -422,6 +525,20 @@ export class Bots {
     // A won round holds still until it restarts: nothing to play.
     if (this.engine.winner) return;
     this.ticks++;
+    // Moves made between ticks (none, as the brains are now) go out first.
+    if (this.held.length) {
+      ev.push(...this.held);
+      this.held = [];
+    }
+    this.sink = ev;
+    try {
+      this.play(now, ev);
+    } finally {
+      this.sink = this.held;
+    }
+  }
+
+  private play(now: number, ev: GameEvent[]): void {
     // Made only when something trips: the usual tick allocates nothing here.
     let trips: { kind: string; ms: number; why: 'hard' | 'soft'; source: 'update' | 'scout' }[] | null = null;
     const tripped = (kind: string): boolean => trips !== null && trips.some((t) => t.kind === kind);

@@ -7,7 +7,7 @@
  */
 
 import { validEdgeSubsets, type Pt } from '../../tiles';
-import type { Engine, Path } from '../engine';
+import type { BoardView, PathView } from '../bots';
 import { onFieldBoundary, pointSegDist2, tileAt, tileCenter, tileNeighbours, tilePolygon, type Field } from '../field';
 import { isInfiniteLineRule, randomMatching, ruleKey, type PlayerRule } from '../rule';
 import { mulberry32, type Rng } from '../rng';
@@ -211,18 +211,18 @@ export interface Probe {
   /** How the walk ended: back at its start, off the field or a tail, into someone's line, or out of steps. */
   readonly end: 'closed' | 'dead' | 'hit' | 'limit';
   /** The rival line it would run into. */
-  readonly hit?: Path;
+  readonly hit?: PathView;
 }
 
 /** The rival line (not `me`'s) that a line on step `s` would collide with, if any. */
-export function rivalAt(engine: Engine, me: string, s: WalkStep): Path | undefined {
-  const byTile = engine.knobs.crossingMode === 'tile';
-  for (const p of engine.pathsOn(s.tile)) {
+export function rivalAt(board: BoardView, me: string, s: WalkStep): PathView | undefined {
+  const byTile = board.knobs.crossingMode === 'tile';
+  for (const p of board.pathsOn(s.tile)) {
     if (p.owner === me) continue;
     if (byTile) return p;
     for (const q of p.steps) {
       if (q.tile !== s.tile) continue;
-      if (sameChord(q, s) || chordsConflict([s.a, s.b], [q.a, q.b], engine.knobs.touchCounts)) return p;
+      if (sameChord(q, s) || chordsConflict([s.a, s.b], [q.a, q.b], board.knobs.touchCounts)) return p;
     }
   }
   return undefined;
@@ -237,8 +237,8 @@ function sameChord(q: WalkStep, s: WalkStep): boolean {
  * `exitEnd`, against the board as it stands (nothing else moves): at most
  * `max` steps. Junctions take their first option.
  */
-export function probe(engine: Engine, me: string, table: ChordTable, tile: number, chord: number, exitEnd: 0 | 1, max: number): Probe {
-  const field = engine.field;
+export function probe(board: BoardView, me: string, table: ChordTable, tile: number, chord: number, exitEnd: 0 | 1, max: number): Probe {
+  const field = board.field;
   const first = startStep(field, table, tile, chord, exitEnd);
   const steps: WalkStep[] = [first];
   const seen = new Set<number>([tile * 64 + chord]);
@@ -252,7 +252,7 @@ export function probe(engine: Engine, me: string, table: ChordTable, tile: numbe
     if (seen.has(k)) return { steps, end: 'dead' };
     seen.add(k);
     steps.push(s);
-    const hit = rivalAt(engine, me, s);
+    const hit = rivalAt(board, me, s);
     if (hit) return { steps, end: 'hit', hit };
   }
 }
@@ -529,11 +529,11 @@ export class EdgeWalk {
 }
 
 /** Has `me` closed a line along the whole of `steps` (it holds both its end chords)? */
-export function isBridgeClosed(engine: Engine, me: string, steps: readonly WalkStep[]): boolean {
+export function isBridgeClosed(board: BoardView, me: string, steps: readonly WalkStep[]): boolean {
   if (steps.length === 0) return false;
   const first = steps[0];
   const last = steps[steps.length - 1];
-  for (const q of engine.pathsOn(first.tile)) {
+  for (const q of board.pathsOn(first.tile)) {
     if (q.owner !== me || q.status !== 'closed') continue;
     let a = false;
     let b = false;

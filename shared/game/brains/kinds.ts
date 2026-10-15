@@ -34,8 +34,7 @@
  * copy of the manager.
  */
 
-import type { Brain, BotContext } from '../bots';
-import type { Engine, Path, Player } from '../engine';
+import type { BoardView, BotActions, BotContext, Brain, PathView, PlayerView } from '../bots';
 import { onFieldBoundary, pathPolygon, pointInPolygon, tileCenter, tileNeighbours, type Box } from '../field';
 import type { GameEvent } from '../protocol';
 import { describeRule, isInfiniteLineRule, randomCleanRule, ruleFromCombo, ruleKey, type PlayerRule } from '../rule';
@@ -104,8 +103,14 @@ abstract class Bot implements Brain {
     protected readonly ctx: BotContext,
   ) {}
 
-  protected get engine(): Engine {
-    return this.ctx.engine;
+  /** The board, read-only. */
+  protected get board(): BoardView {
+    return this.ctx.board;
+  }
+
+  /** Our player's moves. */
+  protected get act(): BotActions {
+    return this.ctx.act;
   }
 
   protected get rng(): Rng {
@@ -120,19 +125,19 @@ abstract class Bot implements Brain {
     this.nextTapAt = now + 500 + this.rng.int(2000);
   }
 
-  update(now: number, p: Player, ev: GameEvent[]): void {
-    const heads = this.engine.headLimit(p);
-    if (heads > 0 && this.engine.headsInUse(p) >= heads) return;
+  update(now: number, p: PlayerView, seen: readonly GameEvent[]): void {
+    const heads = this.board.headLimit(p);
+    if (heads > 0 && this.board.headsInUse(p) >= heads) return;
     if (now < this.nextTapAt) return;
-    this.think(now, p, ev);
+    this.think(now, p);
   }
 
   /** A free head and the pause is over: tap (or decide not to). */
-  protected abstract think(now: number, p: Player, ev: GameEvent[]): void;
+  protected abstract think(now: number, p: PlayerView): void;
 
   /** A random clean rule, never an infinite-line one unless allowed, nor one `reject` turns down. */
   protected cleanRule(unlike?: PlayerRule, reject?: (rule: PlayerRule) => boolean): PlayerRule {
-    const family = this.engine.field.family;
+    const family = this.board.field.family;
     let rule = randomCleanRule(family, this.rng);
     for (let k = 0; k < 20; k++) {
       const bad = (!this.ctx.options.infiniteLines && isInfiniteLineRule(rule)) || (unlike && ruleKey(rule) === ruleKey(unlike)) || reject?.(rule);
@@ -142,26 +147,26 @@ abstract class Bot implements Brain {
     return rule;
   }
 
-  protected tapStep(s: { tile: number; a: Pt; b: Pt }, ev: GameEvent[]): boolean {
-    return this.engine.tap(this.id, s.tile, stepMid(s), ev).result.ok;
+  protected tapStep(s: { tile: number; a: Pt; b: Pt }): boolean {
+    return this.act.tap(s.tile, stepMid(s));
   }
 
-  protected tapTile(tile: number, ev: GameEvent[]): boolean {
-    return this.engine.tap(this.id, tile, tileCenter(this.engine.field, tile), ev).result.ok;
+  protected tapTile(tile: number): boolean {
+    return this.act.tap(tile, tileCenter(this.board.field, tile));
   }
 
-  protected tableOf(p: Player): ChordTable {
+  protected tableOf(p: PlayerView): ChordTable {
     return (p.patterns[p.active] ?? p.patterns[0]).table;
   }
 
   /** Every other player with a line on the board. */
-  protected rivals(): Player[] {
-    return [...this.engine.players.values()].filter((q) => q.id !== this.id && q.paths.length > 0);
+  protected rivals(): PlayerView[] {
+    return [...this.board.players.values()].filter((q) => q.id !== this.id && q.paths.length > 0);
   }
 
   /** Tiles with a line of `table` next to `tile`. */
   protected around(tile: number, table: ChordTable): number[] {
-    const field = this.engine.field;
+    const field = this.board.field;
     const out: number[] = [];
     for (const t of tileNeighbours(field, tile)) if (tileChords(field, table, t).length > 0) out.push(t);
     return out;
@@ -170,17 +175,17 @@ abstract class Bot implements Brain {
 
 /** Random rule, random taps, sometimes beside a rival's line. */
 class Wanderer extends Bot {
-  protected think(now: number, p: Player, ev: GameEvent[]): void {
+  protected think(now: number, p: PlayerView): void {
     this.nextTapAt = now + 1000 + this.rng.int(3000);
     // A bot holding captured patterns draws with any of them.
-    if (p.patterns.length > 1) ev.push(...this.engine.setActive(this.id, this.rng.int(p.patterns.length)));
+    if (p.patterns.length > 1) this.act.setActive(this.rng.int(p.patterns.length));
     const tile = this.pickTile(p);
     if (tile < 0) return;
-    this.tapTile(tile, ev);
+    this.tapTile(tile);
   }
 
-  private pickTile(me: Player): number {
-    const field = this.engine.field;
+  private pickTile(me: PlayerView): number {
+    const field = this.board.field;
     const table = this.tableOf(me);
     if (this.rng.next() < this.ctx.options.aggression) {
       // Find a rival step to land on.
@@ -194,7 +199,7 @@ class Wanderer extends Bot {
           const nbrs = tileNeighbours(field, step.tile);
           for (let k = 0; k < nbrs.length; k++) {
             const t = nbrs[(k + this.rng.int(nbrs.length)) % nbrs.length];
-            if (tileChords(field, table, t).length > 0 && this.engine.pathsOn(t).length === 0) return t;
+            if (tileChords(field, table, t).length > 0 && this.board.pathsOn(t).length === 0) return t;
           }
         }
       }
@@ -212,14 +217,14 @@ class Rotator extends Wanderer {
     this.rotateAt = now + this.span();
   }
 
-  override update(now: number, p: Player, ev: GameEvent[]): void {
+  override update(now: number, p: PlayerView, seen: readonly GameEvent[]): void {
     if (now >= this.rotateAt) {
       this.rotateAt = now + this.span();
-      ev.push(...this.engine.setRule(this.id, this.cleanRule(p.rule)));
+      this.act.setRule(this.cleanRule(p.rule));
       this.nextTapAt = now + 1000;
       return;
     }
-    super.update(now, p, ev);
+    super.update(now, p, seen);
   }
 
   private span(): number {
@@ -235,13 +240,13 @@ class Hunter extends Bot {
   private target: string | null = null;
   private retargetAt = 0;
 
-  protected think(now: number, p: Player, ev: GameEvent[]): void {
+  protected think(now: number, p: PlayerView): void {
     this.nextTapAt = now + 700 + this.rng.int(1300);
-    if (now >= this.retargetAt || !this.engine.players.get(this.target ?? '')?.paths.length) {
+    if (now >= this.retargetAt || !this.board.players.get(this.target ?? '')?.paths.length) {
       this.target = this.pickTarget();
       this.retargetAt = now + 8000 + this.rng.int(6000);
     }
-    const target = this.target ? this.engine.players.get(this.target) : undefined;
+    const target = this.target ? this.board.players.get(this.target) : undefined;
     // With captured patterns, try each: the one whose line strikes best wins.
     const patterns = p.patterns.map((_, i) => i);
     let best: { tile: number; step: WalkStep; score: number; pattern: number } | null = null;
@@ -252,12 +257,12 @@ class Hunter extends Bot {
       }
     }
     if (best) {
-      ev.push(...this.engine.setActive(this.id, best.pattern));
-      if (this.tapStep(best.step, ev)) return;
+      this.act.setActive(best.pattern);
+      if (this.tapStep(best.step)) return;
     }
     // Nothing to strike at: take ground somewhere, like anyone else.
-    const t = randomTileWithLine(this.engine.field, this.tableOf(p), this.rng);
-    if (t >= 0) this.tapTile(t, ev);
+    const t = randomTileWithLine(this.board.field, this.tableOf(p), this.rng);
+    if (t >= 0) this.tapTile(t);
   }
 
   /** Mostly the leader; now and then whoever else is on the board. */
@@ -267,8 +272,8 @@ class Hunter extends Bot {
     return (this.rng.next() < 0.75 ? rivals[0] : rivals[this.rng.int(rivals.length)]).id;
   }
 
-  private bestStrike(target: Player, table: ChordTable, budget: number): { tile: number; step: WalkStep; score: number } | null {
-    const field = this.engine.field;
+  private bestStrike(target: PlayerView, table: ChordTable, budget: number): { tile: number; step: WalkStep; score: number } | null {
+    const field = this.board.field;
     // Growing lines first (cut one and it stops earning), then the richest.
     const weighted = target.paths.map((q) => ({ q, w: (q.status === 'growing' ? 40 : 1) + q.points + q.steps.length / 10 }));
     const total = weighted.reduce((n, x) => n + x.w, 0);
@@ -288,8 +293,8 @@ class Hunter extends Bot {
         const chords = tileChords(field, table, t).length;
         for (let c = 0; c < chords && budget > 0; c++) {
           budget -= 2;
-          const a = probe(this.engine, this.id, table, t, c, 0, 40);
-          const b = probe(this.engine, this.id, table, t, c, 1, 40);
+          const a = probe(this.board, this.id, table, t, c, 0, 40);
+          const b = probe(this.board, this.id, table, t, c, 1, 40);
           // The tap picks its way out at random: count both.
           const score = (this.strike(a, target.id) + this.strike(b, target.id)) / 2;
           if (!best || score > best.score) best = { tile: t, step: a.steps[0], score };
@@ -325,22 +330,22 @@ class Farmer extends Bot {
     if (resumed) this.ready = true;
   }
 
-  override update(now: number, p: Player, ev: GameEvent[]): void {
+  override update(now: number, p: PlayerView, seen: readonly GameEvent[]): void {
     if (!this.ready) {
-      const scout = scoutFor(this.engine.field);
+      const scout = scoutFor(this.board.field);
       if (!scout.done) return;
       this.ready = true;
       const rule = scout.shortLoopRule(this.rng);
-      if (rule) ev.push(...this.engine.setRule(this.id, rule));
+      if (rule) this.act.setRule(rule);
     }
-    super.update(now, p, ev);
+    super.update(now, p, seen);
   }
 
-  protected think(now: number, p: Player, ev: GameEvent[]): void {
+  protected think(now: number, p: PlayerView): void {
     this.nextTapAt = now + 600 + this.rng.int(1200);
     // Farm with the own rule: it's the one picked for loops.
-    ev.push(...this.engine.setActive(this.id, 0));
-    const frame = fieldFrame(this.engine.field);
+    this.act.setActive(0);
+    const frame = fieldFrame(this.board.field);
     const own = p.paths.reduce((n, q) => n + q.steps.length, 0);
     const radius = frame.unit * (4 + Math.sqrt(own) * 0.9 + this.misses * 2);
     if (!this.home || now >= this.rehomeAt || this.crowded(this.home, radius)) {
@@ -349,23 +354,23 @@ class Farmer extends Bot {
       this.misses = 0;
     }
     const table = p.table;
-    const field = this.engine.field;
+    const field = this.board.field;
     let best: { step: WalkStep; score: number } | null = null;
     let budget = PROBES_PER_TAP;
     for (let k = 0; k < 16 && budget > 0; k++) {
       const t = tileNear(field, table, this.rng, this.home, radius);
       if (t < 0) continue;
-      const beside = this.engine.pathsOn(t).length > 0 || this.around(t, table).some((u) => this.engine.pathsOn(u).some((q) => q.owner === this.id));
+      const beside = this.board.pathsOn(t).length > 0 || this.around(t, table).some((u) => this.board.pathsOn(u).some((q) => q.owner === this.id));
       for (let c = 0; c < tileChords(field, table, t).length && budget > 0; c++) {
         budget -= 2;
-        const a = probe(this.engine, this.id, table, t, c, 0, 60);
-        const b = probe(this.engine, this.id, table, t, c, 1, 60);
+        const a = probe(this.board, this.id, table, t, c, 0, 60);
+        const b = probe(this.board, this.id, table, t, c, 1, 60);
         // Careful: whichever way the tap goes has to be safe.
         const score = Math.min(this.safety(a), this.safety(b)) + (beside ? 6 : 0);
         if (!best || score > best.score) best = { step: a.steps[0], score };
       }
     }
-    if (best && best.score > 0 && this.tapStep(best.step, ev)) {
+    if (best && best.score > 0 && this.tapStep(best.step)) {
       this.misses = 0;
       return;
     }
@@ -398,8 +403,8 @@ class Farmer extends Bot {
 
   /** The candidate tile farthest from anyone else's lines. */
   private pickHome(radius: number): Pt {
-    const field = this.engine.field;
-    const table = this.engine.players.get(this.id)!.table;
+    const field = this.board.field;
+    const table = this.board.players.get(this.id)!.table;
     const rivals = this.rivalPoints();
     let best: Pt = tileCenter(field, Math.max(0, randomTileWithLine(field, table, this.rng)));
     let bestD = -1;
@@ -513,21 +518,21 @@ class Bridge extends Bot {
   private repairAt = 0;
 
   override firstRule(): PlayerRule {
-    return bridgeRule(this.engine.field.family);
+    return bridgeRule(this.board.field.family);
   }
 
-  override update(now: number, p: Player, ev: GameEvent[]): void {
+  override update(now: number, p: PlayerView, seen: readonly GameEvent[]): void {
     // Planning runs whether or not a head is free.
     if (!this.plan) this.search(now, p, BRIDGE_BUDGET);
-    else for (const e of ev) if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined && this.plan.lines.has(e.path)) this.plan.cuts++;
-    super.update(now, p, ev);
+    else for (const e of seen) if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined && this.plan.lines.has(e.path)) this.plan.cuts++;
+    super.update(now, p, seen);
   }
 
-  protected think(now: number, p: Player, ev: GameEvent[]): void {
+  protected think(now: number, p: PlayerView): void {
     this.nextTapAt = now + 400 + this.rng.int(600);
     const plan = this.plan;
     if (!plan) return;
-    if (isBridgeClosed(this.engine, this.id, plan.steps)) {
+    if (isBridgeClosed(this.board, this.id, plan.steps)) {
       // Done: the next one out spans it.
       this.done(plan, true);
       return;
@@ -548,7 +553,7 @@ class Bridge extends Bot {
       this.done(plan, false);
       return;
     }
-    if (this.tapPlan(plan, p, mine, ev)) this.idle = 0;
+    if (this.tapPlan(plan, p, mine)) this.idle = 0;
     else this.idle++;
   }
 
@@ -557,9 +562,9 @@ class Bridge extends Bot {
    * (tile × 64 + chord), and those lines' ids. A captured pattern's line
    * numbers its chords by its own table, so it holds none of ours.
    */
-  private ours(steps: readonly WalkStep[], p: Player): { mine: Set<number>; lines: Set<number> } {
-    const crossing = new Set<Path>();
-    for (const s of steps) for (const q of this.engine.pathsOn(s.tile)) if (q.owner === this.id && q.table === p.table) crossing.add(q);
+  private ours(steps: readonly WalkStep[], p: PlayerView): { mine: Set<number>; lines: Set<number> } {
+    const crossing = new Set<PathView>();
+    for (const s of steps) for (const q of this.board.pathsOn(s.tile)) if (q.owner === this.id && q.table === p.table) crossing.add(q);
     const mine = new Set<number>();
     for (const q of crossing) for (const s of q.steps) mine.add(s.tile * 64 + s.chord);
     return { mine, lines: new Set([...crossing].map((q) => q.id)) };
@@ -597,9 +602,9 @@ class Bridge extends Bot {
   }
 
   /** One tap towards closing the plan; false if none landed. */
-  private tapPlan(plan: BridgePlan, p: Player, mine: ReadonlySet<number>, ev: GameEvent[]): boolean {
-    ev.push(...this.engine.setActive(this.id, 0));
-    const field = this.engine.field;
+  private tapPlan(plan: BridgePlan, p: PlayerView, mine: ReadonlySet<number>): boolean {
+    this.act.setActive(0);
+    const field = this.board.field;
     const onPlan = new Set(plan.steps.map((s) => s.tile * 64 + s.chord));
     // A half that ran off the edge: tap its start (the same spot) to turn it round.
     for (const q of p.paths) {
@@ -607,7 +612,7 @@ class Bridge extends Bot {
       const first = q.steps[0];
       const last = q.steps[q.steps.length - 1];
       if (!onPlan.has(first.tile * 64 + first.chord) || !onFieldBoundary(field, last.tile, last.b)) continue;
-      if (this.tapStep(first, ev)) return true;
+      if (this.tapStep(first)) return true;
     }
     // Otherwise the gap nearest the middle: a chord of the plan none of its lines holds yet.
     const steps = plan.steps;
@@ -617,20 +622,20 @@ class Bridge extends Bot {
       for (const i of d === 0 ? [mid] : [mid - d, mid + d]) {
         const s = steps[i];
         if (!s || mine.has(s.tile * 64 + s.chord)) continue;
-        if (this.tapStep(s, ev)) return true;
+        if (this.tapStep(s)) return true;
         if (++tries >= 6) return false;
       }
     }
     // No gap: our lines hold it all but haven't closed yet — slow pieces (a flip's or a regrow's)
     // waiting their turn. A tap on one gives it a head, the longest first.
-    const slow = new Set<Path>();
+    const slow = new Set<PathView>();
     for (const s of steps) {
-      for (const q of this.engine.pathsOn(s.tile)) {
+      for (const q of this.board.pathsOn(s.tile)) {
         if (q.owner === this.id && q.table === p.table && q.status === 'growing' && q.spawned) slow.add(q);
       }
     }
     for (const q of [...slow].sort((x, y) => y.steps.length - x.steps.length)) {
-      if (this.tapStep(q.steps[q.steps.length - 1], ev)) return true;
+      if (this.tapStep(q.steps[q.steps.length - 1])) return true;
     }
     return false;
   }
@@ -646,8 +651,8 @@ class Bridge extends Bot {
       if (now - at < BRIDGE_RETRY_MS) return true;
       this.failed.delete(k);
     }
-    for (const q of this.engine.pathsOn(mid.tile)) if (q.owner !== this.id) return true;
-    return this.engine.insideRivalCircuit(this.id, stepMid(mid));
+    for (const q of this.board.pathsOn(mid.tile)) if (q.owner !== this.id) return true;
+    return this.board.insideRivalCircuit(this.id, stepMid(mid));
   }
 
   /**
@@ -656,8 +661,8 @@ class Bridge extends Bot {
    * round past lines already judged costs next to nothing; only the plan's
    * own steps are walked again.
    */
-  private search(now: number, p: Player, budget: number): void {
-    const index = edgeIndexFor(this.engine.field, p.table);
+  private search(now: number, p: PlayerView, budget: number): void {
+    const index = edgeIndexFor(this.board.field, p.table);
     if (!index.done) {
       index.work(budget);
       return;
@@ -731,7 +736,7 @@ class Bridge extends Bot {
   private cutBridge(now: number): BridgePlan | null {
     for (let i = this.laid.length - 1; i >= 0; i--) {
       const q = this.laid[i];
-      if (isBridgeClosed(this.engine, this.id, q.steps)) continue;
+      if (isBridgeClosed(this.board, this.id, q.steps)) continue;
       if (this.unplayable(now, q.a, q.b, q.steps[q.steps.length >> 1])) continue;
       this.laid.splice(i, 1);
       return q;
@@ -751,7 +756,7 @@ class Bridge extends Bot {
     if (d === null) return null;
     // A bridge claims the shorter way round between its ends, as the engine does.
     const arc = fwd(c, d, n) <= n >> 1 ? { a: c, b: d } : { a: d, b: c };
-    const laid = isBridgeClosed(this.engine, this.id, [line.first, line.last]);
+    const laid = isBridgeClosed(this.board, this.id, [line.first, line.last]);
     if (this.nest) {
       // It spans the last one if its arc holds the last's (else it's a bump beside it).
       const last = this.nest.arc;
@@ -828,7 +833,7 @@ class EdgeLord extends Bot {
   private since = 0;
   private taps = 0;
   /** Own circuits' outlines and boxes, kept while a circuit stays as it was. */
-  private readonly shapes = new WeakMap<Path, { n: number; first: WalkStep; last: WalkStep; poly: readonly Pt[]; box: Box }>();
+  private readonly shapes = new WeakMap<PathView, { n: number; first: WalkStep; last: WalkStep; poly: readonly Pt[]; box: Box }>();
 
   /** Has it looked at the rule it plays (one from before `SMALL_RULES`, or an older brain's, may be too small)? */
   private ruleChecked = false;
@@ -841,12 +846,12 @@ class EdgeLord extends Bot {
     return this.cleanRule(undefined, tooSmallForEdgeLord);
   }
 
-  override update(now: number, p: Player, ev: GameEvent[]): void {
+  override update(now: number, p: PlayerView, seen: readonly GameEvent[]): void {
     if (!this.ruleChecked) {
       this.ruleChecked = true;
-      if (tooSmallForEdgeLord(p.rule)) ev.push(...this.engine.setRule(this.id, this.cleanRule(p.rule, tooSmallForEdgeLord)));
+      if (tooSmallForEdgeLord(p.rule)) this.act.setRule(this.cleanRule(p.rule, tooSmallForEdgeLord));
     }
-    const index = edgeIndexFor(this.engine.field, p.table);
+    const index = edgeIndexFor(this.board.field, p.table);
     if (index !== this.index) {
       this.index = index;
       this.dir = 0;
@@ -859,22 +864,22 @@ class EdgeLord extends Bot {
     }
     if (index.starts.length === 0) return;
     if (this.dir === 0) {
-      this.dir = clockwise(this.engine, index) ? 1 : -1;
+      this.dir = clockwise(this.board, index) ? 1 : -1;
       this.goTo(now, this.rng.int(index.starts.length));
     }
     // Cut while growing: the engine refuses taps for a moment.
-    for (const e of ev) {
-      if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined) this.nextTapAt = Math.max(this.nextTapAt, now + this.engine.knobs.respawnDelayMs + 50);
+    for (const e of seen) {
+      if (e.t === 'wipe' && e.owner === this.id && e.by !== undefined) this.nextTapAt = Math.max(this.nextTapAt, now + this.board.knobs.respawnDelayMs + 50);
     }
-    super.update(now, p, ev);
+    super.update(now, p, seen);
   }
 
-  protected think(now: number, p: Player, ev: GameEvent[]): void {
+  protected think(now: number, p: PlayerView): void {
     const index = this.index;
     if (!index) return;
     this.nextTapAt = now + 300 + this.rng.int(400);
-    ev.push(...this.engine.setActive(this.id, 0));
-    const field = this.engine.field;
+    this.act.setActive(0);
+    const field = this.board.field;
     let refused = 0;
     for (let k = 0; k < EDGE_LOOK; k++) {
       const s = index.starts[this.at];
@@ -899,7 +904,7 @@ class EdgeLord extends Bot {
       }
       // Not started, cut, or run off the edge: tap it (a stuck line's start turns it round).
       this.taps++;
-      if (this.tapStep(step, ev) || ++refused >= EDGE_REFUSALS) return;
+      if (this.tapStep(step) || ++refused >= EDGE_REFUSALS) return;
       // Refused anyway: on round.
       this.goTo(now, this.at + this.dir);
     }
@@ -913,8 +918,8 @@ class EdgeLord extends Bot {
   }
 
   /** Our line on the chord of `step` (of our own rule), if any. */
-  private lineOn(step: WalkStep, table: ChordTable): Path | undefined {
-    for (const q of this.engine.pathsOn(step.tile)) {
+  private lineOn(step: WalkStep, table: ChordTable): PathView | undefined {
+    for (const q of this.board.pathsOn(step.tile)) {
       if (q.owner !== this.id || q.table !== table) continue;
       for (const r of q.steps) if (r.tile === step.tile && r.chord === step.chord) return q;
     }
@@ -923,14 +928,14 @@ class EdgeLord extends Bot {
 
   /** Is `step`'s tile on a rival's line, or inside a rival's circuit? */
   private rivalsHold(step: WalkStep): boolean {
-    for (const q of this.engine.pathsOn(step.tile)) if (q.owner !== this.id) return true;
-    return this.engine.insideRivalCircuit(this.id, stepMid(step));
+    for (const q of this.board.pathsOn(step.tile)) if (q.owner !== this.id) return true;
+    return this.board.insideRivalCircuit(this.id, stepMid(step));
   }
 
   /** Is `step` inside a circuit of ours (a loop or an edge-to-edge claim)? */
   private claimed(step: WalkStep): boolean {
     const p = stepMid(step);
-    const me = this.engine.players.get(this.id);
+    const me = this.board.players.get(this.id);
     if (!me) return false;
     for (const q of me.paths) {
       if (q.status !== 'closed') continue;
@@ -941,7 +946,7 @@ class EdgeLord extends Bot {
     return false;
   }
 
-  private shapeOf(q: Path): { poly: readonly Pt[]; box: Box } {
+  private shapeOf(q: PathView): { poly: readonly Pt[]; box: Box } {
     const first = q.steps[0];
     const last = q.steps[q.steps.length - 1];
     const hit = this.shapes.get(q);
@@ -965,8 +970,8 @@ class EdgeLord extends Bot {
  * (y down)? The shoelace sum of their tiles' centres in order is positive
  * then.
  */
-export function clockwise(engine: Engine, index: EdgeIndex): boolean {
-  const field = engine.field;
+export function clockwise(board: BoardView, index: EdgeIndex): boolean {
+  const field = board.field;
   const n = index.starts.length;
   let sum = 0;
   for (let i = 0; i < n; i++) {
