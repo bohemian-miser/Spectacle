@@ -4,18 +4,24 @@
  * optionally for one edge set.
  *
  * Kept in memory, and in WINS_FILE (one JSON line per win, read back at
- * startup) when that is set.
+ * startup) when that is set. With a remote (server/firestore.ts, every shard
+ * writing to one place) the board is the remote's — read at most every
+ * `REMOTE_TTL_MS` per query — merged with the wins this process has seen, so
+ * a win shows at once on the shard it was won on.
  */
 
 import { existsSync, readFileSync } from 'node:fs';
 import { appendFile } from 'node:fs/promises';
 import { GAME_MODES, type GameMode } from '../shared/game/knobs';
 import type { WinEntry } from '../shared/game/protocol';
+import type { WinsRemote } from './firestore';
 
 /** Rows `GET /wins` sends at most. */
 export const TOP = 20;
 /** Wins kept per (mode, size): the fastest; past this the slowest go. */
 const KEEP = 5000;
+/** How long a remote answer is served before it's asked again. */
+export const REMOTE_TTL_MS = 30_000;
 
 export interface WinRecord {
   readonly mode: GameMode;
@@ -72,10 +78,15 @@ export class Wins {
   /** Per `mode|level`, fastest first. */
   private readonly lists = new Map<string, WinRecord[]>();
 
+  /** Per query, the remote's last answer and when it came. */
+  private readonly cache = new Map<string, { rows: WinRecord[]; at: number; asking?: Promise<void> }>();
+
   constructor(
     /** WINS_FILE, or '' for memory only. */
     private readonly file = '',
     private readonly onError: (e: unknown) => void = () => {},
+    /** Where every shard's wins are kept, and this shard's name to tag them with. */
+    private readonly remote: { store: WinsRemote; shard: string } | null = null,
   ) {
     if (file && existsSync(file)) {
       for (const line of readFileSync(file, 'utf8').split('\n')) {
@@ -101,16 +112,62 @@ export class Wins {
   add(r: WinRecord): void {
     this.keep(r);
     if (this.file) appendFile(this.file, JSON.stringify(r) + '\n').catch(this.onError);
+    if (this.remote) this.remote.store.add(r, this.remote.shard).catch(this.onError);
   }
 
-  /** The fastest `TOP` in a mode at a size, of one edge set (`subset` as `ruleKey` writes it) or of all. */
+  /** The fastest `TOP` in a mode at a size this process has seen, of one edge set (`subset` as `ruleKey` writes it) or of all. */
   top(mode: GameMode, level: number, subset = ''): WinEntry[] {
-    const out: WinEntry[] = [];
+    return this.localTop(mode, level, subset).map(entry);
+  }
+
+  /**
+   * The board for `GET /wins`: the remote's fastest (every shard's, kept for
+   * good) merged with this process's own, or the local board alone without a
+   * remote. A remote that fails leaves its last answer standing.
+   */
+  async board(mode: GameMode, level: number, subset = '', now = Date.now()): Promise<WinEntry[]> {
+    const local = this.localTop(mode, level, subset);
+    if (!this.remote) return local.map(entry);
+    const key = `${mode}|${level}|${subset}`;
+    let c = this.cache.get(key);
+    if (!c || now - c.at > REMOTE_TTL_MS) {
+      const held = c ?? { rows: [], at: 0 };
+      this.cache.set(key, held);
+      held.asking ??= this.remote.store
+        .top(mode, level, subset, TOP)
+        .then((rows) => {
+          held.rows = rows;
+          held.at = Date.now();
+        })
+        .catch((e) => {
+          held.at = Date.now(); // try again after the TTL, not on every request
+          this.onError(e);
+        })
+        .finally(() => (held.asking = undefined));
+      await held.asking;
+      c = held;
+    }
+    const seen = new Set<string>();
+    const merged: WinRecord[] = [];
+    for (const r of [...c.rows, ...local].sort(byTime)) {
+      const id = `${r.at}|${r.name}|${r.ms}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      merged.push(r);
+      if (merged.length === TOP) break;
+    }
+    return merged.map(entry);
+  }
+
+  private localTop(mode: GameMode, level: number, subset: string): WinRecord[] {
+    const out: WinRecord[] = [];
     for (const r of this.lists.get(`${mode}|${level}`) ?? []) {
       if (subset && r.rule.split('|')[1] !== subset) continue;
-      out.push({ rule: r.rule, ms: r.ms, at: r.at, name: r.name, bot: r.bot, others: r.others });
+      out.push(r);
       if (out.length === TOP) break;
     }
     return out;
   }
 }
+
+const entry = (r: WinRecord): WinEntry => ({ rule: r.rule, ms: r.ms, at: r.at, name: r.name, bot: r.bot, others: r.others });

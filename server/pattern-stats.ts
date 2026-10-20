@@ -215,6 +215,37 @@ export class PatternStats {
     return { now, since: this.since, rows: [...rows.values()].sort((a, b) => b.ms - a.ms) };
   }
 
+  /**
+   * Fold this process's running stints into `stored` — the totals of
+   * finished stints kept elsewhere (BigQuery, every shard, all time) — the
+   * way `report` folds them into its own rows: each running stint counts as
+   * one, with its time so far.
+   */
+  withLive(now: number, since: number, stored: readonly PatternRow[]): PatternStatsReport {
+    const rows = new Map<string, PatternRow>();
+    for (const r of stored) rows.set(rowKey(r.mode, r.rule, r.bot), { ...r, live: 0 });
+    for (const s of this.open.values()) {
+      const k = rowKey(s.mode, s.rule, s.bot);
+      let r = rows.get(k);
+      if (!r) {
+        r = {
+          mode: s.mode, rule: s.rule, bot: s.bot, stints: 0, ms: 0, peakScore: 0, finalScoreSum: 0, finished: 0, circuits: 0,
+          peakCoverage: 0, coverageSum: 0, wins: 0, live: 0, lastPlayedAt: s.startedAt,
+        };
+        rows.set(k, r);
+      }
+      r.stints++;
+      r.live++;
+      r.ms += s.lastSeen - s.startedAt;
+      r.circuits += s.circuits;
+      r.peakScore = Math.max(r.peakScore, s.peak);
+      r.peakCoverage = Math.max(r.peakCoverage, coverage(s));
+      if (s.won) r.wins++;
+      r.lastPlayedAt = Math.max(r.lastPlayedAt, s.lastSeen);
+    }
+    return { now, since, rows: [...rows.values()].sort((a, b) => b.ms - a.ms) };
+  }
+
   /** Finished stints only — what `STATS_FILE` keeps. */
   toFile(): PatternStatsFile {
     return { since: this.since, rows: [...this.rows.values()].map((r) => ({ ...r, live: 0 })) };
@@ -385,3 +416,33 @@ export const PATTERNS_PAGE = `<!doctype html>
 </body>
 </html>
 `;
+
+/**
+ * The stored totals, per (mode, rule, bot), from BigQuery's `stints` table
+ * (server/bigquery.ts): the same columns `PatternRow` keeps in memory, over
+ * every finished stint from every shard. `since` is the first stint's start.
+ */
+export const STORED_ROWS_SQL = `
+SELECT mode, rule, bot,
+  COUNT(*) AS stints, SUM(ms) AS ms, MAX(peakScore) AS peakScore, SUM(finalScore) AS finalScoreSum,
+  COUNT(*) AS finished, SUM(circuits) AS circuits, MAX(peakCoverage) AS peakCoverage,
+  SUM(peakCoverage) AS coverageSum, COUNTIF(won) AS wins, UNIX_MILLIS(MAX(endedAt)) AS lastPlayedAt,
+  MIN(MIN(startedAt)) OVER () AS since
+FROM {dataset}.stints
+GROUP BY mode, rule, bot`;
+
+/** `STORED_ROWS_SQL`'s answer as rows (BigQuery sends every value as a string). */
+export function storedRows(rows: readonly Record<string, string | null>[]): { since: number | null; rows: PatternRow[] } {
+  let since: number | null = null;
+  const out: PatternRow[] = [];
+  for (const r of rows) {
+    const n = (k: string): number => Number(r[k] ?? 0);
+    if (r.since !== null && r.since !== undefined) since = since === null ? n('since') : Math.min(since, n('since'));
+    out.push({
+      mode: r.mode as GameMode, rule: r.rule ?? '', bot: r.bot === 'true', stints: n('stints'), ms: n('ms'), peakScore: n('peakScore'),
+      finalScoreSum: n('finalScoreSum'), finished: n('finished'), circuits: n('circuits'), peakCoverage: n('peakCoverage'),
+      coverageSum: n('coverageSum'), wins: n('wins'), live: 0, lastPlayedAt: n('lastPlayedAt'),
+    });
+  }
+  return { since, rows: out };
+}

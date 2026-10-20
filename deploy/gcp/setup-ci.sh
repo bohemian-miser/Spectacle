@@ -19,8 +19,8 @@
 # to it (they can't read, list or delete them), and CI's triage workflow
 # files them as GitHub issues (server/feedback.ts, docs/feedback-agent.md).
 #
-# And a log sink that keeps every finished stint in BigQuery: which rules get
-# played, their board coverage, the bots' share (stats-sink.sh,
+# And the permanent stores every shard writes to: the leaderboard in
+# Firestore, every finished stint and won round in BigQuery (stats.sh,
 # docs/pattern-stats.md).
 #
 # Then prints the variables to add to the GitHub repo. Run once with `gcloud`
@@ -103,7 +103,7 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
 
 WIF="projects/$PNUM/locations/global/workloadIdentityPools/$POOL/providers/$PROVIDER"
 
-PROJECT="$PROJECT" REGION="$REGION" "$(dirname "$0")/stats-sink.sh"
+PROJECT="$PROJECT" REGION="$REGION" "$(dirname "$0")/stats.sh"
 
 cat <<MSG
 

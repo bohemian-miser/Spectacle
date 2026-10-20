@@ -1,0 +1,81 @@
+[
+{
+"name": "wonAt",
+"type": "TIMESTAMP",
+"mode": "REQUIRED"
+},
+{
+"name": "shard",
+"type": "STRING"
+},
+{
+"name": "mode",
+"type": "STRING",
+"mode": "REQUIRED"
+},
+{
+"name": "level",
+"type": "INT64"
+},
+{
+"name": "round",
+"type": "INT64"
+},
+{
+"name": "rule",
+"type": "STRING"
+},
+{
+"name": "ruleKey",
+"type": "STRING"
+},
+{
+"name": "subset",
+"type": "STRING"
+},
+{
+"name": "bot",
+"type": "BOOL"
+},
+{
+"name": "kind",
+"type": "STRING"
+},
+{
+"name": "tiles",
+"type": "INT64"
+},
+{
+"name": "boardTiles",
+"type": "INT64"
+},
+{
+"name": "coverage",
+"type": "FLOAT64"
+},
+{
+"name": "roundMs",
+"type": "INT64"
+},
+{
+"name": "humans",
+"type": "INT64"
+},
+{
+"name": "bots",
+"type": "INT64"
+},
+{
+"name": "name",
+"type": "STRING"
+},
+{
+"name": "others",
+"type": "STRING",
+"mode": "REPEATED"
+},
+{
+"name": "named",
+"type": "BOOL"
+}
+]
