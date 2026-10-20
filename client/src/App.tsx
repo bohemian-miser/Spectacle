@@ -71,6 +71,19 @@ function initialMode(): Mode {
  */
 const STRUGGLE_ATTEMPTS = 3;
 
+/**
+ * Parking: an online tab nobody is looking at lets its socket go, so an open
+ * tab doesn't keep a server (and, on Cloud Run, a billed instance) awake all
+ * day. Hidden this long, or no input this long, and it closes; it comes back
+ * — resuming the player on its saved ticket, as a refresh would — when the
+ * tab is shown again or touched. A parked player is away like any other, so
+ * the server's resume window and away switch apply.
+ */
+const PARK_HIDDEN_MS = { lobby: 60_000, arena: 3 * 60_000 };
+const PARK_IDLE_MS = { lobby: 5 * 60_000, arena: 20 * 60_000 };
+/** The close code of a socket the server let go for never joining (server/index.ts): park, don't redial. */
+export const IDLE_CLOSE = 4003;
+
 export function App(): JSX.Element {
   const store = useMemo(() => new Store(), []);
   useStore(store);
@@ -88,6 +101,10 @@ export function App(): JSX.Element {
   const [notice, setNotice] = useState('');
   /** Online, can't reach the server after a few tries — offer solo instead of just spinning. */
   const [struggling, setStruggling] = useState(false);
+  /** Online, the socket let go while nobody's looking (see `PARK_HIDDEN_MS`). */
+  const [parked, setParked] = useState(false);
+  /** Set while parked: waking resumes our own ticket, which this tab's own `answerTabs` would otherwise claim against us. */
+  const wasParked = useRef(false);
   const connRef = useRef<GameConnection | null>(null);
   const joined = useRef(false);
   const retry = useRef(0);
@@ -108,6 +125,13 @@ export function App(): JSX.Element {
 
   // One connection per (mode, solo options); reconnect online with backoff.
   useEffect(() => {
+    // Parked: no connection, and the board stays as it was until we're back.
+    if (parked) {
+      wasParked.current = true;
+      return;
+    }
+    const waking = wasParked.current;
+    wasParked.current = false;
     let timer = 0;
     let disposed = false;
     joined.current = false;
@@ -139,6 +163,10 @@ export function App(): JSX.Element {
         (code) => {
           if (disposed) return;
           joined.current = false;
+          if (code === IDLE_CLOSE) {
+            setParked(true);
+            return;
+          }
           if (code === 4000) {
             // Resumed in another tab: the player is theirs now, and our
             // ticket is dead — rejoining on it would only make a second one.
@@ -165,7 +193,7 @@ export function App(): JSX.Element {
     // A duplicated tab brings the original's ticket along, and a new tab may
     // have picked up the shared copy: if another tab is still playing the
     // player, start afresh here instead of taking it over.
-    if (saved) {
+    if (saved && !waking) {
       void heldElsewhere(saved.resume.id).then((held) => {
         if (disposed) return;
         if (held) {
@@ -183,7 +211,52 @@ export function App(): JSX.Element {
       connRef.current = null;
     };
     // A solo board is rebuilt for a new game mode; online, the mode only picks the room on join.
-  }, [mode, solo, store, mode === 'solo' ? gameMode : null, epoch]);
+  }, [mode, solo, store, mode === 'solo' ? gameMode : null, epoch, parked]);
+
+  // Park an online tab that's hidden or untouched for a while; wake it when it's shown or touched.
+  const screenRef = useRef<Screen>(screen);
+  screenRef.current = screen;
+  useEffect(() => {
+    if (mode !== 'online') return;
+    let lastInput = Date.now();
+    let hiddenSince = document.hidden ? Date.now() : 0;
+    let asleep = false;
+    const wake = (): void => {
+      lastInput = Date.now();
+      if (!asleep) return;
+      asleep = false;
+      setParked(false);
+    };
+    const onVisibility = (): void => {
+      if (document.hidden) hiddenSince = Date.now();
+      else {
+        hiddenSince = 0;
+        wake();
+      }
+    };
+    const check = (): void => {
+      if (asleep) return;
+      const now = Date.now();
+      const where = screenRef.current;
+      if ((hiddenSince && now - hiddenSince > PARK_HIDDEN_MS[where]) || now - lastInput > PARK_IDLE_MS[where]) {
+        asleep = true;
+        // Nothing goes out while parked; waking joins afresh on the saved ticket.
+        joined.current = false;
+        setParked(true);
+      }
+    };
+    // The server let an idle lobby go (IDLE_CLOSE): the same as parking here.
+    if (parked) asleep = true;
+    const events = ['pointerdown', 'keydown', 'wheel', 'touchstart'] as const;
+    for (const e of events) window.addEventListener(e, wake, { passive: true });
+    document.addEventListener('visibilitychange', onVisibility);
+    const timer = window.setInterval(check, 10_000);
+    return () => {
+      for (const e of events) window.removeEventListener(e, wake);
+      document.removeEventListener('visibilitychange', onVisibility);
+      window.clearInterval(timer);
+    };
+  }, [mode, parked]);
 
   // Tell a duplicated tab when this one is playing the player its ticket names.
   // Also while reconnecting (no `store.you` yet): a new tab on the shared
@@ -302,8 +375,17 @@ export function App(): JSX.Element {
     setScreen('arena');
   };
 
+  const pause = parked && (
+    <div className="overlay park-overlay" role="status" onPointerDown={() => setParked(false)}>
+      <div>
+        Paused while you were away
+        <div className="overlay-fallback">tap to carry on</div>
+      </div>
+    </div>
+  );
   if (screen === 'arena' && (store.you || rejoin.current) && connRef.current) {
     return (
+      <>
       <Arena
         store={store}
         conn={connRef.current}
@@ -311,11 +393,15 @@ export function App(): JSX.Element {
         onNewRule={() => setScreen('lobby')}
         onLeave={leave}
         struggling={mode === 'online' && struggling}
+        parked={parked}
         onGiveUp={leaveToSolo}
       />
+      {pause}
+      </>
     );
   }
   return (
+    <>
     <Lobby
       store={store}
       mode={mode}
@@ -357,5 +443,7 @@ export function App(): JSX.Element {
       onCancel={() => setScreen('arena')}
       onLeave={leave}
     />
+    {pause}
+    </>
   );
 }

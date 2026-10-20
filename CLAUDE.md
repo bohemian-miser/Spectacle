@@ -147,6 +147,11 @@ client/src/       Vite + React.
 tests/            vitest. strand.test.ts pins the local walker against the
                   core's global analyze() — the most important test here.
                   resume.test.ts spawns the real server.
+scripts/build-server.mjs  `npm run build`'s last step: the server bundled
+                  (esbuild) into dist-server/index.mjs, ws included — the
+                  image runs `node` on it, no node_modules, no tsx.
+scripts/compress.mjs  `npm run build`: a .br and .gz copy of dist/'s text
+                  files; serveStatic sends them by Accept-Encoding.
 scripts/smoke.ts  Headless Chromium round (needs PW_EXE or playwright browsers).
 scripts/flip-bench.ts  Conquest flip load: tick time, live flip pieces, pace.
 scripts/lag-bench.ts  Where a busy frame goes: engine, wire, store, tints,
@@ -258,8 +263,9 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   board (`WIN_FADE_MS`). Keep `winCelebrateMs` ≥ `WIN_IN_MS + WIN_SPREAD_MS`.
   `updateCover` is ~0.5 ms a pass at hex 5 (the pocket pass walks every free
   tile, hence `POCKET_FROM`); a newly closed giant claim's
-  first fill is the spike (~25 ms at hex 5), and only because `warmEdges`
-  (startup, server and solo, ~1.4 s at hex 6) built `acrossEdge` up front —
+  first fill is the spike (~25 ms at hex 5), and only because the edge
+  table is built up front (now inside `buildField`; `warmEdges` is a no-op
+  for a field it built) —
   lazily it was 60–75 ms.
   `winFraction: 0` turns winning off. `tests/win.test.ts`.
 - **One head, unlimited lines.** A player has one growing line at a time
@@ -406,8 +412,9 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   before `roomForJoin`/`validateRule` do any work): at or past it, a join is
   refused with `error.code: 'full'` on the socket it came in on (not
   rerouted). A `join.resume` is exempt (checked first): it replaces a player
-  already counted. `/health` reports `maxPlayers`/`atCapacity`. At level 6
-  the field is ~540 MB RSS idle and 80 players across 9 rooms add ~30 MB and
+  already counted. `/health` reports `maxPlayers`/`atCapacity`. With levels
+  3–6 built the process is ~185 MB RSS idle (it was ~520 MB before the lean
+  `buildField`, plus ~100 MB of npm/tsx processes) and 80 players across 9 rooms add ~30 MB and
   ~10% of a core (a local load test), so 400 is about half a vCPU inside
   `1Gi`; raise CPU with memory before raising the cap. **Named rooms and
   resume tickets are per process**: with more than one instance an invite
@@ -418,6 +425,18 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   Every instance names itself (`INSTANCE`: random id + `K_REVISION`) on
   `/status`, `/health`, and a once-a-minute `{"message":"heartbeat"}` log
   line (only while it has sockets) — the log is the one view across them all.
+- **Parking: no socket while nobody's looking.** One open socket keeps a
+  process awake — on Cloud Run a billed instance: in October 2026 two lobby
+  tabs left open (reconnecting at the 1 h cap) kept one instance billed 24/7,
+  ~$69/month, with nobody playing. So an online tab parks (`App.tsx`,
+  `PARK_HIDDEN_MS` / `PARK_IDLE_MS`): hidden 1 min (lobby) or 3 min (arena),
+  or untouched 5 / 20 min, it closes its socket and shows "Paused"; shown or
+  touched, it wakes through the same path as a refresh, resuming on its saved
+  ticket (`wasParked` skips `heldElsewhere`, which this tab's own
+  `answerTabs` would otherwise answer). A parked player is away like any
+  other: the resume window and the away switch apply. The server lets a
+  socket that never joins go after `UNJOINED_MS` (30 min) with code 4003
+  (`IDLE_CLOSE`), which a client takes as parking, not a drop to redial.
 - **Client fallback: never a silent dead end.** `error.code` (protocol.ts)
   gives the client a machine-readable reason instead of parsing text.
   `store.lastError` (a fresh object every time, even a repeat message, so a
@@ -749,8 +768,11 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   gluing, the fit, the wedge's dots, strands joining end to end on every
   step of several rules (class 6 ones included), taps and the outline.
 - **Hosting**: GCP project `spectacle-game`, region `us-central1` (cheapest,
-  and most players are in North America). Cloud Run (scale to zero) via CI is
-  the intended path; the free e2-micro VM is the alternative. Session resume
+  and most players are in North America). From October 2026 the arena is one
+  always-on e2-micro (free tier; the Standard-tier IPv4 is ~$3.65/month, the
+  one cost), `deploy/gcp/create-vm.sh`: one process, so a `?room=` link is
+  exact, and idle sockets cost nothing. Watchtower pulls each published image.
+  Cloud Run (scale to zero, deploy-cloudrun.yml) stays the path for a surge. Session resume
   covers Cloud Run's hourly WebSocket cap. Cloud Run probes `/health` (set
   in both deploy-cloudrun.yml's `flags` and cloudrun.sh; keep them in step):
   a startup probe (every 2 s, up to 240 s, as long as the default TCP probe
@@ -880,8 +902,12 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   it above the claim tint and only past `ARROW_MIN_SCALE` — below that it is
   speckle. In WebGL it is one instanced pass over the whole transform buffer
   (the shape is identical for every leaf type).
-- **`fieldOutline` is ~1.5 s at hex level 6.** The server and solo build it at
-  startup so the first edge-to-edge claim doesn't stall a tick.
+- **`buildField` builds the edge table and the outline too**, straight into
+  typed arrays (no `flatten()` objects, no Maps of vertex lists): levels 3–6
+  in ~1.8 s on the Pi, peak ~200 MB, where the old build plus `fieldOutline`
+  and `warmEdges` took ~8 s and ~520 MB. `tests/field-build.test.ts` keeps the
+  old build and pins the new one to it byte for byte, neighbour for
+  neighbour, outline point for point — keep it so when touching the build.
 - **Every circuit is coloured by length** (`circuitColor`): log length walks
   the hue across 220° (centred on the owner's colour) and the lightness from
   84% to 26%, plus up to ±14° per circuit id. The colour is final — no lift,
@@ -894,7 +920,7 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   The plain board swaps every tile fill for the ground colour, turns off the
   arrows (`TileLayer.setArrows`) and strokes `fieldOutline` on the overlay; the
   zoomed-in tile outlines and your rule's pattern stay. On a level-6 arena the
-  first plain frame pays the ~1.5 s outline build in the browser.
+  outline comes with the field (`buildField`), so the plain board costs nothing extra.
 - **Team colours** (`settings.teams`, key T in the arena, or the modal): every
   line of yours draws in `--team-me` (blue), every rival's in `--team-rival`
   (red) — board, washes, sparks, HUD swatches and pattern tabs alike. Circuits

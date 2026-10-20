@@ -5,6 +5,10 @@
 #
 #   ./deploy/gcp/create-vm.sh                       # plain HTTP on the IP
 #   DOMAIN=spectacle.example.com ./deploy/gcp/create-vm.sh   # HTTPS via Caddy
+#   DOMAIN="hexagon.rodeo www.hexagon.rodeo" ./deploy/gcp/create-vm.sh   # several names, spaced (gcloud splits on commas)
+#
+# The VM runs as the project's default compute service account (as Cloud Run
+# does), with storage scope, so BOTS_URL / FEEDBACK_URL on gs:// work as there.
 set -euo pipefail
 
 ZONE="${ZONE:-us-central1-a}"
@@ -12,8 +16,10 @@ REGION="${ZONE%-*}"
 NAME="${NAME:-spectacle}"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 
+# Standard tier: 200 GB/month of egress free (Premium gives 1 GB). The address
+# itself is billed while in use ($0.005/h, ~$3.65/month) — the one cost here.
 gcloud compute addresses describe "$NAME-ip" --region "$REGION" >/dev/null 2>&1 ||
-  gcloud compute addresses create "$NAME-ip" --region "$REGION"
+  gcloud compute addresses create "$NAME-ip" --region "$REGION" --network-tier STANDARD
 
 gcloud compute firewall-rules describe "$NAME-web" >/dev/null 2>&1 ||
   gcloud compute firewall-rules create "$NAME-web" --allow tcp:80,tcp:443 --target-tags "$NAME"
@@ -31,7 +37,8 @@ else
     --image-family debian-12 --image-project debian-cloud \
     --boot-disk-size 20GB --boot-disk-type pd-standard \
     --tags "$NAME" \
-    --address "$NAME-ip" \
+    --address "$NAME-ip" --network-tier STANDARD \
+    --scopes storage-rw,logging-write,monitoring-write \
     --metadata-from-file "$META" \
     ${DOMAIN:+--metadata spectacle-domain="$DOMAIN"}
 fi

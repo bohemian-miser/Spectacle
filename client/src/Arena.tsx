@@ -31,6 +31,8 @@ export interface ArenaProps {
   onLeave(): void;
   /** Online, disconnected, and reconnecting hasn't worked for a while (or the server stopped answering). */
   readonly struggling: boolean;
+  /** The tab let its socket go while nobody was looking (App's parking): App says so, not the reconnect overlay. */
+  readonly parked?: boolean;
   /** Give up on the online arena and switch to solo. */
   onGiveUp(): void;
 }
@@ -70,7 +72,7 @@ const PAINT_TAP_MS = 120;
 /** Hold a press this long without moving to paint instead of pan. */
 const HOLD_MS = 300;
 
-export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiveUp }: ArenaProps): JSX.Element {
+export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, parked = false, onGiveUp }: ArenaProps): JSX.Element {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tileCanvasRef = useRef<HTMLCanvasElement>(null);
   const rendererRef = useRef<Renderer | null>(null);
@@ -504,7 +506,7 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, onGiv
         ))}
       </div>
 
-      {(!store.connected || store.stale) && (
+      {(!store.connected || store.stale) && !parked && (
         // Online only: solo never goes stale. "Not responding" is an open
         // socket gone quiet (heartbeat.ts): taps would vanish, so say so.
         <div className="overlay" role="status">

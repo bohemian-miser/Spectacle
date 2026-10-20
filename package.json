@@ -9,7 +9,7 @@
     "dev": "concurrently -k -n server,client \"BOTS=1 npm run dev:server\" \"npm run dev:client\"",
     "dev:server": "tsx watch server/index.ts",
     "dev:client": "vite --port 5173",
-    "build": "vite build",
+    "build": "vite build && node scripts/compress.mjs && node scripts/build-server.mjs",
     "start": "tsx server/index.ts",
     "test": "vitest run",
     "test:watch": "vitest",

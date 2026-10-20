@@ -647,7 +647,7 @@ Ahead of an expected spike, without touching code:
 - `SPECTACLE_MAX_INSTANCE_PLAYERS` (default `400`), `SPECTACLE_CONCURRENCY`
   (default `500`) and the instance's size move together. A local load test
   measured 80 simulated players at ~10% of a core and ~30 MB on top of the
-  ~540 MB a `FIELD_LEVEL=6` field costs at idle, so 400 players is about half
+  ~185 MB the server holds idle with levels 3–6 built, so 400 players is about half
   of one vCPU and well inside `1Gi`. For more per instance, raise CPU as well
   as memory (e.g. `--cpu=2 --memory=2Gi` for a cap of 800).
 - All of these are repo variables read by `.github/workflows/deploy-cloudrun.yml`,

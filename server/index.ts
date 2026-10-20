@@ -254,6 +254,13 @@ const BOT_WATCHDOG: WatchdogOptions = {
  */
 const MAX_INSTANCE_PLAYERS = positiveInt(process.env.MAX_INSTANCE_PLAYERS, 400);
 /**
+ * A socket that hasn't joined (a lobby) this long is let go with code 4003,
+ * which a current client takes as "park until touched". The client parks an
+ * untouched lobby sooner by itself; this is the backstop, so a lobby tab left
+ * open never keeps the process (on Cloud Run, a billed instance) awake.
+ */
+const UNJOINED_MS = positiveInt(process.env.UNJOINED_MS, 30 * 60_000);
+/**
  * A socket this far behind on sends is dropped (it can resume) rather than
  * buffered forever. Its welcome doesn't count: that snapshot is one message,
  * and on a busy board it alone can be bigger than this.
@@ -377,6 +384,7 @@ const MIME: Record<string, string> = {
   '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.json': 'application/json',
+  '.map': 'application/json',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
@@ -442,10 +450,15 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
     path = '/index.html';
   }
   try {
-    const body = readFileSync(file);
+    // The build's brotli / gzip copy (scripts/compress.mjs), when the browser takes it.
+    const accept = String(req.headers['accept-encoding'] ?? '');
+    const enc = /\bbr\b/.test(accept) && existsSync(`${file}.br`) ? 'br' : /\bgzip\b/.test(accept) && existsSync(`${file}.gz`) ? 'gzip' : null;
+    const body = readFileSync(enc === 'br' ? `${file}.br` : enc === 'gzip' ? `${file}.gz` : file);
     res.writeHead(200, {
       'content-type': MIME[extname(file)] ?? 'application/octet-stream',
       'cache-control': path === '/index.html' ? 'no-cache' : 'public, max-age=31536000, immutable',
+      vary: 'accept-encoding',
+      ...(enc ? { 'content-encoding': enc } : {}),
     });
     res.end(body);
   } catch {
@@ -900,6 +913,10 @@ wss.on('connection', (ws) => {
     players: humansOnline(),
     rooms: [...rooms.values()].map((r) => r.summary()),
   });
+  // Rejoined since (a `leave` sets it back): checked again on the next round.
+  const idle = setInterval(() => {
+    if (!client.joined && ws.readyState === ws.OPEN) ws.close(4003, 'idle lobby');
+  }, UNJOINED_MS);
 
   ws.on('message', (data) => guard('message', () => {
     let msg: ClientMessage;
@@ -1040,6 +1057,7 @@ wss.on('connection', (ws) => {
   }));
 
   ws.on('close', (code) => guard('close', () => {
+    clearInterval(idle);
     const room = client.room;
     if (!room) return;
     if (client.joined) note('info', `${client.name} disconnected from ${room.id} (code ${code})`);

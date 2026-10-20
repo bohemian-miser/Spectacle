@@ -6,3 +6,4 @@ deploy
 *.png
 *.log
 dist-brains
+dist-server

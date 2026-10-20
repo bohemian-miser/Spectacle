@@ -264,6 +264,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .win-sub { margin-top: 4px; font-size: 14px; color: var(--muted); text-shadow: 0 0 8px var(--bg); }
 @keyframes win-in { from { opacity: 0; transform: translateX(-50%) scale(0.85); } to { opacity: 1; transform: translateX(-50%); } }
 .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: color-mix(in srgb, var(--bg) 72%, transparent); font-size: 20px; text-align: center; }
+.park-overlay { position: fixed; z-index: 50; cursor: pointer; }
 .overlay-fallback { margin-top: 8px; font-size: 14px; color: var(--muted); }
 .btn-link {
   background: none;
