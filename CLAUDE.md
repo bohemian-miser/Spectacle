@@ -91,6 +91,10 @@ server/feedback.ts  POST /feedback: parseFeedback (whitelisted, capped
                   (gs:// create-only, or a dir: new/<id>.json → triaged/),
                   toTriageItem (what the triage agent may see).
 server/gcp.ts     parseGsUrl, metadataTokens (the instance's GCP token).
+server/wins.ts    The leaderboard's records: one `WinRecord` per won round,
+                  each board's (mode, level, ruleKey) fastest five in memory,
+                  kept where WINS_URL says (a JSON-lines file, or Firestore
+                  over REST); GET /wins (docs/leaderboard.md).
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
   session.ts      The tab's resume ticket (sessionStorage, shared copy in
@@ -107,8 +111,10 @@ client/src/       Vite + React.
   store.ts        Applies events into plain mutable state; version counters.
   celebration.ts  A won round's flip order (pure): the infinite line from the
                   winner's tail, a chord a step both ways, `sqrt` timing.
-  Lobby.tsx, RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
-                  numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
+  Lobby.tsx (online: Play | Leaderboard tabs), TopWins.tsx (the
+                  Leaderboard tab's fastest wins, beside the preview via
+                  RuleEditor's `aside`), RuleEditor.tsx, TileThumb.tsx
+                  (interactive SVG tile: edge numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
                   cropped to ~97% tiles, arrows, edge-number toggle).
   Arena.tsx       Two stacked canvases + pointer handling + HUD (player card:
                   name and an icon row — share, feedback, settings gear,
@@ -651,6 +657,13 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   message handler too) are the worst of the last minute (`WindowMax`), held
   the whole minute; a pass is stamped when it ends, so one longer than a
   minute still shows. (The old figure was zeroed every 60 s.)
+- **The leaderboard is minimal** (owner's call, 2026-10-20): time to win per
+  (mode, board size, rule), the top five shown beside the rule lab's preview
+  on the lobby's Leaderboard tab. A win's a win — bots' and named rooms'
+  count; who else was there is kept and only shown behind a row's `+n`.
+  Names are the players' own. Keep it that small unless the owner asks for
+  more (filters, rule pages and share cards were mocked and dropped).
+  `tests/wins.test.ts` plays a real win on a spawned server.
 - **Pattern stats are public.** `/patterns` (and `/patterns.json`) list which
   rules people and bots play and how they do with them, including the
   infinite-line rules — nothing about them is hidden. It's a separate page
