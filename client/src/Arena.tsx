@@ -336,7 +336,9 @@ export function Arena({ store, conn, mode, onNewRule, onLeave, struggling, parke
   const roomNo = new RegExp(`^${gameMode}-(\\d+)$`).exec(store.room)?.[1];
   const roomLabel = roomNo ? ` #${roomNo}` : store.room ? ` · ${store.room}` : '';
   const invite = async (): Promise<void> => {
-    const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(store.room)}`;
+    // A sharded server's link names its shard, so it reaches this room whichever server it lands on.
+    const shard = store.hello?.shard?.name;
+    const url = `${location.origin}${location.pathname}?room=${encodeURIComponent(store.room)}${shard ? `&s=${shard}` : ''}`;
     try {
       await navigator.clipboard.writeText(url);
       store.toast('Invite link copied — anyone who opens it joins this room', 'info');

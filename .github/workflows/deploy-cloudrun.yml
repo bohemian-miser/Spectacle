@@ -85,13 +85,17 @@ jobs:
           fi
           echo "deploy=$deploy" >> "$GITHUB_OUTPUT"
 
-  deploy:
+  # One image for every shard (shared/game/shard.ts): the free VM is shard
+  # `a`, these are the rest, each its own one-instance service that scales to
+  # zero — $0 until a surge spills onto it. SPECTACLE_SHARDS lists them (JSON;
+  # default b–z, 25 × 400 players), in the order a full one hands joins on.
+  # deploy/gcp/shard-domains.sh gives each its <name>.s.hexagon.rodeo once.
+  image:
     needs: [ci, changes]
     if: vars.GCP_PROJECT != '' && needs.ci.outputs.passed == 'true' && needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
-    environment:
-      name: online-arena
-      url: ${{ steps.deploy.outputs.url }}
+    outputs:
+      image: ${{ steps.image.outputs.image }}
     env:
       IMAGE: ${{ vars.GCP_REGION }}-docker.pkg.dev/${{ vars.GCP_PROJECT }}/${{ vars.GCP_AR_REPO || 'spectacle' }}/spectacle
     steps:
@@ -112,47 +116,63 @@ jobs:
             ${{ env.IMAGE }}:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - id: image
+        run: echo "image=$IMAGE:$GITHUB_SHA" >> "$GITHUB_OUTPUT"
+
+  deploy:
+    needs: [image]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 10
+      matrix:
+        shard: ${{ fromJSON(vars.SPECTACLE_SHARDS || '["b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"]') }}
+    environment:
+      name: online-arena
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: google-github-actions/auth@v2
+        with:
+          workload_identity_provider: ${{ vars.GCP_WIF_PROVIDER }}
+          service_account: ${{ vars.GCP_DEPLOYER_SA }}
+      - uses: google-github-actions/setup-gcloud@v2
+      - id: next
+        env:
+          SHARDS: ${{ vars.SPECTACLE_SHARDS || '["b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"]' }}
+        run: echo "next=$(echo "$SHARDS" | jq -r --arg s '${{ matrix.shard }}' 'index($s) as $i | .[$i + 1] // ""')" >> "$GITHUB_OUTPUT"
       - id: deploy
         uses: google-github-actions/deploy-cloudrun@v2
         with:
-          service: spectacle
+          service: spectacle-${{ matrix.shard }}
           region: ${{ vars.GCP_REGION }}
-          image: ${{ env.IMAGE }}:${{ github.sha }}
-          # min-instances stays 0 by default (scale to zero, the point of Cloud
-          # Run here) — set SPECTACLE_MIN_INSTANCES to keep one or more warm
-          # ahead of expected traffic, trading idle cost for no cold start.
-          # max-instances is what lets a surge actually scale out: each
-          # instance is a self-contained pool of rooms (see server/index.ts's
-          # "Scaling past one instance"), so raising it costs nothing while
-          # idle and is safe to leave high. cpu-boost speeds up every cold
-          # start's field build (README.md's "Scaling for a surge").
-          # concurrency is open sockets per instance: a little above
-          # MAX_INSTANCE_PLAYERS (lobby sockets count too), so Cloud Run
-          # sends new connections elsewhere before the cap has to refuse them.
+          image: ${{ needs.image.outputs.image }}
+          # One instance each, so a shard is one process and its rooms are
+          # exactly where its links say. concurrency is open sockets: a
+          # little above MAX_INSTANCE_PLAYERS (lobby sockets count too), so
+          # the cap refuses (and hands on to the next shard) before Cloud
+          # Run would queue. cpu-boost speeds up a cold start's field build.
           # The probes restart an instance whose event loop is stuck: /health
           # runs on the game's loop, so a frozen process (a bot brain once
-          # blocked one for minutes while session affinity kept sending
-          # players to it) stops answering. Startup: every 2 s for up to
-          # 240 s, as long as Cloud Run's default TCP probe allowed (the port
-          # opens only once the field is built, ~10 s at level 6). Liveness:
-          # every 10 s, 5 s timeout, killed after 3 misses in a row, so ~30 s
-          # frozen; a stall under ~25 s never trips it. deploy/gcp/cloudrun.sh
-          # sets the same.
+          # blocked one for minutes) stops answering. Startup: every 2 s for
+          # up to 240 s (the port opens once the field is built). Liveness:
+          # every 10 s, 5 s timeout, killed after 3 misses in a row.
           flags: >-
             --allow-unauthenticated
-            --min-instances=${{ vars.SPECTACLE_MIN_INSTANCES || '0' }}
-            --max-instances=${{ vars.SPECTACLE_MAX_INSTANCES || '30' }}
+            --min-instances=0
+            --max-instances=1
             --concurrency=${{ vars.SPECTACLE_CONCURRENCY || '500' }} --timeout=3600
             --cpu=1 --memory=${{ vars.SPECTACLE_MEMORY || '1Gi' }}
             --cpu-boost
-            --session-affinity
             --startup-probe=httpGet.path=/health,periodSeconds=2,timeoutSeconds=1,failureThreshold=120
             --liveness-probe=httpGet.path=/health,periodSeconds=10,timeoutSeconds=5,failureThreshold=3
           env_vars: |
+            SHARD=${{ matrix.shard }}
+            SHARD_NEXT=${{ steps.next.outputs.next }}
+            SHARD_WS=${{ vars.SPECTACLE_SHARD_WS || 'wss://{shard}.s.hexagon.rodeo/ws' }}
             BOTS=${{ vars.SPECTACLE_BOTS || '1' }}
             FIELD_FAMILY=${{ vars.SPECTACLE_FIELD_FAMILY || 'hex' }}
             FIELD_LEVEL=${{ vars.SPECTACLE_FIELD_LEVEL || '6' }}
             MAX_INSTANCE_PLAYERS=${{ vars.SPECTACLE_MAX_INSTANCE_PLAYERS || '400' }}
             BOTS_URL=${{ vars.GCP_BRAINS_BUCKET != '' && format('gs://{0}/brains', vars.GCP_BRAINS_BUCKET) || '' }}
             FEEDBACK_URL=${{ vars.GCP_FEEDBACK_BUCKET != '' && format('gs://{0}', vars.GCP_FEEDBACK_BUCKET) || '' }}
-      - run: echo "Deployed to ${{ steps.deploy.outputs.url }}"
+      - run: echo "Shard ${{ matrix.shard }} deployed to ${{ steps.deploy.outputs.url }}"

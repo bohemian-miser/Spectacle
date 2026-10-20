@@ -88,6 +88,7 @@ import type { ClientMessage, GameEvent, LevelSummary, RoomBots, RoomSummary, Ser
 import { describeRule, fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, ruleKey, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
+import { cleanShardName, validShardTemplate, type ShardInfo } from '../shared/game/shard';
 import { packEvents } from '../shared/game/wire';
 import type { TileFamilyId, TileTypeId } from '../shared/tiles';
 import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_OPTIONS, DEFAULT_WATCHDOG, formatBotMix, parseBotMix, prepareBots, type BotMix, type BotOptions, type BrainSet, type WatchdogOptions } from '../shared/game/bots';
@@ -263,6 +264,19 @@ const MAX_INSTANCE_PLAYERS = positiveInt(process.env.MAX_INSTANCE_PLAYERS, 400);
  * open never keeps the process (on Cloud Run, a billed instance) awake.
  */
 const UNJOINED_MS = positiveInt(process.env.UNJOINED_MS, 30 * 60_000);
+/**
+ * This server as a shard (shared/game/shard.ts): SHARD its name, SHARD_NEXT
+ * where a join goes once it is full, SHARD_WS the socket address of any
+ * shard with `{shard}` for the name. Unset (or a bad name/template): not
+ * sharded, as before.
+ */
+const SHARD: ShardInfo | null = (() => {
+  const name = cleanShardName(process.env.SHARD);
+  const template = process.env.SHARD_WS;
+  if (!name || !validShardTemplate(template)) return null;
+  const next = cleanShardName(process.env.SHARD_NEXT) ?? undefined;
+  return { name, template, ...(next ? { next } : {}) };
+})();
 /**
  * A socket this far behind on sends is dropped (it can resume) rather than
  * buffered forever. Its welcome doesn't count: that snapshot is one message,
@@ -442,6 +456,7 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
       JSON.stringify({
         ok: true,
         instance: INSTANCE,
+        shard: SHARD,
         players: humansOnline(),
         maxPlayers: MAX_INSTANCE_PLAYERS,
         atCapacity: atCapacity(),
@@ -943,7 +958,8 @@ function welcome(client: Client, room: Room, packed: boolean): void {
 }
 
 wss.on('connection', (ws) => {
-  const client: Client = { ws, id: `p${nextClient++}`, joined: false, lastTapAt: 0, lastBotsAt: 0, room: null, allowance: 0, name: '', packed: false };
+  // Ids name their shard: a tab asking other tabs about its player (session.ts) mustn't match one on another shard.
+  const client: Client = { ws, id: SHARD ? `${SHARD.name}p${nextClient++}` : `p${nextClient++}`, joined: false, lastTapAt: 0, lastBotsAt: 0, room: null, allowance: 0, name: '', packed: false };
   send(ws, {
     t: 'hello',
     field: spec,
@@ -952,6 +968,7 @@ wss.on('connection', (ws) => {
     levels: LEVELS,
     players: humansOnline(),
     rooms: [...rooms.values()].map((r) => r.summary()),
+    ...(SHARD ? { shard: SHARD } : {}),
   });
   // Rejoined since (a `leave` sets it back): checked again on the next round.
   const idle = setInterval(() => {
@@ -986,8 +1003,13 @@ wss.on('connection', (ws) => {
         // A brand new player, not a returning one (those went through
         // tryResume above): this is the load a capacity refusal protects
         // against, so check it before doing any more work.
-        if (atCapacity()) {
-          send(ws, { t: 'error', message: "This server is full right now — try again shortly, or play bots (no server needed).", code: 'full' });
+        // Full: refused, and pointed at the next shard if there is one. A link
+        // into a room already open here is let in all the same (the room's own
+        // cap still holds): the next shard's room of that name isn't it.
+        const linked = cleanRoomName(msg.room);
+        if (atCapacity() && !(linked && rooms.has(linked))) {
+          if (SHARD?.next) send(ws, { t: 'error', message: 'This server is full — moving you to another one…', code: 'full', next: SHARD.next });
+          else send(ws, { t: 'error', message: "This server is full right now — try again shortly, or play bots (no server needed).", code: 'full' });
           return;
         }
         const rule = validateRule(msg.rule, spec.family);
