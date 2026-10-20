@@ -51,9 +51,8 @@
  *                            infinite-line rule while away (-1 = never)
  *   STATS_FILE    (unset)    keep /patterns' stats (which rules people play, and their scores)
  *                            in this JSON file across restarts
- *   WINS_URL      (unset)    where the leaderboard's won rounds are kept: a file
- *                            (one JSON line each) or `firestore://<project>`
- *                            (server/wins.ts, docs/leaderboard.md). Unset = memory only
+ *   WINS_FILE     (unset)    keep the leaderboard's won rounds (server/wins.ts) in this
+ *                            file, one JSON line each, across restarts
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts);
  *                            wins over the live tuning (shared/game/brains/tuning.ts)
  *   EXIT_WITH_PARENT (unset) tests only (tests/server.ts): 1 = exit when stdin
@@ -95,7 +94,7 @@ import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_O
 import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
 import { clientAddress, FeedbackLimiter, feedbackId, feedbackStore, MAX_BODY, parseFeedback, type FeedbackRecord } from './feedback';
 import { metadataTokens } from './gcp';
-import { boardKey, parseWinsQuery, winsFrom } from './wins';
+import { parseWinsQuery, Wins } from './wins';
 import { WindowMax } from './loop-stats';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
@@ -301,10 +300,9 @@ function logStints(stints: ReturnType<PatternStats['finishAll']>): void {
 const FEEDBACK_URL = process.env.FEEDBACK_URL ?? '';
 const feedbackKept = FEEDBACK_URL ? feedbackStore(FEEDBACK_URL, metadataTokens()) : null;
 
-const WINS_URL = process.env.WINS_URL ?? '';
-const wins = winsFrom(WINS_URL, metadataTokens(), (what, e) => note('warn', `wins: could not ${what}: ${e instanceof Error ? e.message : String(e)}`));
+const wins = new Wins(process.env.WINS_FILE ?? '', (e) => note('warn', `wins: could not keep a win: ${e instanceof Error ? e.message : String(e)}`));
 
-/** GET /wins?mode=&level=&rule=<ruleKey>: that board's fastest wins. */
+/** GET /wins?mode=&level=[&subset=]: the fastest wins at that size, of one edge set or all. */
 function handleWins(url: URL, res: ServerResponse): void {
   const q = parseWinsQuery(url.searchParams);
   if (!q || !LEVELS.some((l) => l.level === q.level)) {
@@ -312,16 +310,8 @@ function handleWins(url: URL, res: ServerResponse): void {
     res.end(JSON.stringify({ error: 'bad query' }));
     return;
   }
-  wins
-    .top(boardKey(q.mode, q.level, q.rule))
-    .then((list) => {
-      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-      res.end(JSON.stringify({ wins: list }));
-    })
-    .catch(() => {
-      res.writeHead(500);
-      res.end();
-    });
+  res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+  res.end(JSON.stringify({ wins: wins.top(q.mode, q.level, q.subset) }));
 }
 const feedbackLimit = new FeedbackLimiter(
   positiveInt(process.env.FEEDBACK_PER_ADDRESS, 3),

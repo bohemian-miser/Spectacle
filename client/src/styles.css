@@ -155,6 +155,15 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   padding: 8px 14px; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer;
 }
 .lobby-tab.is-on { color: var(--text); border-bottom-color: var(--accent); }
+.leaderboard { display: grid; gap: 4px; }
+.leaderboard .mode-row { margin-bottom: 6px; }
+.leaderboard p { margin: 8px 0 0; }
+.leaderboard-table { width: 100%; border-collapse: collapse; font-size: 15px; }
+.leaderboard-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 8px; }
+.leaderboard-table td { padding: 8px; border-top: 1px solid var(--line); }
+.leaderboard-table td:first-child, .leaderboard-table th:first-child { width: 2em; padding-left: 0; }
+.leaderboard-time { font-weight: 700; font-variant-numeric: tabular-nums; }
+.leaderboard-table .btn-link { text-align: left; }
 
 /* Rule editor */
 .rule-editor { display: grid; gap: 14px; }
@@ -337,22 +346,6 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .check { display: inline-flex; align-items: center; gap: 4px; font-size: 13px; color: var(--muted); }
 .rule-hint { margin: 0; font-size: 13px; }
 .patch-preview { display: grid; gap: 6px; }
-/* The Leaderboard tab: the preview and the rule's fastest wins side by side, stacked when narrow. */
-.preview-row { display: flex; gap: 16px; flex-wrap: wrap; align-items: flex-start; }
-.preview-row .patch-preview { flex: 1 1 360px; min-width: 0; }
-.top-wins { flex: 1 1 240px; display: grid; gap: 8px; align-content: start; }
-.top-wins h2 { margin: 0; }
-.top-wins .mode-row { margin-bottom: 0; }
-.top-wins p { margin: 0; font-size: 14px; }
-.top-wins-list { list-style: none; margin: 0; padding: 0; }
-.top-wins-list li {
-  display: grid; grid-template-columns: 4.5em 1fr auto; gap: 4px 10px; align-items: center;
-  padding: 8px 0; border-top: 1px solid var(--line);
-}
-.top-wins-time { font-weight: 700; font-variant-numeric: tabular-nums; }
-.top-wins-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.top-wins-with { font-size: 13px; }
-.top-wins-others { grid-column: 2 / -1; font-size: 13px; }
 .patch-svg { width: 100%; height: auto; justify-self: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
 .patch-tiles path { stroke: color-mix(in srgb, var(--text) 16%, transparent); stroke-width: 0.05; }
 .patch-stats { font-size: 13px; }

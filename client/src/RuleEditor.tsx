@@ -5,7 +5,7 @@
  * you can't enter the arena with a half-drawn tile.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { applyPair, matchingToPairs, pairsToMatchingIndex, removePairAt, type Pair } from '../../shared/game/pairs';
 import { describeRule, oddTypes, randomCleanRule, type PlayerRule } from '../../shared/game/rule';
 import { mathRandomRng } from '../../shared/game/rng';
@@ -30,8 +30,6 @@ export interface RuleEditorProps {
   onChange(rule: PlayerRule): void;
   /** Types still being drawn (no complete pairing yet). */
   onDrafting?(types: readonly TileTypeId[]): void;
-  /** Shown beside the patch preview (the Leaderboard tab's wins). */
-  readonly aside?: ReactNode;
 }
 
 /** Keep each tile's matching if it is still legal under the new subset, else take the first legal one. */
@@ -45,7 +43,7 @@ function withSubset(family: TileFamilyId, subset: readonly number[], prev: reado
   return { family, subset: [...subset].sort((a, b) => a - b), matching };
 }
 
-export function RuleEditor({ family, rule, color = 'currentColor', onChange, onDrafting, aside }: RuleEditorProps): JSX.Element {
+export function RuleEditor({ family, rule, color = 'currentColor', onChange, onDrafting }: RuleEditorProps): JSX.Element {
   const majors = familyMajors(family);
   const order = leafOrder(family);
   const selected = useMemo(() => new Set(rule.subset), [rule.subset]);
@@ -220,15 +218,7 @@ export function RuleEditor({ family, rule, color = 'currentColor', onChange, onD
         )}
       </div>
 
-      {drafting.length === 0 &&
-        (aside ? (
-          <div className="preview-row">
-            <PatchPreview rule={rule} level={3} />
-            {aside}
-          </div>
-        ) : (
-          <PatchPreview rule={rule} level={3} />
-        ))}
+      {drafting.length === 0 && <PatchPreview rule={rule} level={3} />}
     </div>
   );
 }
