@@ -9,6 +9,7 @@ import { RuleEditor } from './RuleEditor';
 import type { Store } from './store';
 import { FeedbackButton } from './FeedbackButton';
 import { SettingsButton } from './SettingsButton';
+import { TopWins } from './TopWins';
 
 export interface LobbyProps {
   readonly store: Store;
@@ -77,6 +78,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
     props;
   const [touched, setTouched] = useState(false);
   const [drafting, setDrafting] = useState<readonly string[]>([]);
+  const [tab, setTab] = useState<'play' | 'leaderboard'>('play');
   const hello = store.hello;
   // The online size: the one picked if this server offers it, else its default.
   const levels = hello?.levels ?? [];
@@ -89,6 +91,9 @@ export function Lobby(props: LobbyProps): JSX.Element {
   const color = store.me?.color ?? '#6ea8fe';
   // Captured slots (each worth a head) can take this rule instead of a restart.
   const slots = inArena && store.me ? store.me.patterns.map((q, i) => ({ q, i })).filter(({ i }) => i > 0) : [];
+  // The leaderboard is the server's: online, from the lobby.
+  const tabs = !SOLO_ONLY && mode === 'online' && !inArena && !!hello;
+  const board = tabs && tab === 'leaderboard';
 
   return (
     <div className="lobby">
@@ -118,7 +123,17 @@ export function Lobby(props: LobbyProps): JSX.Element {
         </span>
       </header>
 
-      {!inArena && (
+      {tabs && (
+        <nav className="lobby-tabs" role="tablist" aria-label="Lobby">
+          {(['play', 'leaderboard'] as const).map((t) => (
+            <button key={t} type="button" role="tab" aria-selected={tab === t} className={`lobby-tab${tab === t ? ' is-on' : ''}`} onClick={() => setTab(t)}>
+              {t === 'play' ? 'Play' : 'Leaderboard'}
+            </button>
+          ))}
+        </nav>
+      )}
+
+      {!inArena && !board && (
         <section className="panel">
           <h2>Where</h2>
           {notice && (
@@ -235,7 +250,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
         </section>
       )}
 
-      <section className="panel">
+      <section className="panel" hidden={board}>
         <input
           className="input"
           value={name}
@@ -255,7 +270,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
       </section>
 
       <section className="panel">
-        <div className="lobby-intro">
+        <div className="lobby-intro" hidden={board}>
           <p>
             These fractals are called “Spectacles” based off the{' '}
             <a href="https://bohemian-miser.github.io/Spectre/" target="_blank" rel="noreferrer">
@@ -273,7 +288,18 @@ export function Lobby(props: LobbyProps): JSX.Element {
           <p className="lobby-sig">- bo miser</p>
         </div>
         {hello ? (
-          <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} onDrafting={setDrafting} />
+          <RuleEditor
+            family={hello.field.family}
+            rule={rule}
+            color={color}
+            onChange={onRule}
+            onDrafting={setDrafting}
+            aside={
+              board ? (
+                <TopWins rule={rule} mode={gameMode} levels={levels.map((l) => l.level)} level={online?.level ?? hello.field.level} onLevel={onLevel} />
+              ) : undefined
+            }
+          />
         ) : mode === 'online' ? (
           <p className="muted">Connecting to the arena…</p>
         ) : (
@@ -281,7 +307,14 @@ export function Lobby(props: LobbyProps): JSX.Element {
         )}
       </section>
 
-      <footer className="lobby-foot">
+      {board && (
+        <footer className="lobby-foot">
+          <button type="button" className="btn btn-accent btn-big" disabled={rule.subset.length === 0 || drafting.length > 0} onClick={() => setTab('play')}>
+            Use this rule
+          </button>
+        </footer>
+      )}
+      <footer className="lobby-foot" hidden={board}>
         {inArena && (
           <>
             <button type="button" className="btn" onClick={onCancel}>

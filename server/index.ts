@@ -51,6 +51,9 @@
  *                            infinite-line rule while away (-1 = never)
  *   STATS_FILE    (unset)    keep /patterns' stats (which rules people play, and their scores)
  *                            in this JSON file across restarts
+ *   WINS_URL      (unset)    where the leaderboard's won rounds are kept: a file
+ *                            (one JSON line each) or `firestore://<project>`
+ *                            (server/wins.ts, docs/leaderboard.md). Unset = memory only
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts);
  *                            wins over the live tuning (shared/game/brains/tuning.ts)
  *   EXIT_WITH_PARENT (unset) tests only (tests/server.ts): 1 = exit when stdin
@@ -83,7 +86,7 @@ import { Engine } from '../shared/game/engine';
 import { buildField, DEFAULT_FIELD_SPEC, fieldOutline, warmEdges, type Field, type FieldSpec } from '../shared/game/field';
 import { applyTuning, DEFAULT_KNOBS, GAME_MODES, isGameMode, knobsChanged, knobsForMode, knobsFromEnv, retune, type GameMode, type Knobs } from '../shared/game/knobs';
 import type { ClientMessage, GameEvent, LevelSummary, RoomBots, RoomSummary, ServerMessage } from '../shared/game/protocol';
-import { describeRule, fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, validateRule } from '../shared/game/rule';
+import { describeRule, fassRule, isInfiniteLineRule, PLAYABLE_FAMILIES, ruleKey, validateRule } from '../shared/game/rule';
 import { mulberry32 } from '../shared/game/rng';
 import { cleanRoomName } from '../shared/game/room-name';
 import { packEvents } from '../shared/game/wire';
@@ -92,6 +95,7 @@ import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_O
 import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
 import { clientAddress, FeedbackLimiter, feedbackId, feedbackStore, MAX_BODY, parseFeedback, type FeedbackRecord } from './feedback';
 import { metadataTokens } from './gcp';
+import { boardKey, parseWinsQuery, winsFrom } from './wins';
 import { WindowMax } from './loop-stats';
 import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
@@ -296,6 +300,29 @@ function logStints(stints: ReturnType<PatternStats['finishAll']>): void {
  */
 const FEEDBACK_URL = process.env.FEEDBACK_URL ?? '';
 const feedbackKept = FEEDBACK_URL ? feedbackStore(FEEDBACK_URL, metadataTokens()) : null;
+
+const WINS_URL = process.env.WINS_URL ?? '';
+const wins = winsFrom(WINS_URL, metadataTokens(), (what, e) => note('warn', `wins: could not ${what}: ${e instanceof Error ? e.message : String(e)}`));
+
+/** GET /wins?mode=&level=&rule=<ruleKey>: that board's fastest wins. */
+function handleWins(url: URL, res: ServerResponse): void {
+  const q = parseWinsQuery(url.searchParams);
+  if (!q || !LEVELS.some((l) => l.level === q.level)) {
+    res.writeHead(400, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: 'bad query' }));
+    return;
+  }
+  wins
+    .top(boardKey(q.mode, q.level, q.rule))
+    .then((list) => {
+      res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+      res.end(JSON.stringify({ wins: list }));
+    })
+    .catch(() => {
+      res.writeHead(500);
+      res.end();
+    });
+}
 const feedbackLimit = new FeedbackLimiter(
   positiveInt(process.env.FEEDBACK_PER_ADDRESS, 3),
   positiveInt(process.env.FEEDBACK_PER_WINDOW, 60),
@@ -387,6 +414,10 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
   const url = new URL(req.url ?? '/', 'http://x');
   if (url.pathname === '/feedback') {
     handleFeedback(req, res);
+    return;
+  }
+  if (url.pathname === '/wins') {
+    handleWins(url, res);
     return;
   }
   if (url.pathname === '/status.json') {
@@ -580,12 +611,31 @@ class Room {
       else if (e.t === 'win') {
         patternStats.win(e.id);
         this.logWin(e);
+        this.keepWin(e);
       } else if (e.t === 'restart') {
         logStints(patternStats.endRound(Date.now(), e.players.map((p) => p.id)));
         this.rounds++;
         this.roundMs = 0;
       }
     }
+  }
+
+  /** A won round for the leaderboard: the winner's own rule, how long the round was played, and who else was at the board. */
+  private keepWin(e: Extract<GameEvent, { t: 'win' }>): void {
+    const winner = this.engine.players.get(e.id);
+    if (!winner) return;
+    const others = [...this.engine.players.values()].filter((p) => p.id !== e.id && (p.bot || this.clients.has(p.id))).map((p) => p.name);
+    wins.add({
+      mode: this.mode,
+      level: this.level,
+      rule: ruleKey(winner.rule),
+      ms: Math.round(this.roundMs),
+      at: Date.now(),
+      name: winner.name,
+      bot: winner.bot,
+      others,
+      named: this.named,
+    });
   }
 
   /** One JSON line per won round: what won it and how fast. No names or ids. */
