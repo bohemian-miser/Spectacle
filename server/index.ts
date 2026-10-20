@@ -307,7 +307,7 @@ const wins = winsFrom(WINS_URL, metadataTokens(), (what, e) => note('warn', `win
 /** GET /wins?mode=&level=&rule=<ruleKey>: that board's fastest wins. */
 function handleWins(url: URL, res: ServerResponse): void {
   const q = parseWinsQuery(url.searchParams);
-  if (!q) {
+  if (!q || !LEVELS.some((l) => l.level === q.level)) {
     res.writeHead(400, { 'content-type': 'application/json' });
     res.end(JSON.stringify({ error: 'bad query' }));
     return;

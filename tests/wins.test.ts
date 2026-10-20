@@ -17,6 +17,7 @@ import {
   FirestoreWinStore,
   parseFirestoreUrl,
   parseWinsQuery,
+  STORE_QUERIES_PER_MIN,
   STORE_TTL_MS,
   TOP,
   WinBoards,
@@ -77,7 +78,7 @@ describe('the query', () => {
   it('takes a mode, a level and a rule key, nothing else', () => {
     const q = (s: string) => parseWinsQuery(new URLSearchParams(s));
     expect(q(`mode=normal&level=3&rule=${encodeURIComponent(RULE)}`)).toEqual({ mode: 'normal', level: 3, rule: RULE });
-    expect(q(`level=3&rule=${encodeURIComponent(RULE)}`)?.mode).toBe('normal');
+    expect(q(`level=3&rule=${encodeURIComponent(RULE)}`)).toBeNull();
     expect(q(`mode=normal&level=x&rule=${encodeURIComponent(RULE)}`)).toBeNull();
     expect(q(`mode=chaos&level=3&rule=${encodeURIComponent(RULE)}`)).toBeNull();
     expect(q('mode=normal&level=3&rule=hex|15|0.0"}')).toBeNull();
@@ -170,6 +171,18 @@ describe('Firestore', () => {
     expect(asked).toBe(2);
     expect(errors).toEqual(['read wins']);
   });
+
+  it('asks the store at most STORE_QUERIES_PER_MIN times a minute, whatever boards are named', async () => {
+    let now = 0;
+    let asked = 0;
+    const store: WinStore = { add: async () => {}, top: async () => (asked++, []) };
+    const wins = new Wins(store, () => {}, () => now);
+    for (let i = 0; i < STORE_QUERIES_PER_MIN + 50; i++) await wins.top(boardKey('normal', 3, `hex|15|${i}`));
+    expect(asked).toBe(STORE_QUERIES_PER_MIN);
+    now += 60_000;
+    await wins.top(boardKey('normal', 3, 'hex|15|new'));
+    expect(asked).toBe(STORE_QUERIES_PER_MIN + 1);
+  });
 });
 
 describe('a real win', () => {
@@ -219,7 +232,8 @@ describe('a real win', () => {
     expect(first.wins![0].name).toBe(winner.name);
     expect(first.wins![0].others).toEqual([other.name]);
     expect(first.wins![0].ms).toBeGreaterThan(0);
-    expect((await get(rule, 4)).wins).toEqual([]);
+    // Only the sizes this server offers (level 3 alone here).
+    expect((await get(rule, 4)).status).toBe(400);
     expect((await get('hex|15|0"')).status).toBe(400);
 
     ws.close();

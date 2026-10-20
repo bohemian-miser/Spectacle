@@ -270,7 +270,6 @@ export function Lobby(props: LobbyProps): JSX.Element {
       </section>
 
       <section className="panel">
-        {board && <p className="muted lobby-board-hint">Build or pick a rule as you would to play, and see how fast it has been won.</p>}
         <div className="lobby-intro" hidden={board}>
           <p>
             These fractals are called “Spectacles” based off the{' '}
@@ -295,7 +294,11 @@ export function Lobby(props: LobbyProps): JSX.Element {
             color={color}
             onChange={onRule}
             onDrafting={setDrafting}
-            aside={board ? <TopWins rule={rule} mode={gameMode} levels={levels.map((l) => l.level)} level={online?.level ?? hello.field.level} /> : undefined}
+            aside={
+              board ? (
+                <TopWins rule={rule} mode={gameMode} levels={levels.map((l) => l.level)} level={online?.level ?? hello.field.level} onLevel={onLevel} />
+              ) : undefined
+            }
           />
         ) : mode === 'online' ? (
           <p className="muted">Connecting to the arena…</p>
@@ -307,7 +310,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
       {board && (
         <footer className="lobby-foot">
           <button type="button" className="btn btn-accent btn-big" disabled={rule.subset.length === 0 || drafting.length > 0} onClick={() => setTab('play')}>
-            Play this rule
+            Use this rule
           </button>
         </footer>
       )}

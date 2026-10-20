@@ -12,8 +12,12 @@
  *   (`board` asc, `ms` asc); docs/leaderboard.md has the setup.
  */
 
-import { appendFileSync, existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { appendFile } from 'node:fs/promises';
 import { GAME_MODES, type GameMode } from '../shared/game/knobs';
+import type { WinEntry } from '../shared/game/protocol';
+
+export type { WinEntry };
 
 /** How many times a board keeps and serves. */
 export const TOP = 5;
@@ -35,9 +39,6 @@ export interface WinRecord {
   readonly named: boolean;
 }
 
-/** What `GET /wins` sends per win: the record without what the query already names. */
-export type WinEntry = Pick<WinRecord, 'ms' | 'at' | 'name' | 'bot' | 'others' | 'named'>;
-
 /** One leaderboard: a rule at a size in a mode. */
 export function boardKey(mode: string, level: number, rule: string): string {
   return `${mode}|${level}|${rule}`;
@@ -50,7 +51,7 @@ const RULE_KEY = /^[a-z-]{1,16}\|\d{0,10}\|[\d.]{0,60}$/;
 export function parseWinsQuery(params: URLSearchParams): { mode: GameMode; level: number; rule: string } | null {
   const rule = params.get('rule') ?? '';
   const level = Number(params.get('level'));
-  const mode = params.get('mode') ?? 'normal';
+  const mode = params.get('mode') ?? '';
   if (!RULE_KEY.test(rule) || !Number.isInteger(level) || level < 1 || level > 9) return null;
   if (!(GAME_MODES as readonly string[]).includes(mode)) return null;
   return { mode: mode as GameMode, level, rule };
@@ -140,7 +141,7 @@ export class FileWinStore implements WinStore {
   }
 
   async add(r: WinRecord): Promise<void> {
-    appendFileSync(this.path, JSON.stringify(r) + '\n');
+    await appendFile(this.path, JSON.stringify(r) + '\n');
   }
 
   async top(): Promise<null> {
@@ -220,7 +221,7 @@ export class FirestoreWinStore implements WinStore {
       body: JSON.stringify({ fields: fsFields(r) }),
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) throw new Error(`Firestore add: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw new Error(`Firestore add: ${res.status}`);
   }
 
   async top(key: string): Promise<readonly WinEntry[]> {
@@ -238,7 +239,7 @@ export class FirestoreWinStore implements WinStore {
       body: JSON.stringify(query),
       signal: AbortSignal.timeout(5000),
     });
-    if (!res.ok) throw new Error(`Firestore query: ${res.status} ${(await res.text()).slice(0, 200)}`);
+    if (!res.ok) throw new Error(`Firestore query: ${res.status}`);
     const rows = (await res.json()) as { document?: { fields?: Record<string, Record<string, unknown>> } }[];
     return rows.map((row) => fsEntry(row.document?.fields)).filter((e): e is WinEntry => e !== null);
   }
@@ -248,6 +249,12 @@ export class FirestoreWinStore implements WinStore {
 export const STORE_TTL_MS = 60_000;
 /** Boards remembered as fetched; past this the memory of when is dropped (any query names a board). */
 const MAX_FETCHED = 10_000;
+/**
+ * Store queries a minute, at most: every rule the editor shows is a board, so
+ * a script walking rules would otherwise be a query (and a billed read) each.
+ * Past it, boards are served from memory until the minute is up.
+ */
+export const STORE_QUERIES_PER_MIN = 120;
 
 /**
  * Memory in front of a store. Wins go to both; a board is read from the store
@@ -257,6 +264,8 @@ const MAX_FETCHED = 10_000;
 export class Wins {
   readonly boards = new WinBoards();
   private readonly fetched = new Map<string, number>();
+  private minute = 0;
+  private queries = 0;
 
   constructor(
     private readonly store: WinStore | null,
@@ -276,10 +285,16 @@ export class Wins {
 
   async top(key: string): Promise<readonly WinEntry[]> {
     const at = this.fetched.get(key);
-    if (this.store && (at === undefined || this.now() - at > STORE_TTL_MS)) {
+    const now = this.now();
+    if (now - this.minute >= 60_000) {
+      this.minute = now;
+      this.queries = 0;
+    }
+    if (this.store && (at === undefined || now - at > STORE_TTL_MS) && this.queries < STORE_QUERIES_PER_MIN) {
+      this.queries++;
       // Stamped before asking, so a failing store is asked once a TTL, not once a request.
       if (this.fetched.size >= MAX_FETCHED) this.fetched.clear();
-      this.fetched.set(key, this.now());
+      this.fetched.set(key, now);
       try {
         const list = await this.store.top(key);
         if (list) this.boards.merge(key, list);

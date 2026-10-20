@@ -155,7 +155,6 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
   padding: 8px 14px; font: inherit; font-weight: 600; color: var(--muted); cursor: pointer;
 }
 .lobby-tab.is-on { color: var(--text); border-bottom-color: var(--accent); }
-.lobby-board-hint { margin: 0 0 12px; font-size: 14px; }
 
 /* Rule editor */
 .rule-editor { display: grid; gap: 14px; }
@@ -352,6 +351,7 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 }
 .top-wins-time { font-weight: 700; font-variant-numeric: tabular-nums; }
 .top-wins-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.top-wins-with { font-size: 13px; }
 .top-wins-others { grid-column: 2 / -1; font-size: 13px; }
 .patch-svg { width: 100%; height: auto; justify-self: center; background: var(--panel-2); border: 1px solid var(--line); border-radius: 12px; }
 .patch-tiles path { stroke: color-mix(in srgb, var(--text) 16%, transparent); stroke-width: 0.05; }

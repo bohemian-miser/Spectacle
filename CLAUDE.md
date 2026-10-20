@@ -662,7 +662,7 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   on the lobby's Leaderboard tab. A win's a win — bots' and named rooms'
   count; who else was there is kept and only shown behind a row's `+n`.
   Names are the players' own. Keep it that small unless the owner asks for
-  more (filters, rule pages and share cards were mocked and dropped).
+  more.
   `tests/wins.test.ts` plays a real win on a spawned server.
 - **Pattern stats are public.** `/patterns` (and `/patterns.json`) list which
   rules people and bots play and how they do with them, including the

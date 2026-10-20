@@ -249,6 +249,20 @@ export type GameEvent =
   | { readonly t: 'knobs'; readonly knobs: Knobs };
 
 /** A room's bots, and what may be asked for. */
+/** One won round as `GET /wins` sends it (server/wins.ts): fastest first, at most five. */
+export interface WinEntry {
+  /** Time played in the round, ms. */
+  readonly ms: number;
+  /** When it was won, epoch ms. */
+  readonly at: number;
+  readonly name: string;
+  readonly bot: boolean;
+  /** Everyone else at the board when it was won, by name. */
+  readonly others: readonly string[];
+  /** Won in a `?room=` link's room. */
+  readonly named: boolean;
+}
+
 export interface RoomBots {
   /** The kinds the room's bot brains offer, in order. */
   readonly kinds: readonly { readonly kind: string; readonly label: string; readonly blurb: string }[];

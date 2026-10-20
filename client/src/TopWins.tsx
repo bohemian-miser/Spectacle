@@ -1,32 +1,27 @@
 /**
  * The Leaderboard tab's box beside the rule preview: the fastest wins with
- * the rule on show, per board size, from the server's `GET /wins`
- * (server/wins.ts). Who else was in each round stays folded away behind its
- * row's count.
+ * the rule on show, at the lobby's board size and game mode, from the
+ * server's `GET /wins` (server/wins.ts). Who else was in each round stays
+ * folded away until asked for.
  */
 
 import { useEffect, useState } from 'react';
-import type { GameMode } from '../../shared/game/knobs';
+import { MODE_LABELS, type GameMode } from '../../shared/game/knobs';
+import type { WinEntry } from '../../shared/game/protocol';
 import { ruleKey, type PlayerRule } from '../../shared/game/rule';
-
-/** One win as `GET /wins` sends it (server/wins.ts's WinEntry). */
-export interface WinEntry {
-  readonly ms: number;
-  readonly at: number;
-  readonly name: string;
-  readonly bot: boolean;
-  readonly others: readonly string[];
-  readonly named: boolean;
-}
 
 export interface TopWinsProps {
   readonly rule: PlayerRule;
   readonly mode: GameMode;
   /** The board sizes the server offers. */
   readonly levels: readonly number[];
-  /** The size shown first: the one picked in the lobby. */
+  /** The lobby's size: the one Play would use. */
   readonly level: number;
+  onLevel(level: number): void;
 }
+
+/** A pause after the rule changes before asking: each click in the editor is a new rule. */
+const FETCH_DELAY_MS = 250;
 
 /** `m:ss`, or `h:mm:ss` from an hour. */
 export function formatWinTime(ms: number): string {
@@ -37,49 +32,52 @@ export function formatWinTime(ms: number): string {
   return h > 0 ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`;
 }
 
-export function TopWins({ rule, mode, levels, level }: TopWinsProps): JSX.Element {
-  const [lv, setLv] = useState(level);
+export function TopWins({ rule, mode, levels, level, onLevel }: TopWinsProps): JSX.Element {
   const [wins, setWins] = useState<readonly WinEntry[] | 'error' | null>(null);
   const [open, setOpen] = useState(-1);
+  const empty = rule.subset.length === 0;
   const key = ruleKey(rule);
-
-  useEffect(() => setLv(level), [level]);
 
   useEffect(() => {
     setWins(null);
     setOpen(-1);
-    if (rule.subset.length === 0) return;
+    if (empty) return;
     const ctl = new AbortController();
-    const q = new URLSearchParams({ mode, level: String(lv), rule: key });
-    fetch(`/wins?${q}`, { signal: ctl.signal })
-      .then((r) => (r.ok ? (r.json() as Promise<{ wins: WinEntry[] }>) : Promise.reject(new Error(String(r.status)))))
-      .then((j) => setWins(j.wins))
-      .catch(() => {
-        if (!ctl.signal.aborted) setWins('error');
-      });
-    return () => ctl.abort();
-  }, [key, lv, mode, rule.subset.length]);
+    const q = new URLSearchParams({ mode, level: String(level), rule: key });
+    const timer = setTimeout(() => {
+      fetch(`/wins?${q}`, { signal: ctl.signal })
+        .then((r) => (r.ok ? (r.json() as Promise<{ wins: WinEntry[] }>) : Promise.reject(new Error(String(r.status)))))
+        .then((j) => setWins(j.wins))
+        .catch(() => {
+          if (!ctl.signal.aborted) setWins('error');
+        });
+    }, FETCH_DELAY_MS);
+    return () => {
+      clearTimeout(timer);
+      ctl.abort();
+    };
+  }, [key, level, mode, empty]);
 
   return (
     <div className="top-wins">
-      <h2>Fastest wins</h2>
+      <h2>Fastest wins · {MODE_LABELS[mode]}</h2>
       {levels.length > 1 && (
         <div className="mode-row" role="radiogroup" aria-label="Board size">
           {levels.map((l) => (
-            <button key={l} type="button" role="radio" aria-checked={l === lv} className={`btn${l === lv ? ' is-on' : ''}`} onClick={() => setLv(l)}>
+            <button key={l} type="button" role="radio" aria-checked={l === level} className={`btn${l === level ? ' is-on' : ''}`} onClick={() => onLevel(l)}>
               level {l}
             </button>
           ))}
         </div>
       )}
-      {rule.subset.length === 0 ? (
+      {empty ? (
         <p className="muted">Pick some edge classes to see a rule's wins.</p>
       ) : wins === null ? (
         <p className="muted">Loading…</p>
       ) : wins === 'error' ? (
         <p className="muted">Couldn't load the wins just now.</p>
       ) : wins.length === 0 ? (
-        <p className="muted">Nobody has won with this rule at level {lv} yet.</p>
+        <p className="muted">Nobody has won with this rule at level {level} yet.</p>
       ) : (
         <ol className="top-wins-list">
           {wins.map((w, i) => (
@@ -89,21 +87,14 @@ export function TopWins({ rule, mode, levels, level }: TopWinsProps): JSX.Elemen
                 {w.name}
                 {w.bot && <span className="muted"> (bot)</span>}
               </span>
-              <button
-                type="button"
-                className="tag tag-btn"
-                aria-expanded={open === i}
-                title="Who else was in the round"
-                onClick={() => setOpen(open === i ? -1 : i)}
-              >
-                {w.others.length ? `+${w.others.length}` : 'alone'}
-              </button>
-              {open === i && (
-                <span className="top-wins-others muted">
-                  {w.others.length ? `With ${w.others.join(', ')}` : 'Nobody else was there'}
-                  {w.named ? ' · private room' : ''}
-                </span>
+              {w.others.length > 0 ? (
+                <button type="button" className="btn-link top-wins-with" aria-expanded={open === i} onClick={() => setOpen(open === i ? -1 : i)}>
+                  with {w.others.length}
+                </button>
+              ) : (
+                <span className="muted top-wins-with">alone</span>
               )}
+              {open === i && <span className="top-wins-others muted">{w.others.join(', ')}</span>}
             </li>
           ))}
         </ol>
