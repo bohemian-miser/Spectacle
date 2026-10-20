@@ -13,13 +13,15 @@
 
 import {
   buildSystem,
-  flatten,
+  countTiles,
   leafOrder,
   leafPts,
+  mul,
   transPt,
   type Affine,
   type Pt,
   type TileFamilyId,
+  type TileNode,
   type TileTypeId,
 } from '../tiles';
 
@@ -140,7 +142,36 @@ export function fieldKey(spec: FieldSpec): string {
   return `${spec.family}/${spec.rootTile}/${spec.level}`;
 }
 
-/** Build (memoised) the field for a spec. */
+/** Sorted unique values of `keys` (sorts a copy). */
+function uniqueSorted(keys: Float64Array): Float64Array {
+  const s = keys.slice().sort();
+  let n = 0;
+  for (let i = 0; i < s.length; i++) if (i === 0 || s[i] !== s[i - 1]) s[n++] = s[i];
+  return s.subarray(0, n);
+}
+
+/** Index of `v` in ascending `sorted`, or -1. */
+function search(sorted: Float64Array, v: number): number {
+  let lo = 0;
+  let hi = sorted.length - 1;
+  while (lo <= hi) {
+    const mid = (lo + hi) >> 1;
+    const m = sorted[mid];
+    if (m < v) lo = mid + 1;
+    else if (m > v) hi = mid - 1;
+    else return mid;
+  }
+  return -1;
+}
+
+/**
+ * Build (memoised) the field for a spec, with its edge table (`acrossEdge`)
+ * and outline (`fieldOutline`). Everything goes straight into typed arrays —
+ * no object per tile, corner or edge — so a level-6 build peaks at a fraction
+ * of the memory `flatten()` and Maps of vertex lists took, and leaves no
+ * garbage behind. The arrays and the outline are exactly what that older
+ * build gave (tests/field-build.test.ts keeps a copy of it to compare with).
+ */
 export function buildField(spec: FieldSpec): Field {
   const key = fieldKey(spec);
   const hit = fieldCache.get(key);
@@ -149,71 +180,91 @@ export function buildField(spec: FieldSpec): Field {
   const family = spec.family;
   const sys = buildSystem(family, spec.level);
   const root = sys[spec.rootTile] ?? sys['Delta'];
-  const instances = flatten(root);
-  const count = instances.length;
+  const count = countTiles(root);
   const leafTypes = leafOrder(family);
   const typeIndex = new Map<string, number>(leafTypes.map((t, i) => [t, i]));
+  const shapes = leafTypes.map((t) => leafPts(family, t));
+  const per = Math.max(...shapes.map((s) => s.length));
 
   const types = new Uint8Array(count);
   const xforms = new Float64Array(count * 6);
   const centers = new Float64Array(count * 2);
+  /** Vertex key per (tile, corner); 0 where a tile has fewer corners than `per`. */
+  const keys = new Float64Array(count * per);
   let minX = Infinity;
   let minY = Infinity;
   let maxX = -Infinity;
   let maxY = -Infinity;
 
-  // Vertex → tiles incidence, for the neighbour lists.
-  const vertTiles = new Map<number, number[]>();
-
-  for (let i = 0; i < count; i++) {
-    const inst = instances[i];
-    types[i] = typeIndex.get(inst.type) ?? 0;
-    for (let k = 0; k < 6; k++) xforms[i * 6 + k] = inst.xform[k];
-    const pts = leafPts(family, inst.type);
+  // The order `flatten()` gives: children in order, transforms composed down.
+  let n = 0;
+  const walk = (node: TileNode, M: Affine): void => {
+    if (node.kind === 'meta') {
+      for (const child of node.children) walk(child.node, mul(M, child.xform));
+      return;
+    }
+    const i = n++;
+    const t = typeIndex.get(node.type) ?? 0;
+    types[i] = t;
+    for (let k = 0; k < 6; k++) xforms[i * 6 + k] = M[k];
+    const pts = shapes[t];
     let cx = 0;
     let cy = 0;
-    for (const p of pts) {
-      const w = transPt(inst.xform, p);
+    for (let k = 0; k < pts.length; k++) {
+      const w = transPt(M, pts[k]);
       cx += w.x;
       cy += w.y;
       if (w.x < minX) minX = w.x;
       if (w.y < minY) minY = w.y;
       if (w.x > maxX) maxX = w.x;
       if (w.y > maxY) maxY = w.y;
-      const vk = vkey(w.x, w.y);
-      const list = vertTiles.get(vk);
-      if (list) list.push(i);
-      else vertTiles.set(vk, [i]);
+      keys[i * per + k] = vkey(w.x, w.y);
     }
     centers[i * 2] = cx / pts.length;
     centers[i * 2 + 1] = cy / pts.length;
-  }
+  };
+  walk(root, [1, 0, 0, 0, 1, 0]);
 
-  // Neighbours (CSR). Two passes: count, then fill.
-  const nbrStart = new Int32Array(count + 1);
-  const scratch: number[][] = new Array(count);
-  for (let i = 0; i < count; i++) scratch[i] = [];
-  for (const list of vertTiles.values()) {
-    if (list.length < 2) continue;
-    for (const a of list) {
-      const s = scratch[a];
-      for (const b of list) if (b !== a && !s.includes(b)) s.push(b);
+  // Vertex ids (rank among the distinct keys), then vertex → tiles as CSR.
+  const uniq = uniqueSorted(keys);
+  const verts = uniq.length;
+  const vid = new Int32Array(count * per).fill(-1);
+  for (let j = 0; j < keys.length; j++) if (keys[j] !== 0) vid[j] = search(uniq, keys[j]);
+  const vStart = new Int32Array(verts + 1);
+  for (let j = 0; j < vid.length; j++) if (vid[j] >= 0) vStart[vid[j] + 1]++;
+  for (let v = 0; v < verts; v++) vStart[v + 1] += vStart[v];
+  const vFill = vStart.slice(0, verts);
+  const vTiles = new Int32Array(vStart[verts]);
+  for (let j = 0; j < vid.length; j++) if (vid[j] >= 0) vTiles[vFill[vid[j]]++] = Math.floor(j / per);
+
+  // Neighbours (CSR, ascending): every tile sharing a vertex. Two passes, count then fill.
+  const seen = new Int32Array(count).fill(-1);
+  const cand = new Int32Array(per * 32);
+  const gather = (i: number): number => {
+    let m = 0;
+    for (let k = 0; k < per; k++) {
+      const v = vid[i * per + k];
+      if (v < 0) continue;
+      for (let q = vStart[v]; q < vStart[v + 1]; q++) {
+        const b = vTiles[q];
+        if (b !== i && seen[b] !== i) {
+          seen[b] = i;
+          cand[m++] = b;
+        }
+      }
     }
-  }
-  for (let i = 0; i < count; i++) nbrStart[i + 1] = nbrStart[i] + scratch[i].length;
+    return m;
+  };
+  const nbrStart = new Int32Array(count + 1);
+  for (let i = 0; i < count; i++) nbrStart[i + 1] = nbrStart[i] + gather(i);
+  seen.fill(-1);
   const nbrs = new Int32Array(nbrStart[count]);
-  for (let i = 0; i < count; i++) {
-    const s = scratch[i];
-    s.sort((a, b) => a - b);
-    nbrs.set(s, nbrStart[i]);
-  }
+  for (let i = 0; i < count; i++) nbrs.set(cand.subarray(0, gather(i)).sort(), nbrStart[i]);
 
   // Grid. Cell = 2 × the outline radius, so a point's tile is in its own cell
   // or an immediate neighbour cell.
   let reach = 0;
-  for (const type of leafTypes) {
-    for (const p of leafPts(family, type)) reach = Math.max(reach, Math.hypot(p.x, p.y));
-  }
+  for (const s of shapes) for (const p of s) reach = Math.max(reach, Math.hypot(p.x, p.y));
   const cell = Math.max(1, 2 * reach);
   const cols = Math.max(1, Math.floor((maxX - minX) / cell) + 1);
   const rows = Math.max(1, Math.floor((maxY - minY) / cell) + 1);
@@ -231,8 +282,6 @@ export function buildField(spec: FieldSpec): Field {
   const gitems = new Int32Array(count);
   for (let i = 0; i < count; i++) gitems[fill[cellOf[i]]++] = i;
 
-  const tileArea = polygonArea(leafPts(family, leafTypes[0]));
-
   const field: Field = {
     spec,
     family,
@@ -242,13 +291,120 @@ export function buildField(spec: FieldSpec): Field {
     xforms,
     centers,
     bounds: { minX, minY, maxX, maxY },
-    tileArea,
+    tileArea: polygonArea(shapes[0]),
     nbrStart,
     nbrs,
     grid: { cell, minX, minY, cols, rows, start: gstart, items: gitems },
   };
+
+  // Edge table: across edge k (corner k to k + 1) is the other tile with both
+  // corners (the highest, should there be two), -1 on the board's edge; slots
+  // past a tile's own corners stay -2.
+  const nb = new Int32Array(count * per).fill(-2);
+  for (let i = 0; i < count; i++) {
+    const m = shapes[types[i]].length;
+    for (let k = 0; k < m; k++) {
+      const u = vid[i * per + k];
+      const w = vid[i * per + ((k + 1) % m)];
+      let across = -1;
+      for (let q = vStart[u]; q < vStart[u + 1]; q++) {
+        const b = vTiles[q];
+        if (b === i || b <= across) continue;
+        for (let r = vStart[w]; r < vStart[w + 1]; r++) {
+          if (vTiles[r] === b) {
+            across = b;
+            break;
+          }
+        }
+      }
+      nb[i * per + k] = across;
+    }
+  }
+  edgeCache.set(field, { per, nb });
+  outlineCache.set(field, outlineOf(field, shapes, per, vid, vStart, vTiles));
+
   fieldCache.set(key, field);
   return field;
+}
+
+/**
+ * The field's outline from its vertex ids: the edges that belong to one tile,
+ * chained the way `chainOutline` chains them — vertices numbered in the order
+ * a scan of the tiles first meets them (each tile from its last corner), edges
+ * taken in scan order — so the ring comes out the same, point for point.
+ */
+function outlineOf(
+  field: Field,
+  shapes: readonly (readonly Pt[])[],
+  per: number,
+  vid: Int32Array,
+  vStart: Int32Array,
+  vTiles: Int32Array,
+): readonly Pt[] {
+  const { count, types } = field;
+  // An edge belongs to one tile when no other tile has both its corners.
+  const shared = (u: number, w: number, i: number): boolean => {
+    for (let q = vStart[u]; q < vStart[u + 1]; q++) {
+      const b = vTiles[q];
+      if (b === i) continue;
+      for (let r = vStart[w]; r < vStart[w + 1]; r++) if (vTiles[r] === b) return true;
+    }
+    return false;
+  };
+  const order = new Int32Array(vStart.length - 1).fill(-1);
+  let next = 0;
+  const idOf = (v: number): number => (order[v] < 0 ? (order[v] = next++) : order[v]);
+  const where = new Map<number, number>(); // scan id → (tile * per + corner), the first sighting
+  const adj = new Map<number, number[]>();
+  const link = (a: number, b: number): void => {
+    const list = adj.get(a);
+    if (list) list.push(b);
+    else adj.set(a, [b]);
+  };
+  for (let i = 0; i < count; i++) {
+    const m = shapes[types[i]].length;
+    const corner = (k: number): number => {
+      const v = vid[i * per + k];
+      const fresh = order[v] < 0;
+      const id = idOf(v);
+      if (fresh) where.set(id, i * per + k);
+      return id;
+    };
+    let prevK = m - 1;
+    let prev = corner(prevK);
+    for (let k = 0; k < m; k++) {
+      const cur = corner(k);
+      if (!shared(vid[i * per + prevK], vid[i * per + k], i)) {
+        const u = Math.min(prev, cur);
+        const w = Math.max(prev, cur);
+        link(u, w);
+        link(w, u);
+      }
+      prev = cur;
+      prevK = k;
+    }
+  }
+  const edgeKey = (u: number, v: number): number => (u < v ? u * 0x4000000 + v : v * 0x4000000 + u);
+  const used = new Set<number>();
+  let best: number[] = [];
+  for (const start of adj.keys()) {
+    const loop: number[] = [start];
+    let cur = start;
+    for (;;) {
+      const nextV = adj.get(cur)!.find((x) => !used.has(edgeKey(cur, x)));
+      if (nextV === undefined) break;
+      used.add(edgeKey(cur, nextV));
+      if (nextV === start) break;
+      loop.push(nextV);
+      cur = nextV;
+    }
+    if (loop.length > best.length) best = loop;
+  }
+  return best.map((id) => {
+    const j = where.get(id)!;
+    const i = Math.floor(j / per);
+    return transPt(tileXform(field, i), shapes[types[i]][j % per]);
+  });
 }
 
 /** Tile containing world point `p`, or -1. */

@@ -13,7 +13,8 @@ export default defineConfig({
   build: {
     outDir: '../dist',
     emptyOutDir: true,
-    minify: false,
+    // Maps for readable stack traces; the browser only fetches them with devtools open.
+    sourcemap: true,
   },
   server: {
     proxy: {
