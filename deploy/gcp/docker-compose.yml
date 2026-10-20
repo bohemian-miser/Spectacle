@@ -11,7 +11,7 @@ services:
       # /patterns' stats outlive Watchtower's container swaps (every deploy).
       - STATS_FILE=/data/pattern-stats.json
       # And the leaderboard's won rounds (server/wins.ts).
-      - WINS_URL=/data/wins.jsonl
+      - WINS_FILE=/data/wins.jsonl
     volumes:
       - spectacle_data:/data
     expose:

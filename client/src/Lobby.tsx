@@ -9,7 +9,7 @@ import { RuleEditor } from './RuleEditor';
 import type { Store } from './store';
 import { FeedbackButton } from './FeedbackButton';
 import { SettingsButton } from './SettingsButton';
-import { TopWins } from './TopWins';
+import { Leaderboard } from './Leaderboard';
 
 export interface LobbyProps {
   readonly store: Store;
@@ -269,8 +269,22 @@ export function Lobby(props: LobbyProps): JSX.Element {
         {touched && name.trim().length === 0 && <span className="tag tag-bad">say who you are</span>}
       </section>
 
-      <section className="panel">
-        <div className="lobby-intro" hidden={board}>
+      {board && hello && (
+        <Leaderboard
+          family={hello.field.family}
+          mode={gameMode}
+          levels={levels.map((l) => l.level)}
+          level={online?.level ?? hello.field.level}
+          onLevel={onLevel}
+          onUse={(r) => {
+            onRule(r);
+            setTab('play');
+          }}
+        />
+      )}
+
+      <section className="panel" hidden={board}>
+        <div className="lobby-intro">
           <p>
             These fractals are called “Spectacles” based off the{' '}
             <a href="https://bohemian-miser.github.io/Spectre/" target="_blank" rel="noreferrer">
@@ -288,18 +302,7 @@ export function Lobby(props: LobbyProps): JSX.Element {
           <p className="lobby-sig">- bo miser</p>
         </div>
         {hello ? (
-          <RuleEditor
-            family={hello.field.family}
-            rule={rule}
-            color={color}
-            onChange={onRule}
-            onDrafting={setDrafting}
-            aside={
-              board ? (
-                <TopWins rule={rule} mode={gameMode} levels={levels.map((l) => l.level)} level={online?.level ?? hello.field.level} onLevel={onLevel} />
-              ) : undefined
-            }
-          />
+          <RuleEditor family={hello.field.family} rule={rule} color={color} onChange={onRule} onDrafting={setDrafting} />
         ) : mode === 'online' ? (
           <p className="muted">Connecting to the arena…</p>
         ) : (
@@ -307,13 +310,6 @@ export function Lobby(props: LobbyProps): JSX.Element {
         )}
       </section>
 
-      {board && (
-        <footer className="lobby-foot">
-          <button type="button" className="btn btn-accent btn-big" disabled={rule.subset.length === 0 || drafting.length > 0} onClick={() => setTab('play')}>
-            Use this rule
-          </button>
-        </footer>
-      )}
       <footer className="lobby-foot" hidden={board}>
         {inArena && (
           <>
