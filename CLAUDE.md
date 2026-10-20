@@ -772,7 +772,14 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   always-on e2-micro (free tier; the Standard-tier IPv4 is ~$3.65/month, the
   one cost), `deploy/gcp/create-vm.sh`: one process, so a `?room=` link is
   exact, and idle sockets cost nothing. Watchtower pulls each published image.
-  Cloud Run (scale to zero, deploy-cloudrun.yml) stays the path for a surge. Session resume
+  Cloud Run (scale to zero, deploy-cloudrun.yml) stays the path for a surge.
+  **DNS never needs Cloudflare again**: `hexagon.rodeo` is registered there
+  (Cloudflare Registrar insists on its nameservers; Cloud Domains takes no
+  transfers in), so it holds just a fixed A record to the reserved IP
+  `spectacle-ip` (35.209.98.188 — move the address, never the record, when
+  the VM changes) and NS records delegating `s.hexagon.rodeo` to Cloud DNS
+  (zone `s-hexagon-rodeo`). Backends are `<shard>.s.hexagon.rodeo`: the live
+  VM is `a`; `SHARD=b ./deploy/gcp/create-vm.sh` adds one, record and all. Session resume
   covers Cloud Run's hourly WebSocket cap. Cloud Run probes `/health` (set
   in both deploy-cloudrun.yml's `flags` and cloudrun.sh; keep them in step):
   a startup probe (every 2 s, up to 240 s, as long as the default TCP probe
