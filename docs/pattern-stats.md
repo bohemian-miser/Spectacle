@@ -40,21 +40,26 @@ was at the board.
 - `bot` says whether a bot played it. `ms` is how long the stint lasted.
 - `won` says whether the stint won its round.
 
+Every server also writes each finished stint and won round straight to
+BigQuery (`STATS_BIGQUERY`, server/bigquery.ts) — every shard, the VM
+included — into `PROJECT.spectacle.stints` and `PROJECT.spectacle.wins`,
+kept for good. They have the fields above as columns, plus `shard` and the
+time (`endedAt`, `wonAt`; both tables are partitioned by day). A `wins` row
+also has the winner's `name`, `others` at the board, `named` (a link's
+room), and `ruleKey` / `subset` (the leaderboard's form). Stints and wins
+from before this (from 2026-09-25) were loaded from the logs; those wins
+have no names.
+
 You can read them in three places:
 
-- **`/patterns`** (and `/patterns.json`) on a server: the totals since that
-  process started (or since `STATS_FILE` began, on the VM). There's a table
-  per rule (uses, time, bot share of the time, wins, best and mean
-  coverage), then people and bots separately. With several Cloud Run instances it shows only
-  the one that answered.
-- **Cloud Logging**: `jsonPayload.message="stint"` (or `"win"`), kept 30 days.
-- **BigQuery**, once `deploy/gcp/stats-sink.sh` has run (`setup-ci.sh` runs
-  it): every stint and win from every instance, kept indefinitely, in
-  `PROJECT.spectacle_stats.run_googleapis_com_stdout`. Stints logged before
-  the sink existed aren't copied in. A server older than the coverage fields
-  logs stints without them, and those rows have `NULL` coverage. The sink
-  script picks up `win` lines too; if the sink was made before that, rerun
-  the script to widen its filter.
+- **`/patterns`** (and `/patterns.json`): with `STATS_BIGQUERY` set, the
+  all-time totals from every shard (asked of BigQuery at most once a
+  minute), with the answering server's running stints on top. Without it,
+  that process's own since it started. A table per rule (uses, time, bot
+  share of the time, wins, best and mean coverage), then people and bots.
+- **BigQuery**: the queries below.
+- **Cloud Logging**: `jsonPayload.message="stint"` (or `"win"`), Cloud Run
+  only, kept 30 days.
 
 ## Queries
 
@@ -64,12 +69,6 @@ Replace `PROJECT` with the GCP project id. In the BigQuery console, or with
 ### Per rule: uses, time, bot share, coverage
 
 ```sql
-WITH s AS (
-  SELECT jsonPayload.stint.*
-  FROM `PROJECT.spectacle_stats.run_googleapis_com_stdout`
-  WHERE jsonPayload.message = 'stint'
-    AND timestamp > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
-)
 SELECT
   mode, rule,
   COUNT(*)                                   AS uses,
@@ -81,7 +80,8 @@ SELECT
   ROUND(100 * MAX(peakCoverage), 2)          AS best_cover_pct,
   ROUND(100 * AVG(peakCoverage), 2)          AS mean_cover_pct,
   ROUND(100 * APPROX_QUANTILES(peakCoverage, 2)[OFFSET(1)], 2) AS median_cover_pct
-FROM s
+FROM `PROJECT.spectacle.stints`
+WHERE endedAt > TIMESTAMP_SUB(CURRENT_TIMESTAMP(), INTERVAL 30 DAY)
 GROUP BY mode, rule
 ORDER BY uses DESC;
 ```
@@ -89,10 +89,8 @@ ORDER BY uses DESC;
 ### Uses per day
 
 ```sql
-SELECT DATE(timestamp) AS day, jsonPayload.stint.rule AS rule,
-       COUNT(*) AS uses, COUNTIF(NOT jsonPayload.stint.bot) AS human_uses
-FROM `PROJECT.spectacle_stats.run_googleapis_com_stdout`
-WHERE jsonPayload.message = 'stint'
+SELECT DATE(endedAt) AS day, rule, COUNT(*) AS uses, COUNTIF(NOT bot) AS human_uses
+FROM `PROJECT.spectacle.stints`
 GROUP BY day, rule
 ORDER BY day DESC, uses DESC;
 ```
@@ -100,14 +98,12 @@ ORDER BY day DESC, uses DESC;
 ### Rounds won: by whom, and how fast
 
 ```sql
-SELECT jsonPayload.win.mode AS mode, jsonPayload.win.rule AS rule,
-       IF(jsonPayload.win.bot, jsonPayload.win.kind, 'person') AS winner,
+SELECT mode, rule, IF(bot, kind, 'person') AS winner,
        COUNT(*) AS wins,
-       ROUND(AVG(jsonPayload.win.roundMs) / 60000, 1) AS mean_minutes,
-       ROUND(MIN(jsonPayload.win.roundMs) / 60000, 1) AS fastest_minutes,
-       ROUND(AVG(jsonPayload.win.humans), 1) AS mean_humans
-FROM `PROJECT.spectacle_stats.run_googleapis_com_stdout`
-WHERE jsonPayload.message = 'win'
+       ROUND(AVG(roundMs) / 60000, 1) AS mean_minutes,
+       ROUND(MIN(roundMs) / 60000, 1) AS fastest_minutes,
+       ROUND(AVG(humans), 1) AS mean_humans
+FROM `PROJECT.spectacle.wins`
 GROUP BY mode, rule, winner
 ORDER BY wins DESC;
 ```
@@ -115,10 +111,9 @@ ORDER BY wins DESC;
 ### Bots' share of the wins, per day
 
 ```sql
-SELECT DATE(timestamp) AS day, COUNT(*) AS rounds,
-       ROUND(100 * COUNTIF(jsonPayload.win.bot) / COUNT(*), 1) AS bot_win_pct
-FROM `PROJECT.spectacle_stats.run_googleapis_com_stdout`
-WHERE jsonPayload.message = 'win'
+SELECT DATE(wonAt) AS day, COUNT(*) AS rounds,
+       ROUND(100 * COUNTIF(bot) / COUNT(*), 1) AS bot_win_pct
+FROM `PROJECT.spectacle.wins`
 GROUP BY day
 ORDER BY day DESC;
 ```
@@ -126,13 +121,11 @@ ORDER BY day DESC;
 ### The biggest single uses
 
 ```sql
-SELECT timestamp, jsonPayload.stint.rule AS rule, jsonPayload.stint.bot AS bot,
-       jsonPayload.stint.level AS level,
-       ROUND(100 * jsonPayload.stint.peakCoverage, 2) AS cover_pct,
-       ROUND(jsonPayload.stint.ms / 60000, 1) AS minutes
-FROM `PROJECT.spectacle_stats.run_googleapis_com_stdout`
-WHERE jsonPayload.message = 'stint'
-ORDER BY jsonPayload.stint.peakCoverage DESC
+SELECT endedAt, rule, bot, level, shard,
+       ROUND(100 * peakCoverage, 2) AS cover_pct,
+       ROUND(ms / 60000, 1) AS minutes
+FROM `PROJECT.spectacle.stints`
+ORDER BY peakCoverage DESC
 LIMIT 50;
 ```
 

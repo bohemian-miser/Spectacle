@@ -53,6 +53,11 @@
  *                            in this JSON file across restarts
  *   WINS_FILE     (unset)    keep the leaderboard's won rounds (server/wins.ts) in this
  *                            file, one JSON line each, across restarts
+ *   WINS_FIRESTORE (unset)   a project id: the leaderboard lives in its Firestore
+ *                            (server/firestore.ts), shared by every shard, kept for good
+ *   STATS_BIGQUERY (unset)   `project.dataset`: every finished stint and won round goes
+ *                            to its `stints` / `wins` tables (server/bigquery.ts), and
+ *                            /patterns shows their all-time totals from every shard
  *   KNOB_*                   any knob, e.g. KNOB_BASE_STEP_MS=250 (see shared/game/knobs.ts);
  *                            wins over the live tuning (shared/game/brains/tuning.ts)
  *   EXIT_WITH_PARENT (unset) tests only (tests/server.ts): 1 = exit when stdin
@@ -95,9 +100,11 @@ import { botTotal, Bots, botTuningOf, BUILTIN_BRAINS, cleanBotMix, DEFAULT_BOT_O
 import { brainsHash, BrainsWatcher, sourceKey, type BrainsVersion } from './brains';
 import { clientAddress, FeedbackLimiter, feedbackId, feedbackStore, MAX_BODY, parseFeedback, type FeedbackRecord } from './feedback';
 import { metadataTokens } from './gcp';
+import { bigQuery, parseDataset } from './bigquery';
+import { firestoreWins, subsetOf } from './firestore';
 import { parseWinsQuery, Wins } from './wins';
 import { WindowMax } from './loop-stats';
-import { PATTERNS_PAGE, PatternStats, type PatternStatsFile } from './pattern-stats';
+import { PATTERNS_PAGE, PatternStats, STORED_ROWS_SQL, storedRows, type PatternRow, type PatternStatsFile, type PatternStatsReport } from './pattern-stats';
 import { STATUS_PAGE, type LogLine, type StatusReport } from './status-page';
 
 const PORT = Number(process.env.PORT ?? 8787);
@@ -299,6 +306,43 @@ function loadStats(): PatternStatsFile | null {
 
 const patternStats = new PatternStats(Date.now(), loadStats());
 
+/** This process's name in the stores: its shard, else its instance id. */
+const SHARD_NAME = SHARD?.name ?? INSTANCE.id;
+const gcpToken = metadataTokens();
+/** STATS_BIGQUERY: where every shard's stints and wins are kept for good (server/bigquery.ts). */
+const statsDataset = parseDataset(process.env.STATS_BIGQUERY ?? '');
+if (process.env.STATS_BIGQUERY && !statsDataset) note('warn', `STATS_BIGQUERY should be project.dataset, not ${process.env.STATS_BIGQUERY}: stats stay in this process`);
+let bqErrorAt = 0;
+const bq = statsDataset
+  ? bigQuery(statsDataset, gcpToken, (e) => {
+      // A failing store would say so every few seconds: once a minute is plenty.
+      if (Date.now() - bqErrorAt < 60_000) return;
+      bqErrorAt = Date.now();
+      note('warn', `bigquery: ${e instanceof Error ? e.message : String(e)}`);
+    })
+  : null;
+if (bq) setInterval(() => void bq.flush(), 5_000).unref();
+
+/** /patterns from BigQuery: the stored totals, asked for at most once a minute, with this process's running stints on top. */
+let stored: { since: number | null; rows: PatternRow[]; at: number; asking?: Promise<void> } = { since: null, rows: [], at: 0 };
+async function patternsReport(now: number): Promise<PatternStatsReport> {
+  if (!bq) return patternStats.report(now);
+  if (now - stored.at > 60_000) {
+    stored.asking ??= bq
+      .query(STORED_ROWS_SQL)
+      .then((rows) => {
+        stored = { ...storedRows(rows), at: Date.now() };
+      })
+      .catch((e) => {
+        stored.at = Date.now();
+        note('warn', `bigquery /patterns: ${e instanceof Error ? e.message : String(e)}`);
+      })
+      .finally(() => (stored.asking = undefined));
+    await stored.asking;
+  }
+  return patternStats.withLive(now, stored.since ?? patternStats.since, stored.rows);
+}
+
 function saveStats(): void {
   if (!STATS_FILE) return;
   const tmp = `${STATS_FILE}.tmp`;
@@ -308,7 +352,10 @@ function saveStats(): void {
 
 /** Each finished stint as one JSON line: Cloud Logging keeps it as a structured entry. */
 function logStints(stints: ReturnType<PatternStats['finishAll']>): void {
-  for (const s of stints) console.log(JSON.stringify({ message: 'stint', stint: s }));
+  for (const s of stints) {
+    console.log(JSON.stringify({ message: 'stint', stint: s }));
+    bq?.add('stints', randomBytes(8).toString('hex'), { ...s, endedAt: new Date(s.startedAt + s.ms).toISOString(), shard: SHARD_NAME });
+  }
 }
 
 // --- feedback ------------------------------------------------------------------
@@ -321,7 +368,12 @@ function logStints(stints: ReturnType<PatternStats['finishAll']>): void {
 const FEEDBACK_URL = process.env.FEEDBACK_URL ?? '';
 const feedbackKept = FEEDBACK_URL ? feedbackStore(FEEDBACK_URL, metadataTokens()) : null;
 
-const wins = new Wins(process.env.WINS_FILE ?? '', (e) => note('warn', `wins: could not keep a win: ${e instanceof Error ? e.message : String(e)}`));
+const WINS_FIRESTORE = process.env.WINS_FIRESTORE ?? '';
+const wins = new Wins(
+  process.env.WINS_FILE ?? '',
+  (e) => note('warn', `wins: ${e instanceof Error ? e.message : String(e)}`),
+  WINS_FIRESTORE ? { store: firestoreWins(WINS_FIRESTORE, gcpToken), shard: SHARD_NAME } : null,
+);
 
 /** GET /wins?mode=&level=[&subset=]: the fastest wins at that size, of one edge set or all. */
 function handleWins(url: URL, res: ServerResponse): void {
@@ -331,8 +383,13 @@ function handleWins(url: URL, res: ServerResponse): void {
     res.end(JSON.stringify({ error: 'bad query' }));
     return;
   }
-  res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
-  res.end(JSON.stringify({ wins: wins.top(q.mode, q.level, q.subset) }));
+  void wins.board(q.mode, q.level, q.subset).then((board) => {
+    res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+    res.end(JSON.stringify({ wins: board }));
+  }, () => {
+    res.writeHead(500);
+    res.end();
+  });
 }
 const feedbackLimit = new FeedbackLimiter(
   positiveInt(process.env.FEEDBACK_PER_ADDRESS, 3),
@@ -438,9 +495,18 @@ function serveStatic(req: IncomingMessage, res: ServerResponse): void {
     return;
   }
   if (url.pathname === '/patterns' || url.pathname === '/patterns.json') {
-    const json = url.pathname.endsWith('.json');
-    res.writeHead(200, { 'content-type': json ? 'application/json' : 'text/html; charset=utf-8', 'cache-control': 'no-store' });
-    res.end(json ? JSON.stringify(patternStats.report(Date.now())) : PATTERNS_PAGE);
+    if (url.pathname.endsWith('.json')) {
+      void patternsReport(Date.now()).then((report) => {
+        res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
+        res.end(JSON.stringify(report));
+      }, () => {
+        res.writeHead(500);
+        res.end();
+      });
+      return;
+    }
+    res.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' });
+    res.end(PATTERNS_PAGE);
     return;
   }
   if (url.pathname === '/status') {
@@ -628,8 +694,7 @@ class Room {
       if (e.t === 'circuit') patternStats.circuit(e.owner);
       else if (e.t === 'win') {
         patternStats.win(e.id);
-        this.logWin(e);
-        this.keepWin(e);
+        this.keepWin(e, this.logWin(e));
       } else if (e.t === 'restart') {
         logStints(patternStats.endRound(Date.now(), e.players.map((p) => p.id)));
         this.rounds++;
@@ -639,11 +704,11 @@ class Room {
   }
 
   /** A won round for the leaderboard: the winner's own rule, how long the round was played, and who else was at the board. */
-  private keepWin(e: Extract<GameEvent, { t: 'win' }>): void {
+  private keepWin(e: Extract<GameEvent, { t: 'win' }>, logged: Record<string, unknown>): void {
     const winner = this.engine.players.get(e.id);
     if (!winner) return;
     const others = [...this.engine.players.values()].filter((p) => p.id !== e.id && (p.bot || this.clients.has(p.id))).map((p) => p.name);
-    wins.add({
+    const win = {
       mode: this.mode,
       level: this.level,
       rule: ruleKey(winner.rule),
@@ -653,30 +718,41 @@ class Room {
       bot: winner.bot,
       others,
       named: this.named,
+    };
+    wins.add(win);
+    // BigQuery keeps the logged line, plus who won: the leaderboard's history, for good.
+    bq?.add('wins', randomBytes(8).toString('hex'), {
+      ...logged,
+      ruleKey: win.rule,
+      subset: subsetOf(win.rule),
+      name: win.name,
+      others: win.others,
+      named: win.named,
+      wonAt: new Date(win.at).toISOString(),
+      shard: SHARD_NAME,
     });
   }
 
   /** One JSON line per won round: what won it and how fast. No names or ids. */
-  private logWin(e: Extract<GameEvent, { t: 'win' }>): void {
+  private logWin(e: Extract<GameEvent, { t: 'win' }>): Record<string, unknown> {
     const winner = this.engine.players.get(e.id);
     const players = [...this.engine.players.values()].filter((p) => p.bot || this.clients.has(p.id));
-    console.log(JSON.stringify({
-      message: 'win',
-      win: {
-        mode: this.mode,
-        level: this.level,
-        round: this.rounds + 1,
-        rule: winner ? describeRule(winner.rule) : null,
-        bot: winner?.bot ?? false,
-        kind: winner?.bot ? (this.bots.list().find((b) => b.id === e.id)?.kind ?? null) : null,
-        tiles: e.tiles,
-        boardTiles: e.of,
-        coverage: Math.round((e.tiles / e.of) * 1e6) / 1e6,
-        roundMs: Math.round(this.roundMs),
-        humans: players.filter((p) => !p.bot).length,
-        bots: players.filter((p) => p.bot).length,
-      },
-    }));
+    const win = {
+      mode: this.mode,
+      level: this.level,
+      round: this.rounds + 1,
+      rule: winner ? describeRule(winner.rule) : null,
+      bot: winner?.bot ?? false,
+      kind: winner?.bot ? (this.bots.list().find((b) => b.id === e.id)?.kind ?? null) : null,
+      tiles: e.tiles,
+      boardTiles: e.of,
+      coverage: Math.round((e.tiles / e.of) * 1e6) / 1e6,
+      roundMs: Math.round(this.roundMs),
+      humans: players.filter((p) => !p.bot).length,
+      bots: players.filter((p) => p.bot).length,
+    };
+    console.log(JSON.stringify({ message: 'win', win }));
+    return win;
   }
 
   tick(now: number, dt: number): void {
@@ -1200,7 +1276,9 @@ function shutdown(): void {
     logStints(patternStats.finishAll(Date.now()));
     saveStats();
   });
-  process.exit(0);
+  // The last stints to BigQuery, if it answers in time (Cloud Run allows 10 s after SIGTERM).
+  if (!bq) process.exit(0);
+  void Promise.race([bq.flush(), new Promise((r) => setTimeout(r, 5_000))]).finally(() => process.exit(0));
 }
 for (const sig of ['SIGTERM', 'SIGINT'] as const) process.once(sig, shutdown);
 // Tests only: tests/server.ts holds the other end of our stdin, and it closes

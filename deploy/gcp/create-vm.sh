@@ -15,7 +15,8 @@
 # reserved IP; s.hexagon.rodeo is delegated to Cloud DNS (zone s-hexagon-rodeo).
 #
 # The VM runs as the project's default compute service account (as Cloud Run
-# does), with storage scope, so BOTS_URL / FEEDBACK_URL on gs:// work as there.
+# does), with the cloud-platform scope — IAM, not scopes, limits it — so the
+# buckets (BOTS_URL, FEEDBACK_URL), Firestore and BigQuery work as there.
 set -euo pipefail
 
 ZONE="${ZONE:-us-central1-a}"
@@ -54,7 +55,7 @@ else
     --boot-disk-size 20GB --boot-disk-type pd-standard \
     --tags "$NAME" \
     --address "$NAME-ip" --network-tier STANDARD \
-    --scopes storage-rw,logging-write,monitoring-write \
+    --scopes cloud-platform \
     --metadata-from-file "$META" \
     ${DOMAIN:+--metadata spectacle-domain="$DOMAIN"}
 fi

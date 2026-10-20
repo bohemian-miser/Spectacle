@@ -81,6 +81,8 @@ server/status-page.ts  /status (HTML, polls /status.json): rooms, players,
                   minute), joins/drops/errors/watchdog, the recent log.
 server/loop-stats.ts  `WindowMax`: the worst of a value over a sliding
                   minute (5 s buckets), for /status.
+server/firestore.ts, server/bigquery.ts  The permanent stores every shard
+                  shares (leaderboard; stints and wins), plain REST.
 server/pattern-stats.ts  Which rules people play and how they score: a
                   stint per (player, rule), sampled once a second, with its
                   peak board coverage; rows per (mode, rule, bot).
@@ -181,9 +183,10 @@ scripts/servers.ts  `npm run servers`: every Cloud Run instance at once —
                   heartbeats (who is in which room), traffic, instance-count
                   metric, /health, recent joins/leaves, via gcloud's token
                   over REST. `--url` reads one server's /status.json instead.
-deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh), e2-micro VM
-                  (create-vm.sh, startup.sh, compose with Caddy + Watchtower),
-                  stats-sink.sh (stint log lines → BigQuery).
+deploy/gcp/       Cloud Run (CI workflow + setup-ci.sh, domain.sh,
+                  shard-domains.sh), e2-micro VM (create-vm.sh, startup.sh,
+                  compose with Caddy + Watchtower), stats.sh (Firestore and
+                  BigQuery for the leaderboard and pattern stats).
 .github/workflows ci.yml (typecheck, tests, build, image build, smoke online +
                   solo). The three deploys, publish.yml (GHCR image; the VM's
                   Watchtower pulls it), pages.yml (solo build) and
@@ -695,11 +698,16 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   minute still shows. (The old figure was zeroed every 60 s.)
 - **The leaderboard is minimal** (owner's call, 2026-10-20): the lobby's
   Leaderboard tab lists the fastest won rounds at a size — time, name, rule —
-  with an edge-set filter. A win's a win (bots' and named rooms' count); who
-  else was there is kept, shown only as a name's tooltip. No database: memory
-  and `WINS_FILE` (the hosting is moving; keep storage out of it). Keep it
-  that small unless the owner asks for more.
-  `tests/wins.test.ts` plays a real win on a spawned server.
+  with an edge-set filter. A win's a win (bots' and named rooms' count, bots
+  marked); who else was there is kept, shown only as a name's tooltip. Keep
+  it that small unless the owner asks for more. **It is permanent and shared
+  by every shard** (owner's call, 2026-10-21): one Firestore document per
+  won round (`WINS_FIRESTORE`, server/firestore.ts, REST with the instance's
+  token), `GET /wins` reads the fastest back (cached `REMOTE_TTL_MS` per
+  query) merged with the wins the answering process saw itself, so a win
+  shows at once where it was won. Without it, memory and `WINS_FILE`. No
+  name filter (owner's call). `tests/wins.test.ts` plays a real win on a
+  spawned server; `tests/stores.test.ts` the remote paths.
 - **Pattern stats are public.** `/patterns` (and `/patterns.json`) list which
   rules people and bots play and how they do with them, including the
   infinite-line rules — nothing about them is hidden. It's a separate page
@@ -716,10 +724,17 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   (`PatternStats.endRound`), so a stint never spans rounds — since
   memory and disk go with the instance, and with several instances
   `/patterns` shows only the one that answered; the log covers them all.
-  A log sink (`deploy/gcp/stats-sink.sh`, run by setup-ci.sh) keeps those
-  lines in BigQuery (`spectacle_stats`); docs/pattern-stats.md has the
-  queries (uses per rule, coverage, bots' share of the time). No code path
-  writes there — keep it that way, the servers need no new permissions.
+  **Kept for good in BigQuery** (owner's call, 2026-10-21, replacing a log
+  sink that was never created and would have missed the shards and the
+  VM): every server streams each finished stint and won round into
+  `spectacle.stints` / `spectacle.wins` (`STATS_BIGQUERY`,
+  server/bigquery.ts: buffered, flushed every 5 s and at shutdown, rows
+  carry an `insertId`), and `/patterns.json` is their all-time totals
+  (`STORED_ROWS_SQL`, at most once a minute) with the process's running
+  stints on top (`PatternStats.withLive`). The runtime account may write
+  Firestore and that dataset (`deploy/gcp/stats.sh`); the VM runs with the
+  `cloud-platform` scope for it. docs/pattern-stats.md has the queries.
+  Everything logged since 2026-09-25 was loaded from the logs.
   `STATS_FILE` keeps the aggregate on the VM (compose points it at the
   `spectacle_data` volume on `/data`, so Watchtower's swaps keep it). Only players at the board are
   sampled, so a reconnect splits a stint in two.
