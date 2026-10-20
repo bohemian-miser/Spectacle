@@ -424,9 +424,9 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   `1Gi`; raise CPU with memory before raising the cap. **Named rooms and
   resume tickets are per process**: with more than one instance an invite
   can land on a different instance (empty room, same name) and a reconnect
-  relies on best-effort session affinity (a miss is a new player). Making
-  invites exact across instances needs routing by room (e.g. several
-  one-instance services with the shard in the link) — open, owner's call.
+  relies on best-effort session affinity (a miss is a new player). Hence
+  **shards** (below): every process is one named shard with its own address,
+  so invites and tickets are exact.
   Every instance names itself (`INSTANCE`: random id + `K_REVISION`) on
   `/status`, `/health`, and a once-a-minute `{"message":"heartbeat"}` log
   line (only while it has sockets) — the log is the one view across them all.
@@ -442,6 +442,24 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   other: the resume window and the away switch apply. The server lets a
   socket that never joins go after `UNJOINED_MS` (30 min) with code 4003
   (`IDLE_CLOSE`), which a client takes as parking, not a drop to redial.
+- **Shards: every server is one named process, every room lives on one**
+  (`shared/game/shard.ts`; owner's call, October 2026, over Agones — which
+  fits but costs ~$30–50/month standing and a cluster to keep). Shard `a` is
+  the free VM (`SHARD=a` in its `.env`); `b`–`z` are Cloud Run services
+  `spectacle-<name>`, `--max-instances=1`, scaling to zero (deploy-cloudrun.yml's
+  matrix, `SPECTACLE_SHARDS`), reached at `<name>.s.hexagon.rodeo`
+  (`deploy/gcp/shard-domains.sh`: a domain mapping and a Cloud DNS CNAME
+  each). The page is always served from hexagon.rodeo; a shard is only where
+  the socket goes (`SHARD_WS`, `wss://{shard}.s.hexagon.rodeo/ws`, sent in
+  `hello.shard` and kept in localStorage). At `MAX_INSTANCE_PLAYERS` a shard
+  refuses a new player with `error.next` (its `SHARD_NEXT`) and the client
+  carries the same join on there (`keepRejoin`); the last refuses as before.
+  A link into a room already open on a full shard still gets in. Invite links
+  carry `?s=`, tickets carry `shard`, player ids carry the shard's name (so
+  `heldElsewhere` can't match across shards). Unset `SHARD`: unsharded, as
+  ever (dev, tests). 200 + 25 × 400 ≈ 10k players before anyone is turned
+  away; an idle shard costs nothing. Agones stays the upgrade path if deploys
+  that keep live rooms become worth a cluster.
 - **Client fallback: never a silent dead end.** `error.code` (protocol.ts)
   gives the client a machine-readable reason instead of parsing text.
   `store.lastError` (a fresh object every time, even a repeat message, so a

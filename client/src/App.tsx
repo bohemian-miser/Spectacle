@@ -10,6 +10,7 @@ import { answerTabs, clearSession, forgetSession, heldElsewhere, loadSession, sa
 import { Store } from './store';
 import { useStore } from './useStore';
 import { cleanRoomName } from '../../shared/game/room-name';
+import { cleanShardName, shardWsUrl, validShardTemplate } from '../../shared/game/shard';
 
 export type Mode = 'online' | 'solo';
 type Screen = 'lobby' | 'arena';
@@ -56,6 +57,26 @@ function initialLevel(): number | null {
 
 /** A room named by a `?room=` link, online only: that room, or a new one by that name. */
 export const LINK_ROOM = SOLO_ONLY ? null : cleanRoomName(new URLSearchParams(location.search).get('room'));
+/** The shard a link names (`?s=`), whose server holds its room (shared/game/shard.ts). */
+const LINK_SHARD = SOLO_ONLY ? null : cleanShardName(new URLSearchParams(location.search).get('s'));
+
+/** How to reach any shard, as the last server's `hello` said: kept so a refresh can go straight to a saved shard. */
+const TEMPLATE_KEY = 'spectacle.shardWs';
+function loadTemplate(): string | null {
+  try {
+    const t = localStorage.getItem(TEMPLATE_KEY);
+    return validShardTemplate(t) ? t : null;
+  } catch {
+    return null;
+  }
+}
+function saveTemplate(t: string): void {
+  try {
+    localStorage.setItem(TEMPLATE_KEY, t);
+  } catch {
+    /* private mode */
+  }
+}
 
 function initialMode(): Mode {
   if (SOLO_ONLY) return 'solo';
@@ -121,7 +142,11 @@ export function App(): JSX.Element {
   useEffect(() => {
     if (screen === 'arena') backGuard.current?.arm();
   }, [screen]);
-  const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null; room?: string; level?: number } | null>(null);
+  const rejoin = useRef<{ name: string; rule: PlayerRule; mode: GameMode; resume: { id: string; token: string } | null; room?: string; level?: number; shard?: string } | null>(null);
+  /** The socket template for shards, from a `hello` (or the last one, kept). */
+  const template = useRef<string | null>(loadTemplate());
+  /** Set when a full shard hands a join on: the next connection carries `rejoin` as it is, not the saved ticket. */
+  const keepRejoin = useRef(false);
 
   // One connection per (mode, solo options); reconnect online with backoff.
   useEffect(() => {
@@ -139,12 +164,18 @@ export function App(): JSX.Element {
     // A refresh lands here with the tab's saved session: go straight back in.
     // So does a new tab soon after the last one closed (the shared copy).
     const saved = mode === 'online' ? loadSession() : null;
-    rejoin.current = saved ? { name: saved.name, rule: saved.rule, resume: saved.resume, room: saved.room, mode: saved.mode ?? 'normal', level: saved.level } : null;
+    const kept = keepRejoin.current;
+    keepRejoin.current = false;
+    if (!kept) rejoin.current = saved ? { name: saved.name, rule: saved.rule, resume: saved.resume, room: saved.room, mode: saved.mode ?? 'normal', level: saved.level, shard: saved.shard } : null;
+    // The player's shard, else the one a link names; with no template yet,
+    // the page's own server (its hello brings the template, below).
+    const target = rejoin.current ? rejoin.current.shard : LINK_SHARD;
+    const url = target && template.current ? shardWsUrl(template.current, target) : undefined;
     store.reset();
     setScreen(rejoin.current ? 'arena' : 'lobby');
     const connect = (): void => {
       if (disposed) return;
-      const conn: GameConnection = mode === 'solo' ? new LocalConnection(store, solo, gameMode) : new Connection(store);
+      const conn: GameConnection = mode === 'solo' ? new LocalConnection(store, solo, gameMode) : new Connection(store, url);
       connRef.current = conn;
       conn.open(
         () => {
@@ -193,7 +224,7 @@ export function App(): JSX.Element {
     // A duplicated tab brings the original's ticket along, and a new tab may
     // have picked up the shared copy: if another tab is still playing the
     // player, start afresh here instead of taking it over.
-    if (saved && !waking) {
+    if (saved && !waking && !kept) {
       void heldElsewhere(saved.resume.id).then((held) => {
         if (disposed) return;
         if (held) {
@@ -272,7 +303,8 @@ export function App(): JSX.Element {
     r.resume = store.resume;
     if (store.room) r.room = store.room;
     const rule = store.me?.rule ?? r.rule;
-    saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume, room: r.room, level: r.level });
+    r.shard = store.hello?.shard?.name ?? r.shard;
+    saveSession({ name: r.name, rule, mode: r.mode, resume: store.resume, room: r.room, level: r.level, shard: r.shard });
   }, [mode, store.resume, store]);
 
   // Keep the shared ticket's clock running while this tab plays its player,
@@ -310,8 +342,29 @@ export function App(): JSX.Element {
   // A join was refused (the arena's full, an invalid rule, …): back out of
   // the optimistic "joined" state to the lobby with the reason, rather than
   // leaving the player looking at an empty arena that never welcomes them.
+  // A sharded server says how to reach the others. In the lobby with a link
+  // to another shard, and no template to get there before: go there now.
+  useEffect(() => {
+    const info = store.hello?.shard;
+    if (mode !== 'online' || !info) return;
+    const learned = template.current !== info.template;
+    template.current = info.template;
+    if (learned) saveTemplate(info.template);
+    if (learned && !joined.current && !rejoin.current && LINK_SHARD && LINK_SHARD !== info.name) setEpoch((n) => n + 1);
+  }, [mode, store.hello, store]);
+
   useEffect(() => {
     if (!store.lastError || store.you || !joined.current) return;
+    // A full shard hands the join on to the next: carry it there, same name, rule and room.
+    const next = cleanShardName(store.lastError.next);
+    const r = rejoin.current;
+    if (next && template.current && r && r.shard !== next) {
+      rejoin.current = { ...r, shard: next, resume: null };
+      keepRejoin.current = true;
+      joined.current = false;
+      setEpoch((n) => n + 1);
+      return;
+    }
     joined.current = false;
     rejoin.current = null;
     setScreen('lobby');
@@ -337,8 +390,10 @@ export function App(): JSX.Element {
     const playing = rejoin.current?.mode ?? gameMode;
     const playingLevel = rejoin.current ? rejoin.current.level : size;
     const room = rejoin.current?.room ?? LINK_ROOM ?? undefined;
-    rejoin.current = { name, rule, mode: playing, resume: rejoin.current?.resume ?? null, room, level: playingLevel };
-    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, mode: playing, resume: rejoin.current.resume, room, level: playingLevel });
+    // The shard this socket reached is where the player will be.
+    const shard = store.hello?.shard?.name ?? rejoin.current?.shard;
+    rejoin.current = { name, rule, mode: playing, resume: rejoin.current?.resume ?? null, room, level: playingLevel, shard };
+    if (mode === 'online' && rejoin.current.resume) saveSession({ name, rule, mode: playing, resume: rejoin.current.resume, room, level: playingLevel, shard });
     setScreen('arena');
   };
 

@@ -35,11 +35,15 @@ export class Connection implements GameConnection {
   private closedByUs = false;
   private beatTimer = 0;
 
-  constructor(private readonly store: Store) {}
+  /** `url`: a shard's socket (shared/game/shard.ts); default, the page's own server. */
+  constructor(
+    private readonly store: Store,
+    private readonly url = wsUrl(),
+  ) {}
 
   open(onOpen: () => void, onClose: (code: number) => void): void {
     this.closedByUs = false;
-    const ws = new WebSocket(wsUrl());
+    const ws = new WebSocket(this.url);
     this.ws = ws;
     // From the start, not from `onopen`: a connect that never opens (the
     // server froze mid-handshake) is given up on as well.

@@ -210,7 +210,7 @@ export class Store {
    * a repeat of the same text) so a `useEffect` keyed on it fires again.
    * Cleared on a successful `welcome`.
    */
-  lastError: { message: string; code?: 'full' } | null = null;
+  lastError: { message: string; code?: 'full'; next?: string } | null = null;
   readonly players = new Map<string, ClientPlayer>();
   readonly paths = new Map<number, ClientPath>();
   /** tile → paths on it (for the faded-tile render). */
@@ -394,13 +394,15 @@ export class Store {
     rooms: readonly RoomSummary[];
     /** The field sizes on offer online (the default's alone from older servers and solo). */
     levels: readonly LevelSummary[];
+    /** The shard this socket reached (shared/game/shard.ts); absent when the server isn't sharded. */
+    shard?: import('../../shared/game/shard').ShardInfo;
   } | null = null;
 
   handle(msg: ServerMessage): void {
     switch (msg.t) {
       case 'hello': {
         const levels = msg.levels?.length ? msg.levels : [{ level: msg.field.level, tiles: msg.tiles }];
-        this.hello = { field: msg.field, tiles: msg.tiles, players: msg.players, rooms: msg.rooms ?? [], levels };
+        this.hello = { field: msg.field, tiles: msg.tiles, players: msg.players, rooms: msg.rooms ?? [], levels, shard: msg.shard };
         this.knobs = msg.knobs;
         // With sizes to pick from, the welcome says which field it is: don't
         // build the default (level 6 takes seconds) for someone playing level 3.
@@ -458,7 +460,7 @@ export class Store {
         this.emit();
         return;
       case 'error':
-        this.lastError = { message: msg.message, code: msg.code };
+        this.lastError = { message: msg.message, code: msg.code, next: msg.next };
         this.toast(msg.message, 'bad'); // toast() emits, so this reaches subscribers too
         return;
       case 'pong':

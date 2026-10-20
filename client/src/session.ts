@@ -32,6 +32,8 @@ export interface SavedSession {
   readonly room?: string;
   /** The field size it asked for (older sessions: the server's default). */
   readonly level?: number;
+  /** The shard the player is on (shared/game/shard.ts); absent: the page's own server. */
+  readonly shard?: string;
 }
 
 const KEY = 'spectacle.session';
@@ -55,6 +57,7 @@ function parse(raw: string | null): SavedSession | null {
   if (typeof s.name !== 'string' || !s.rule || typeof s.resume?.id !== 'string' || typeof s.resume.token !== 'string') return null;
   if (s.mode !== undefined && !isGameMode(s.mode)) return null;
   if (s.level !== undefined && !Number.isInteger(s.level)) return null;
+  if (s.shard !== undefined && typeof s.shard !== 'string') return null;
   return s as SavedSession;
 }
 

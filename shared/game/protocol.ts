@@ -7,6 +7,7 @@
  * everyone's strands without knowing everyone's rule.
  */
 
+import type { ShardInfo } from './shard';
 import type { Pt } from '../tiles';
 import type { FieldSpec } from './field';
 import type { GameMode, Knobs } from './knobs';
@@ -306,6 +307,8 @@ export type ServerMessage =
       readonly players: number;
       /** What is running, per mode (absent from older servers and solo). */
       readonly rooms?: readonly RoomSummary[];
+      /** Which shard this is and how to reach the others (shard.ts); absent when the server isn't sharded. */
+      readonly shard?: ShardInfo;
     }
   | {
       readonly t: 'welcome';
@@ -326,5 +329,9 @@ export type ServerMessage =
     }
   | { readonly t: 'events'; readonly ev: readonly GameEvent[] }
   | { readonly t: 'pong'; readonly n: number }
-  /** `code: 'full'` — a client-recognisable reason, so the UI can offer solo instead of just showing text. */
-  | { readonly t: 'error'; readonly message: string; readonly code?: 'full' };
+  /**
+   * `code: 'full'` — a client-recognisable reason, so the UI can offer solo
+   * instead of just showing text. `next`: a full shard's next shard, where
+   * the client carries the join on to (shard.ts).
+   */
+  | { readonly t: 'error'; readonly message: string; readonly code?: 'full'; readonly next?: string };
