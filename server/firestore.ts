@@ -3,12 +3,12 @@
  * written by whichever shard it was won on, and the fastest read back for
  * `GET /wins` — so every shard shows the same board and none of it goes with
  * a restart. Plain REST with the instance's own token (gcp.ts), no SDK.
- * The queries need the composite indexes (mode, level, ms, at) and
- * (mode, level, subset, ms, at) on `wins` (deploy/gcp/stats.sh).
+ * The queries need composite indexes on `wins` for (mode, level), with
+ * subset, bot or both after them, then (ms, at) (deploy/gcp/stats.sh).
  */
 
 import type { GameMode } from '../shared/game/knobs';
-import type { WinRecord } from './wins';
+import type { WinRecord, WinsFilter } from './wins';
 
 type Value =
   | { stringValue: string }
@@ -18,8 +18,8 @@ type Value =
 
 export interface WinsRemote {
   add(r: WinRecord, shard: string): Promise<void>;
-  /** The fastest `n` at (mode, level), of one edge set or (subset '') all. */
-  top(mode: GameMode, level: number, subset: string, n: number): Promise<WinRecord[]>;
+  /** The fastest `n` at (mode, level), narrowed by `filter`. */
+  top(mode: GameMode, level: number, filter: WinsFilter, n: number): Promise<WinRecord[]>;
 }
 
 const str = (v: string): Value => ({ stringValue: v });
@@ -62,9 +62,14 @@ export function firestoreWins(project: string, token: () => Promise<string | nul
         },
       });
     },
-    async top(mode, level, subset, n) {
+    async top(mode, level, { subset = '', bots = 'all' }, n) {
       const eq = (field: string, value: Value) => ({ fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value } });
-      const filters = [eq('mode', str(mode)), eq('level', int(level)), ...(subset ? [eq('subset', str(subset))] : [])];
+      const filters = [
+        eq('mode', str(mode)),
+        eq('level', int(level)),
+        ...(subset ? [eq('subset', str(subset))] : []),
+        ...(bots === 'all' ? [] : [eq('bot', { booleanValue: bots === 'only' })]),
+      ];
       const res = (await call(`${base}:runQuery`, {
         structuredQuery: {
           from: [{ collectionId: 'wins' }],

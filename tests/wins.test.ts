@@ -57,9 +57,20 @@ describe('the board', () => {
     w.add(win(3000, 'fifteen'));
     w.add(win(2000, 'two-five-eight', { rule: R258 }));
     expect(w.top('normal', 3).map((e) => e.name)).toEqual(['two-five-eight', 'fifteen']);
-    expect(w.top('normal', 3, '15').map((e) => e.name)).toEqual(['fifteen']);
-    expect(w.top('normal', 3, '258')[0]).toEqual({ rule: R258, ms: 2000, at: 3000, name: 'two-five-eight', bot: false, others: ['hexbot'] });
-    expect(w.top('normal', 3, '0136')).toEqual([]);
+    expect(w.top('normal', 3, { subset: '15' }).map((e) => e.name)).toEqual(['fifteen']);
+    expect(w.top('normal', 3, { subset: '258' })[0]).toEqual({ rule: R258, ms: 2000, at: 3000, name: 'two-five-eight', bot: false, others: ['hexbot'] });
+    expect(w.top('normal', 3, { subset: '0136' })).toEqual([]);
+  });
+
+  it("filters by who won: bots' wins only, people's only, or everyone's", () => {
+    const w = new Wins();
+    w.add(win(3000, 'person'));
+    w.add(win(2000, 'hexbot', { bot: true }));
+    w.add(win(1000, 'Bridge', { bot: true, rule: R258 }));
+    expect(w.top('normal', 3).map((e) => e.name)).toEqual(['Bridge', 'hexbot', 'person']);
+    expect(w.top('normal', 3, { bots: 'only' }).map((e) => e.name)).toEqual(['Bridge', 'hexbot']);
+    expect(w.top('normal', 3, { bots: 'none' }).map((e) => e.name)).toEqual(['person']);
+    expect(w.top('normal', 3, { subset: '15', bots: 'only' }).map((e) => e.name)).toEqual(['hexbot']);
   });
 
   it('reads its file back, skipping a line that is not a win', async () => {
@@ -72,10 +83,12 @@ describe('the board', () => {
     expect(new Wins(path).top('normal', 3).map((e) => e.name)).toEqual(['b', 'a']);
   });
 
-  it('takes a mode, a level and maybe an edge set, nothing else', () => {
+  it('takes a mode, a level and maybe an edge set and whose wins, nothing else', () => {
     const q = (s: string) => parseWinsQuery(new URLSearchParams(s));
-    expect(q('mode=normal&level=3')).toEqual({ mode: 'normal', level: 3, subset: '' });
-    expect(q('mode=normal&level=3&subset=258')).toEqual({ mode: 'normal', level: 3, subset: '258' });
+    expect(q('mode=normal&level=3')).toEqual({ mode: 'normal', level: 3, filter: { subset: '', bots: 'all' } });
+    expect(q('mode=normal&level=3&subset=258&bots=only')).toEqual({ mode: 'normal', level: 3, filter: { subset: '258', bots: 'only' } });
+    expect(q('mode=normal&level=3&bots=none')?.filter.bots).toBe('none');
+    expect(q('mode=normal&level=3&bots=some')).toBeNull();
     expect(q('level=3')).toBeNull();
     expect(q('mode=normal&level=x')).toBeNull();
     expect(q('mode=normal&level=3&subset=2"5')).toBeNull();
@@ -111,7 +124,7 @@ describe('a real win', () => {
     server = await startServer(PORT, env);
     const ws = new WebSocket(`ws://127.0.0.1:${PORT}/ws`);
     sockets.push(ws);
-    let players: { id: string; name: string; rule: PlayerRule }[] = [];
+    let players: { id: string; name: string; bot: boolean; rule: PlayerRule }[] = [];
     const won = new Promise<string>((resolve) => {
       ws.on('message', (d) => {
         const m = JSON.parse(String(d)) as ServerMessage;
@@ -135,6 +148,8 @@ describe('a real win', () => {
     expect(first.wins![0]).toMatchObject({ rule: ruleKey(winner.rule), name: winner.name, others: [other.name] });
     expect(first.wins![0].ms).toBeGreaterThan(0);
     expect((await get(`mode=normal&level=3&subset=${winner.rule.subset.join('')}`)).wins).toEqual(first.wins);
+    expect((await get(`mode=normal&level=3&bots=${winner.bot ? 'only' : 'none'}`)).wins).toEqual(first.wins);
+    expect((await get(`mode=normal&level=3&bots=${winner.bot ? 'none' : 'only'}`)).wins).toEqual([]);
     // Only the sizes this server offers (level 3 alone here).
     expect((await get('mode=normal&level=4')).status).toBe(400);
 

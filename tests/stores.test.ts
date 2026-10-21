@@ -48,11 +48,11 @@ describe('the leaderboard across shards', () => {
     const errors: unknown[] = [];
     const w = new Wins('', (e) => errors.push(e), { store: remote, shard: 'a' });
     const t = Date.now();
-    await w.board('normal', 6, '', t);
-    await w.board('normal', 6, '', t + 1000);
+    await w.board('normal', 6, {}, t);
+    await w.board('normal', 6, {}, t + 1000);
     expect(asked).toBe(1);
     fail = true;
-    expect((await w.board('normal', 6, '', t + REMOTE_TTL_MS + 1)).map((e) => e.name)).toEqual(['far']);
+    expect((await w.board('normal', 6, {}, t + REMOTE_TTL_MS + 1)).map((e) => e.name)).toEqual(['far']);
     expect(asked).toBe(2);
     expect(errors).toHaveLength(1);
   });
@@ -67,10 +67,14 @@ describe('the leaderboard across shards', () => {
     await fs.add(win('ann', 42), 'b');
     expect(f.calls[0].url).toMatch(/projects\/proj\/databases\/\(default\)\/documents\/wins$/);
     expect(f.calls[0].body.fields).toMatchObject({ subset: { stringValue: '15' }, shard: { stringValue: 'b' }, ms: { integerValue: '42' } });
-    const top = await fs.top('normal', 6, '15', 20);
+    const top = await fs.top('normal', 6, { subset: '15' }, 20);
     expect(top).toEqual([{ mode: 'normal', level: 6, rule: 'hex|15|0.0.0', ms: 42, at: 7, name: 'ann', bot: true, others: ['bob'], named: false }]);
     const filters = f.calls[1].body.structuredQuery.where.compositeFilter.filters.map((x: any) => x.fieldFilter.field.fieldPath);
     expect(filters).toEqual(['mode', 'level', 'subset']);
+    await fs.top('normal', 6, { bots: 'none' }, 20);
+    const byBot = f.calls[2].body.structuredQuery.where.compositeFilter.filters;
+    expect(byBot.map((x: any) => x.fieldFilter.field.fieldPath)).toEqual(['mode', 'level', 'bot']);
+    expect(byBot[2].fieldFilter.value).toEqual({ booleanValue: false });
   });
 });
 

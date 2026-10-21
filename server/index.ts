@@ -375,7 +375,7 @@ const wins = new Wins(
   WINS_FIRESTORE ? { store: firestoreWins(WINS_FIRESTORE, gcpToken), shard: SHARD_NAME } : null,
 );
 
-/** GET /wins?mode=&level=[&subset=]: the fastest wins at that size, of one edge set or all. */
+/** GET /wins?mode=&level=[&subset=][&bots=only|none]: the fastest wins at that size, of one edge set or all, bots' or people's. */
 function handleWins(url: URL, res: ServerResponse): void {
   const q = parseWinsQuery(url.searchParams);
   if (!q || !LEVELS.some((l) => l.level === q.level)) {
@@ -383,7 +383,7 @@ function handleWins(url: URL, res: ServerResponse): void {
     res.end(JSON.stringify({ error: 'bad query' }));
     return;
   }
-  void wins.board(q.mode, q.level, q.subset).then((board) => {
+  void wins.board(q.mode, q.level, q.filter).then((board) => {
     res.writeHead(200, { 'content-type': 'application/json', 'cache-control': 'no-store' });
     res.end(JSON.stringify({ wins: board }));
   }, () => {
