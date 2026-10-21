@@ -461,7 +461,15 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   carry `?s=`, tickets carry `shard`, player ids carry the shard's name (so
   `heldElsewhere` can't match across shards). Unset `SHARD`: unsharded, as
   ever (dev, tests). 200 + 25 × 400 ≈ 10k players before anyone is turned
-  away; an idle shard costs nothing. Agones stays the upgrade path if deploys
+  away; an idle shard costs nothing. **Live since 2026-10-21: `a` and `b`
+  only** (owner's call): repo variable `SPECTACLE_SHARDS` is `["b"]`, so `b`
+  is the last and refuses as before, and `c`–`z` (services, mappings, DNS)
+  are deleted — any shard anyone loads or connects to is a billed instance
+  while the socket is open, so 25 of them were 25 instances one script could
+  hold awake. To bring more back: set the variable (e.g. `["b","c","d"]`),
+  redeploy (a manual run of deploy-cloudrun.yml), then
+  `SHARDS="c d" ./deploy/gcp/shard-domains.sh`. Gating joins on shards past
+  `a` (only handed-on players and links in) is the open fix before many. Agones stays the upgrade path if deploys
   that keep live rooms become worth a cluster.
 - **Client fallback: never a silent dead end.** `error.code` (protocol.ts)
   gives the client a machine-readable reason instead of parsing text.
