@@ -1,7 +1,7 @@
 /**
  * The leaderboard: every won round's time, and the fastest of them served to
  * the lobby's Leaderboard tab as `GET /wins`, per game mode and board size,
- * optionally for one edge set.
+ * optionally for one edge set, and for bots' wins or people's only.
  *
  * Kept in memory, and in WINS_FILE (one JSON line per win, read back at
  * startup) when that is set. With a remote (server/firestore.ts, every shard
@@ -40,16 +40,27 @@ export interface WinRecord {
   readonly named: boolean;
 }
 
+/** Whose wins: everyone's, bots' only (`only`), or people's only (`none`). */
+export type BotFilter = 'all' | 'only' | 'none';
+
+/** What a board is narrowed to: an edge set (`subset` as `ruleKey` writes it; '' or absent = all) and whose wins. */
+export interface WinsFilter {
+  readonly subset?: string;
+  readonly bots?: BotFilter;
+}
+
 /** A rule key as `ruleKey` writes it (`hex|01234568|3.0.2.…`), nothing else. */
 const RULE_KEY = /^[a-z-]{1,16}\|\d{0,10}\|[\d.]{0,60}$/;
 
-/** `GET /wins`'s query, checked; null if anything is off. `subset` '' = every edge set. */
-export function parseWinsQuery(params: URLSearchParams): { mode: GameMode; level: number; subset: string } | null {
+/** `GET /wins`'s query, checked; null if anything is off. No `subset` = every edge set, no `bots` = everyone's. */
+export function parseWinsQuery(params: URLSearchParams): { mode: GameMode; level: number; filter: Required<WinsFilter> } | null {
   const mode = params.get('mode') ?? '';
   const level = Number(params.get('level'));
   const subset = params.get('subset') ?? '';
+  const bots = params.get('bots') || 'all';
   if (!(GAME_MODES as readonly string[]).includes(mode) || !Number.isInteger(level) || !/^\d{0,10}$/.test(subset)) return null;
-  return { mode: mode as GameMode, level, subset };
+  if (bots !== 'all' && bots !== 'only' && bots !== 'none') return null;
+  return { mode: mode as GameMode, level, filter: { subset, bots } };
 }
 
 /** Plausible values only: a hand-edited or truncated line is skipped, not trusted. */
@@ -115,9 +126,9 @@ export class Wins {
     if (this.remote) this.remote.store.add(r, this.remote.shard).catch(this.onError);
   }
 
-  /** The fastest `TOP` in a mode at a size this process has seen, of one edge set (`subset` as `ruleKey` writes it) or of all. */
-  top(mode: GameMode, level: number, subset = ''): WinEntry[] {
-    return this.localTop(mode, level, subset).map(entry);
+  /** The fastest `TOP` in a mode at a size this process has seen, narrowed by `filter`. */
+  top(mode: GameMode, level: number, filter: WinsFilter = {}): WinEntry[] {
+    return this.localTop(mode, level, filter).map(entry);
   }
 
   /**
@@ -125,16 +136,16 @@ export class Wins {
    * good) merged with this process's own, or the local board alone without a
    * remote. A remote that fails leaves its last answer standing.
    */
-  async board(mode: GameMode, level: number, subset = '', now = Date.now()): Promise<WinEntry[]> {
-    const local = this.localTop(mode, level, subset);
+  async board(mode: GameMode, level: number, filter: WinsFilter = {}, now = Date.now()): Promise<WinEntry[]> {
+    const local = this.localTop(mode, level, filter);
     if (!this.remote) return local.map(entry);
-    const key = `${mode}|${level}|${subset}`;
+    const key = `${mode}|${level}|${filter.subset ?? ''}|${filter.bots ?? 'all'}`;
     let c = this.cache.get(key);
     if (!c || now - c.at > REMOTE_TTL_MS) {
       const held = c ?? { rows: [], at: 0 };
       this.cache.set(key, held);
       held.asking ??= this.remote.store
-        .top(mode, level, subset, TOP)
+        .top(mode, level, filter, TOP)
         .then((rows) => {
           held.rows = rows;
           held.at = Date.now();
@@ -159,10 +170,11 @@ export class Wins {
     return merged.map(entry);
   }
 
-  private localTop(mode: GameMode, level: number, subset: string): WinRecord[] {
+  private localTop(mode: GameMode, level: number, { subset = '', bots = 'all' }: WinsFilter): WinRecord[] {
     const out: WinRecord[] = [];
     for (const r of this.lists.get(`${mode}|${level}`) ?? []) {
       if (subset && r.rule.split('|')[1] !== subset) continue;
+      if ((bots === 'only' && !r.bot) || (bots === 'none' && r.bot)) continue;
       out.push(r);
       if (out.length === TOP) break;
     }

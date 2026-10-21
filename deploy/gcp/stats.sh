@@ -4,7 +4,7 @@
 # exists. Done for spectacle-game on 2026-10-21.
 #
 #   Firestore (default) database, us-central1  — `wins`, one document per won round
-#     + composite indexes (mode, level, ms, at) and (mode, level, subset, ms, at)
+#     + composite indexes (mode, level, [subset,] [bot,] ms, at): four
 #   BigQuery dataset `spectacle`, us-central1   — `stints` and `wins`, day-partitioned,
 #     never expiring (schemas: bq-stints.json, bq-wins.json)
 #   The runtime service account (Cloud Run's and the VM's) may write both:
@@ -23,7 +23,7 @@ gcloud services enable firestore.googleapis.com bigquery.googleapis.com --projec
 gcloud firestore databases describe --project "$P" >/dev/null 2>&1 ||
   gcloud firestore databases create --location="$REGION" --type=firestore-native --project "$P"
 existing=$(gcloud firestore indexes composite list --project "$P" --format='value(fields)' 2>/dev/null || true)
-for fields in "mode level ms at" "mode level subset ms at"; do
+for fields in "mode level ms at" "mode level subset ms at" "mode level bot ms at" "mode level subset bot ms at"; do
   echo "$existing" | tr -s ' ;\n' ' ' | grep -q "$(echo "$fields" | sed 's/ /.*/g')" && continue
   args=()
   for f in $fields; do args+=(--field-config="field-path=$f,order=ascending"); done
