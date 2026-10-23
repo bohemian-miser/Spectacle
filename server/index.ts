@@ -375,7 +375,7 @@ const wins = new Wins(
   WINS_FIRESTORE ? { store: firestoreWins(WINS_FIRESTORE, gcpToken), shard: SHARD_NAME } : null,
 );
 
-/** GET /wins?mode=&level=[&subset=][&bots=only|none]: the fastest wins at that size, of one edge set or all, bots' or people's. */
+/** GET /wins?mode=&level=[&subset=][&bots=only|none][&company=alone|bots]: the fastest wins at that size, of one edge set or all, bots' or people's, won alone or against bots only. */
 function handleWins(url: URL, res: ServerResponse): void {
   const q = parseWinsQuery(url.searchParams);
   if (!q || !LEVELS.some((l) => l.level === q.level)) {
@@ -707,7 +707,7 @@ class Room {
   private keepWin(e: Extract<GameEvent, { t: 'win' }>, logged: Record<string, unknown>): void {
     const winner = this.engine.players.get(e.id);
     if (!winner) return;
-    const others = [...this.engine.players.values()].filter((p) => p.id !== e.id && (p.bot || this.clients.has(p.id))).map((p) => p.name);
+    const there = [...this.engine.players.values()].filter((p) => p.id !== e.id && (p.bot || this.clients.has(p.id)));
     const win = {
       mode: this.mode,
       level: this.level,
@@ -716,7 +716,8 @@ class Room {
       at: Date.now(),
       name: winner.name,
       bot: winner.bot,
-      others,
+      others: there.map((p) => p.name),
+      otherBots: there.map((p) => p.bot),
       named: this.named,
     };
     wins.add(win);
