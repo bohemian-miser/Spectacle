@@ -3,12 +3,12 @@
  * written by whichever shard it was won on, and the fastest read back for
  * `GET /wins` — so every shard shows the same board and none of it goes with
  * a restart. Plain REST with the instance's own token (gcp.ts), no SDK.
- * The queries need composite indexes on `wins` for (mode, level), with
- * subset, bot or both after them, then (ms, at) (deploy/gcp/stats.sh).
+ * The queries need composite indexes on `wins` for (mode, level), with any
+ * of subset, bot and company after them, then (ms, at) (deploy/gcp/stats.sh).
  */
 
 import type { GameMode } from '../shared/game/knobs';
-import type { WinRecord, WinsFilter } from './wins';
+import { companyOf, type WinRecord, type WinsFilter } from './wins';
 
 type Value =
   | { stringValue: string }
@@ -57,18 +57,21 @@ export function firestoreWins(project: string, token: () => Promise<string | nul
           name: str(r.name),
           bot: { booleanValue: r.bot },
           others: { arrayValue: { values: r.others.map(str) } },
+          ...(r.otherBots ? { otherBots: { arrayValue: { values: r.otherBots.map((b) => ({ booleanValue: b })) } } } : {}),
+          company: str(companyOf(r)),
           named: { booleanValue: r.named },
           shard: str(shard),
         },
       });
     },
-    async top(mode, level, { subset = '', bots = 'all' }, n) {
+    async top(mode, level, { subset = '', bots = 'all', company = 'all' }, n) {
       const eq = (field: string, value: Value) => ({ fieldFilter: { field: { fieldPath: field }, op: 'EQUAL', value } });
       const filters = [
         eq('mode', str(mode)),
         eq('level', int(level)),
         ...(subset ? [eq('subset', str(subset))] : []),
         ...(bots === 'all' ? [] : [eq('bot', { booleanValue: bots === 'only' })]),
+        ...(company === 'all' ? [] : [eq('company', str(company))]),
       ];
       const res = (await call(`${base}:runQuery`, {
         structuredQuery: {
@@ -88,8 +91,21 @@ export function firestoreWins(project: string, token: () => Promise<string | nul
         const s = (k: string): string => (f[k] as { stringValue?: string } | undefined)?.stringValue ?? '';
         const i = (k: string): number => Number((f[k] as { integerValue?: string } | undefined)?.integerValue ?? 0);
         const b = (k: string): boolean => (f[k] as { booleanValue?: boolean } | undefined)?.booleanValue === true;
-        const others = ((f.others as { arrayValue?: { values?: Value[] } } | undefined)?.arrayValue?.values ?? []).map((v) => (v as { stringValue?: string }).stringValue ?? '');
-        out.push({ mode: s('mode') as GameMode, level: i('level'), rule: s('rule'), ms: i('ms'), at: i('at'), name: s('name'), bot: b('bot'), others, named: b('named') });
+        const list = (k: string): Value[] => (f[k] as { arrayValue?: { values?: Value[] } } | undefined)?.arrayValue?.values ?? [];
+        const others = list('others').map((v) => (v as { stringValue?: string }).stringValue ?? '');
+        const otherBots = list('otherBots').map((v) => (v as { booleanValue?: boolean }).booleanValue === true);
+        out.push({
+          mode: s('mode') as GameMode,
+          level: i('level'),
+          rule: s('rule'),
+          ms: i('ms'),
+          at: i('at'),
+          name: s('name'),
+          bot: b('bot'),
+          others,
+          ...(f.otherBots && otherBots.length === others.length ? { otherBots } : {}),
+          named: b('named'),
+        });
       }
       return out;
     },

@@ -4,7 +4,7 @@
 # exists. Done for spectacle-game on 2026-10-21.
 #
 #   Firestore (default) database, us-central1  — `wins`, one document per won round
-#     + composite indexes (mode, level, [subset,] [bot,] ms, at): four
+#     + composite indexes (mode, level, [subset,] [bot,] [company,] ms, at): eight
 #   BigQuery dataset `spectacle`, us-central1   — `stints` and `wins`, day-partitioned,
 #     never expiring (schemas: bq-stints.json, bq-wins.json)
 #   The runtime service account (Cloud Run's and the VM's) may write both:
@@ -22,13 +22,17 @@ SA="${SA:-$(gcloud projects describe "$P" --format='value(projectNumber)')-compu
 gcloud services enable firestore.googleapis.com bigquery.googleapis.com --project "$P"
 gcloud firestore databases describe --project "$P" >/dev/null 2>&1 ||
   gcloud firestore databases create --location="$REGION" --type=firestore-native --project "$P"
-existing=$(gcloud firestore indexes composite list --project "$P" --format='value(fields)' 2>/dev/null || true)
-for fields in "mode level ms at" "mode level subset ms at" "mode level bot ms at" "mode level subset bot ms at"; do
-  echo "$existing" | tr -s ' ;\n' ' ' | grep -q "$(echo "$fields" | sed 's/ /.*/g')" && continue
+# One index per combination of the optional filters (subset, bot, company),
+# each between (mode, level) and (ms, at); an index already there, field for
+# field, is left alone.
+existing=$(gcloud firestore indexes composite list --project "$P" --format='value(fields.fieldPath.list())' 2>/dev/null || true)
+for subset in "" subset; do for bot in "" bot; do for company in "" company; do
+  fields=$(echo mode level $subset $bot $company ms at)
+  echo "$existing" | grep -qx "$(echo "$fields" | tr ' ' ,),__name__" && continue
   args=()
   for f in $fields; do args+=(--field-config="field-path=$f,order=ascending"); done
   gcloud firestore indexes composite create --collection-group=wins --query-scope=COLLECTION "${args[@]}" --project "$P" --async
-done
+done; done; done
 
 bq --project_id="$P" show "$P:spectacle" >/dev/null 2>&1 ||
   bq --project_id="$P" --location="$REGION" mk --dataset "$P:spectacle"

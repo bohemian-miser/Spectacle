@@ -262,6 +262,8 @@ export interface WinEntry {
   readonly bot: boolean;
   /** Everyone else at the board when it was won, by name. */
   readonly others: readonly string[];
+  /** Which of `others` were bots, in the same order (absent on older wins). */
+  readonly otherBots?: readonly boolean[];
 }
 
 export interface RoomBots {

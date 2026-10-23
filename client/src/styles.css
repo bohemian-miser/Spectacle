@@ -163,6 +163,8 @@ h2 { margin: 0 0 8px; font-size: 16px; text-transform: uppercase; letter-spacing
 .leaderboard-table { width: 100%; border-collapse: collapse; font-size: 15px; }
 .leaderboard-table th { text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; padding: 6px 8px; }
 .leaderboard-table td { padding: 8px; border-top: 1px solid var(--line); }
+.leaderboard-table tbody tr { cursor: default; }
+.leaderboard-table tbody tr:hover td { background: var(--panel-2); }
 .leaderboard-table td:first-child, .leaderboard-table th:first-child { width: 2em; padding-left: 0; }
 .leaderboard-time { font-weight: 700; font-variant-numeric: tabular-nums; }
 .leaderboard-table .btn-link { text-align: left; }

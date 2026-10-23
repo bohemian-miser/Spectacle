@@ -1,7 +1,8 @@
 /**
  * The leaderboard: every won round's time, and the fastest of them served to
  * the lobby's Leaderboard tab as `GET /wins`, per game mode and board size,
- * optionally for one edge set, and for bots' wins or people's only.
+ * optionally for one edge set, for bots' wins or people's only, and for
+ * rounds won alone or against bots only.
  *
  * Kept in memory, and in WINS_FILE (one JSON line per win, read back at
  * startup) when that is set. With a remote (server/firestore.ts, every shard
@@ -36,31 +37,48 @@ export interface WinRecord {
   readonly bot: boolean;
   /** Everyone else at the board when it was won, by name. */
   readonly others: readonly string[];
+  /** Which of `others` were bots, in the same order (absent on wins recorded before it was kept). */
+  readonly otherBots?: readonly boolean[];
   /** Won in a `?room=` link's room. */
   readonly named: boolean;
+}
+
+/** Who else was at the board: nobody, bots only, or at least one other person. */
+export type Company = 'alone' | 'bots' | 'people';
+
+/** The company of a win; one recorded before `otherBots` was kept, with others there, counts as `people`. */
+export function companyOf(r: Pick<WinRecord, 'others' | 'otherBots'>): Company {
+  if (r.others.length === 0) return 'alone';
+  return r.otherBots?.length === r.others.length && r.otherBots.every(Boolean) ? 'bots' : 'people';
 }
 
 /** Whose wins: everyone's, bots' only (`only`), or people's only (`none`). */
 export type BotFilter = 'all' | 'only' | 'none';
 
-/** What a board is narrowed to: an edge set (`subset` as `ruleKey` writes it; '' or absent = all) and whose wins. */
+/** Who else was in the round: anyone (`all`), nobody (`alone`), or bots only (`bots`). */
+export type CompanyFilter = 'all' | 'alone' | 'bots';
+
+/** What a board is narrowed to: an edge set (`subset` as `ruleKey` writes it; '' or absent = all), whose wins, and who else was there. */
 export interface WinsFilter {
   readonly subset?: string;
   readonly bots?: BotFilter;
+  readonly company?: CompanyFilter;
 }
 
 /** A rule key as `ruleKey` writes it (`hex|01234568|3.0.2.…`), nothing else. */
 const RULE_KEY = /^[a-z-]{1,16}\|\d{0,10}\|[\d.]{0,60}$/;
 
-/** `GET /wins`'s query, checked; null if anything is off. No `subset` = every edge set, no `bots` = everyone's. */
+/** `GET /wins`'s query, checked; null if anything is off. No `subset` = every edge set, no `bots` = everyone's, no `company` = whoever else was there. */
 export function parseWinsQuery(params: URLSearchParams): { mode: GameMode; level: number; filter: Required<WinsFilter> } | null {
   const mode = params.get('mode') ?? '';
   const level = Number(params.get('level'));
   const subset = params.get('subset') ?? '';
   const bots = params.get('bots') || 'all';
+  const company = params.get('company') || 'all';
   if (!(GAME_MODES as readonly string[]).includes(mode) || !Number.isInteger(level) || !/^\d{0,10}$/.test(subset)) return null;
   if (bots !== 'all' && bots !== 'only' && bots !== 'none') return null;
-  return { mode: mode as GameMode, level, filter: { subset, bots } };
+  if (company !== 'all' && company !== 'alone' && company !== 'bots') return null;
+  return { mode: mode as GameMode, level, filter: { subset, bots, company } };
 }
 
 /** Plausible values only: a hand-edited or truncated line is skipped, not trusted. */
@@ -79,6 +97,7 @@ export function isWinRecord(v: unknown): v is WinRecord {
     typeof r.bot === 'boolean' &&
     Array.isArray(r.others) &&
     r.others.every((o) => typeof o === 'string') &&
+    (r.otherBots === undefined || (Array.isArray(r.otherBots) && r.otherBots.length === r.others.length && r.otherBots.every((b) => typeof b === 'boolean'))) &&
     typeof r.named === 'boolean'
   );
 }
@@ -139,7 +158,7 @@ export class Wins {
   async board(mode: GameMode, level: number, filter: WinsFilter = {}, now = Date.now()): Promise<WinEntry[]> {
     const local = this.localTop(mode, level, filter);
     if (!this.remote) return local.map(entry);
-    const key = `${mode}|${level}|${filter.subset ?? ''}|${filter.bots ?? 'all'}`;
+    const key = `${mode}|${level}|${filter.subset ?? ''}|${filter.bots ?? 'all'}|${filter.company ?? 'all'}`;
     let c = this.cache.get(key);
     if (!c || now - c.at > REMOTE_TTL_MS) {
       const held = c ?? { rows: [], at: 0 };
@@ -170,11 +189,12 @@ export class Wins {
     return merged.map(entry);
   }
 
-  private localTop(mode: GameMode, level: number, { subset = '', bots = 'all' }: WinsFilter): WinRecord[] {
+  private localTop(mode: GameMode, level: number, { subset = '', bots = 'all', company = 'all' }: WinsFilter): WinRecord[] {
     const out: WinRecord[] = [];
     for (const r of this.lists.get(`${mode}|${level}`) ?? []) {
       if (subset && r.rule.split('|')[1] !== subset) continue;
       if ((bots === 'only' && !r.bot) || (bots === 'none' && r.bot)) continue;
+      if (company !== 'all' && companyOf(r) !== company) continue;
       out.push(r);
       if (out.length === TOP) break;
     }
@@ -182,4 +202,4 @@ export class Wins {
   }
 }
 
-const entry = (r: WinRecord): WinEntry => ({ rule: r.rule, ms: r.ms, at: r.at, name: r.name, bot: r.bot, others: r.others });
+const entry = (r: WinRecord): WinEntry => ({ rule: r.rule, ms: r.ms, at: r.at, name: r.name, bot: r.bot, others: r.others, ...(r.otherBots ? { otherBots: r.otherBots } : {}) });

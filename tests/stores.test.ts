@@ -64,9 +64,9 @@ describe('the leaderboard across shards', () => {
         : {},
     );
     const fs = firestoreWins('proj', token, f.fn);
-    await fs.add(win('ann', 42), 'b');
+    await fs.add({ ...win('ann', 42), others: ['hexbot'], otherBots: [true] }, 'b');
     expect(f.calls[0].url).toMatch(/projects\/proj\/databases\/\(default\)\/documents\/wins$/);
-    expect(f.calls[0].body.fields).toMatchObject({ subset: { stringValue: '15' }, shard: { stringValue: 'b' }, ms: { integerValue: '42' } });
+    expect(f.calls[0].body.fields).toMatchObject({ subset: { stringValue: '15' }, shard: { stringValue: 'b' }, ms: { integerValue: '42' }, company: { stringValue: 'bots' }, otherBots: { arrayValue: { values: [{ booleanValue: true }] } } });
     const top = await fs.top('normal', 6, { subset: '15' }, 20);
     expect(top).toEqual([{ mode: 'normal', level: 6, rule: 'hex|15|0.0.0', ms: 42, at: 7, name: 'ann', bot: true, others: ['bob'], named: false }]);
     const filters = f.calls[1].body.structuredQuery.where.compositeFilter.filters.map((x: any) => x.fieldFilter.field.fieldPath);
@@ -75,6 +75,10 @@ describe('the leaderboard across shards', () => {
     const byBot = f.calls[2].body.structuredQuery.where.compositeFilter.filters;
     expect(byBot.map((x: any) => x.fieldFilter.field.fieldPath)).toEqual(['mode', 'level', 'bot']);
     expect(byBot[2].fieldFilter.value).toEqual({ booleanValue: false });
+    await fs.top('normal', 6, { subset: '15', bots: 'only', company: 'alone' }, 20);
+    const all = f.calls[3].body.structuredQuery.where.compositeFilter.filters;
+    expect(all.map((x: any) => x.fieldFilter.field.fieldPath)).toEqual(['mode', 'level', 'subset', 'bot', 'company']);
+    expect(all[4].fieldFilter.value).toEqual({ stringValue: 'alone' });
   });
 });
 

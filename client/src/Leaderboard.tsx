@@ -1,7 +1,9 @@
 /**
  * The lobby's Leaderboard tab: the fastest won rounds at a board size, from
- * the server's `GET /wins` (server/wins.ts), all edge sets or one, and
- * everyone's, bots' or people's. A rule's row takes that rule back to Play.
+ * the server's `GET /wins` (server/wins.ts), all edge sets or one,
+ * everyone's, bots' or people's, and won against anyone, nobody or bots
+ * only. Hovering a row shows who played that round; its rule takes that rule
+ * back to Play.
  */
 
 import { useEffect, useState } from 'react';
@@ -29,6 +31,25 @@ const BOTS = [
   { bots: 'none', label: 'No bots' },
 ] as const;
 
+/** The Against filter (who else was in the round), likewise; `GET /wins`'s `company`. */
+const COMPANY = [
+  { company: 'all', label: 'Anyone' },
+  { company: 'alone', label: 'Nobody' },
+  { company: 'bots', label: 'Only bots' },
+] as const;
+
+/** Who played a won round, for its row's tooltip; a name there more than once (unnamed bots of old wins) is counted. */
+export function roundPlayers(w: WinEntry): string {
+  const seen = new Map<string, { n: number; bot: boolean }>();
+  w.others.forEach((name, i) => {
+    const o = seen.get(name) ?? { n: 0, bot: w.otherBots?.[i] === true };
+    o.n++;
+    seen.set(name, o);
+  });
+  const others = [...seen].map(([name, o]) => `${name}${o.n > 1 ? ` ×${o.n}` : ''}${o.bot ? ' (bot)' : ''}`);
+  return [`Won by ${w.name}${w.bot ? ' (bot)' : ''}`, others.length ? `with ${others.join(', ')}` : 'nobody else was there'].join('\n');
+}
+
 /** `m:ss`, or `h:mm:ss` from an hour. */
 export function formatWinTime(ms: number): string {
   const s = Math.round(ms / 1000);
@@ -48,6 +69,8 @@ export function Leaderboard({ family, mode, levels, level, onLevel, onUse }: Lea
   const [subset, setSubset] = useState('');
   const [botsAt, setBotsAt] = useState(0);
   const bots = BOTS[botsAt];
+  const [companyAt, setCompanyAt] = useState(0);
+  const company = COMPANY[companyAt];
   const [wins, setWins] = useState<readonly WinEntry[] | 'error' | null>(null);
   const sets = validEdgeSubsets(family)
     .map((v) => v.edges.join(''))
@@ -56,7 +79,7 @@ export function Leaderboard({ family, mode, levels, level, onLevel, onUse }: Lea
   useEffect(() => {
     setWins(null);
     const ctl = new AbortController();
-    const q = new URLSearchParams({ mode, level: String(level), subset, bots: bots.bots });
+    const q = new URLSearchParams({ mode, level: String(level), subset, bots: bots.bots, company: company.company });
     fetch(`/wins?${q}`, { signal: ctl.signal })
       .then((r) => (r.ok ? (r.json() as Promise<{ wins: WinEntry[] }>) : Promise.reject(new Error(String(r.status)))))
       .then((j) => setWins(j.wins))
@@ -64,7 +87,7 @@ export function Leaderboard({ family, mode, levels, level, onLevel, onUse }: Lea
         if (!ctl.signal.aborted) setWins('error');
       });
     return () => ctl.abort();
-  }, [mode, level, subset, bots.bots]);
+  }, [mode, level, subset, bots.bots, company.company]);
 
   return (
     <section className="panel leaderboard">
@@ -86,6 +109,14 @@ export function Leaderboard({ family, mode, levels, level, onLevel, onUse }: Lea
           onClick={() => setBotsAt((botsAt + 1) % BOTS.length)}
         >
           Bots: {bots.label}
+        </button>
+        <button
+          type="button"
+          className={`btn${company.company === 'all' ? '' : ' is-on'}`}
+          title="Tap for rounds won with nobody else there, against bots only, or against anyone"
+          onClick={() => setCompanyAt((companyAt + 1) % COMPANY.length)}
+        >
+          Against: {company.label}
         </button>
       </div>
       <div className="mode-row" role="radiogroup" aria-label="Edge classes">
@@ -115,10 +146,10 @@ export function Leaderboard({ family, mode, levels, level, onLevel, onUse }: Lea
             {wins.map((w, i) => {
               const rule = ruleFromKey(w.rule, family);
               return (
-                <tr key={`${w.at}-${w.name}`}>
+                <tr key={`${w.at}-${w.name}`} title={roundPlayers(w)}>
                   <td className="muted">{i + 1}</td>
                   <td className="leaderboard-time">{formatWinTime(w.ms)}</td>
-                  <td title={w.others.length ? `With ${w.others.join(', ')}` : 'Nobody else was there'}>
+                  <td>
                     {w.name}
                     {w.bot && <span className="muted"> (bot)</span>}
                   </td>

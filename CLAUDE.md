@@ -95,7 +95,7 @@ server/feedback.ts  POST /feedback: parseFeedback (whitelisted, capped
 server/gcp.ts     parseGsUrl, metadataTokens (the instance's GCP token).
 server/wins.ts    The leaderboard: one `WinRecord` per won round, the fastest
                   per (mode, level) in memory and WINS_FILE (JSON lines);
-                  GET /wins, by edge set or all (docs/leaderboard.md).
+                  GET /wins, by edge set, winner and company (docs/leaderboard.md).
 client/src/       Vite + React.
   App.tsx         Mode (online | solo), connection lifecycle, rejoin/resume.
   session.ts      The tab's resume ticket (sessionStorage, shared copy in
@@ -706,9 +706,12 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   minute still shows. (The old figure was zeroed every 60 s.)
 - **The leaderboard is minimal** (owner's call, 2026-10-20): the lobby's
   Leaderboard tab lists the fastest won rounds at a size — time, name, rule —
-  with an edge-set filter and a Bots one (a tap steps Everything → Only
-  bots → No bots, on who won). A win's a win (bots' and named rooms' count, bots
-  marked); who else was there is kept, shown only as a name's tooltip. Keep
+  with an edge-set filter, a Bots one (a tap steps Everything → Only
+  bots → No bots, on who won) and an Against one (who else was in the round:
+  Anyone → Nobody → Only bots; `companyOf`, kept as `company` on each
+  Firestore document). A win's a win (bots' and named rooms' count, bots
+  marked); who played the round is the row's tooltip (`roundPlayers`, bots
+  marked, from `others`/`otherBots`). Keep
   it that small unless the owner asks for more. **It is permanent and shared
   by every shard** (owner's call, 2026-10-21): one Firestore document per
   won round (`WINS_FIRESTORE`, server/firestore.ts, REST with the instance's
