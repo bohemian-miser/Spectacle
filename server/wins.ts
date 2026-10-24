@@ -1,8 +1,8 @@
 /**
  * The leaderboard: every won round's time, and the fastest of them served to
  * the lobby's Leaderboard tab as `GET /wins`, per game mode and board size,
- * optionally for one edge set, for bots' wins or people's only, and for
- * rounds won alone or against bots only.
+ * optionally for one edge set, for bots' wins or people's only, and by who
+ * else was in the round.
  *
  * Kept in memory, and in WINS_FILE (one JSON line per win, read back at
  * startup) when that is set. With a remote (server/firestore.ts, every shard
@@ -55,8 +55,13 @@ export function companyOf(r: Pick<WinRecord, 'others' | 'otherBots'>): Company {
 /** Whose wins: everyone's, bots' only (`only`), or people's only (`none`). */
 export type BotFilter = 'all' | 'only' | 'none';
 
-/** Who else was in the round: anyone (`all`), nobody (`alone`), or bots only (`bots`). */
-export type CompanyFilter = 'all' | 'alone' | 'bots';
+/** Who else was in the round: anyone (`all`), nobody (`alone`), bots only (`bots`), or not bots only (`notbots`: nobody, or a person). */
+export type CompanyFilter = 'all' | 'alone' | 'bots' | 'notbots';
+
+/** Whether a win's company passes `filter`. */
+export function companyIn(c: Company, filter: CompanyFilter): boolean {
+  return filter === 'all' || (filter === 'notbots' ? c !== 'bots' : c === filter);
+}
 
 /** What a board is narrowed to: an edge set (`subset` as `ruleKey` writes it; '' or absent = all), whose wins, and who else was there. */
 export interface WinsFilter {
@@ -77,7 +82,7 @@ export function parseWinsQuery(params: URLSearchParams): { mode: GameMode; level
   const company = params.get('company') || 'all';
   if (!(GAME_MODES as readonly string[]).includes(mode) || !Number.isInteger(level) || !/^\d{0,10}$/.test(subset)) return null;
   if (bots !== 'all' && bots !== 'only' && bots !== 'none') return null;
-  if (company !== 'all' && company !== 'alone' && company !== 'bots') return null;
+  if (company !== 'all' && company !== 'alone' && company !== 'bots' && company !== 'notbots') return null;
   return { mode: mode as GameMode, level, filter: { subset, bots, company } };
 }
 
@@ -194,7 +199,7 @@ export class Wins {
     for (const r of this.lists.get(`${mode}|${level}`) ?? []) {
       if (subset && r.rule.split('|')[1] !== subset) continue;
       if ((bots === 'only' && !r.bot) || (bots === 'none' && r.bot)) continue;
-      if (company !== 'all' && companyOf(r) !== company) continue;
+      if (!companyIn(companyOf(r), company)) continue;
       out.push(r);
       if (out.length === TOP) break;
     }

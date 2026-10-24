@@ -71,7 +71,11 @@ export function firestoreWins(project: string, token: () => Promise<string | nul
         eq('level', int(level)),
         ...(subset ? [eq('subset', str(subset))] : []),
         ...(bots === 'all' ? [] : [eq('bot', { booleanValue: bots === 'only' })]),
-        ...(company === 'all' ? [] : [eq('company', str(company))]),
+        ...(company === 'all'
+          ? []
+          : company === 'notbots'
+            ? [{ fieldFilter: { field: { fieldPath: 'company' }, op: 'IN', value: { arrayValue: { values: [str('alone'), str('people')] } } } }]
+            : [eq('company', str(company))]),
       ];
       const res = (await call(`${base}:runQuery`, {
         structuredQuery: {

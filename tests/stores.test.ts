@@ -79,6 +79,9 @@ describe('the leaderboard across shards', () => {
     const all = f.calls[3].body.structuredQuery.where.compositeFilter.filters;
     expect(all.map((x: any) => x.fieldFilter.field.fieldPath)).toEqual(['mode', 'level', 'subset', 'bot', 'company']);
     expect(all[4].fieldFilter.value).toEqual({ stringValue: 'alone' });
+    await fs.top('normal', 6, { company: 'notbots' }, 20);
+    const notBots = f.calls[4].body.structuredQuery.where.compositeFilter.filters[2].fieldFilter;
+    expect(notBots).toEqual({ field: { fieldPath: 'company' }, op: 'IN', value: { arrayValue: { values: [{ stringValue: 'alone' }, { stringValue: 'people' }] } } });
   });
 });
 

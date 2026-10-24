@@ -11,7 +11,7 @@ import WebSocket from 'ws';
 import type { ServerMessage, WinEntry } from '../shared/game/protocol';
 import { defaultRule, ruleFromCombo, ruleKey, type PlayerRule } from '../shared/game/rule';
 import { companyOf, parseWinsQuery, TOP, Wins, type WinRecord } from '../server/wins';
-import { formatWinTime, roundPlayers, ruleFromKey } from '../client/src/Leaderboard';
+import { formatWinTime, opponentCount, opponents, ruleFromKey } from '../client/src/Leaderboard';
 import { startServer, type TestServer } from './server';
 
 const R15 = ruleKey(defaultRule('hex'));
@@ -73,7 +73,7 @@ describe('the board', () => {
     expect(w.top('normal', 3, { subset: '15', bots: 'only' }).map((e) => e.name)).toEqual(['hexbot']);
   });
 
-  it('filters by who else was there: nobody, bots only, or anyone', () => {
+  it('filters by who else was there: nobody, bots only, not just bots, or anyone', () => {
     const w = new Wins();
     w.add(win(4000, 'with people', { others: ['hexbot', 'Mitch'], otherBots: [true, false] }));
     w.add(win(3000, 'with bots', { others: ['hexbot', 'Bridge'], otherBots: [true, true] }));
@@ -83,14 +83,18 @@ describe('the board', () => {
     expect(w.top('normal', 3, { company: 'alone' }).map((e) => e.name)).toEqual(['alone']);
     expect(w.top('normal', 3, { company: 'bots' }).map((e) => e.name)).toEqual(['with bots']);
     expect(w.top('normal', 3, { company: 'bots' })[0].otherBots).toEqual([true, true]);
+    expect(w.top('normal', 3, { company: 'notbots' }).map((e) => e.name)).toEqual(['unknown company', 'alone', 'with people']);
     expect(companyOf({ others: ['a'], otherBots: [true] })).toBe('bots');
     expect(companyOf({ others: ['a'] })).toBe('people');
   });
 
-  it('says who played a round, bots marked', () => {
-    expect(roundPlayers({ rule: R15, ms: 1, at: 1, name: 'ann', bot: false, others: ['hexbot', 'bob'], otherBots: [true, false] })).toBe('Won by ann\nwith hexbot (bot), bob');
-    expect(roundPlayers({ rule: R15, ms: 1, at: 1, name: 'hexbot', bot: true, others: [] })).toBe('Won by hexbot (bot)\nnobody else was there');
-    expect(roundPlayers({ rule: R15, ms: 1, at: 1, name: 'ann', bot: false, others: ['bot', 'bot', 'bot'], otherBots: [true, true, true] })).toBe('Won by ann\nwith bot ×3 (bot)');
+  it("lists and counts a round's opponents, the winner left out", () => {
+    const ann = { rule: R15, ms: 1, at: 1, name: 'ann', bot: false };
+    expect(opponents({ ...ann, others: ['hexbot', 'bob'], otherBots: [true, false] })).toEqual([{ name: 'hexbot', bot: true, n: 1 }, { name: 'bob', bot: false, n: 1 }]);
+    expect(opponents({ ...ann, others: ['bot', 'bot', 'bot'], otherBots: [true, true, true] })).toEqual([{ name: 'bot', bot: true, n: 3 }]);
+    expect(opponentCount({ ...ann, others: ['hexbot', 'bob', 'Bridge'], otherBots: [true, false, true] })).toEqual({ people: 1, bots: 2 });
+    expect(opponentCount({ ...ann, bot: true, others: [] })).toEqual({ people: 0, bots: 0 });
+    expect(opponentCount({ ...ann, others: ['bob'] })).toBeNull(); // recorded before otherBots
   });
 
   it('reads its file back, skipping a line that is not a win', async () => {
@@ -108,6 +112,7 @@ describe('the board', () => {
     expect(q('mode=normal&level=3')).toEqual({ mode: 'normal', level: 3, filter: { subset: '', bots: 'all', company: 'all' } });
     expect(q('mode=normal&level=3&subset=258&bots=only')).toEqual({ mode: 'normal', level: 3, filter: { subset: '258', bots: 'only', company: 'all' } });
     expect(q('mode=normal&level=3&company=bots')?.filter.company).toBe('bots');
+    expect(q('mode=normal&level=3&company=notbots')?.filter.company).toBe('notbots');
     expect(q('mode=normal&level=3&company=people')).toBeNull();
     expect(q('mode=normal&level=3&bots=none')?.filter.bots).toBe('none');
     expect(q('mode=normal&level=3&bots=some')).toBeNull();

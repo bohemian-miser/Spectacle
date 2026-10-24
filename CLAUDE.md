@@ -113,7 +113,8 @@ client/src/       Vite + React.
   celebration.ts  A won round's flip order (pure): the infinite line from the
                   winner's tail, a chord a step both ways, `sqrt` timing.
   Lobby.tsx (online: Play | Leaderboard tabs), Leaderboard.tsx (the
-                  fastest wins: time, name, rule; size and edge-set filters),
+                  fastest wins: time, name, opponents, rule; tap a row for
+                  who they were; size, winner, against and edge filters),
                   RuleEditor.tsx, TileThumb.tsx (interactive SVG tile: edge
                   numbers, drag dot→dot), PatchPreview.tsx (level-3 analyze(),
                   cropped to ~97% tiles, arrows, edge-number toggle).
@@ -705,13 +706,14 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   the whole minute; a pass is stamped when it ends, so one longer than a
   minute still shows. (The old figure was zeroed every 60 s.)
 - **The leaderboard is minimal** (owner's call, 2026-10-20): the lobby's
-  Leaderboard tab lists the fastest won rounds at a size — time, name, rule —
-  with an edge-set filter, a Bots one (a tap steps Everything → Only
-  bots → No bots, on who won) and an Against one (who else was in the round:
-  Anyone → Nobody → Only bots; `companyOf`, kept as `company` on each
-  Firestore document). A win's a win (bots' and named rooms' count, bots
-  marked); who played the round is the row's tooltip (`roundPlayers`, bots
-  marked, from `others`/`otherBots`). Keep
+  Leaderboard tab lists the fastest won rounds at a size — time, name (a
+  person or bot icon), opponents (people and bots, the winner left out:
+  `opponentCount`), rule — with Size, Winner (Anyone / Person / Bot), Against
+  (who else was in the round: Anyone / Nobody / Only bots / Not just bots;
+  `companyOf`, kept as `company` on each Firestore document, `notbots` an
+  `IN`) and Edges as rows of buttons. Tapping a row lists its opponents
+  (`opponents`, from `others`/`otherBots`). A win's a win (bots' and named
+  rooms' count). Keep
   it that small unless the owner asks for more. **It is permanent and shared
   by every shard** (owner's call, 2026-10-21): one Firestore document per
   won round (`WINS_FIRESTORE`, server/firestore.ts, REST with the instance's
