@@ -2,22 +2,25 @@
 
 The lobby's **Leaderboard** tab (online only): the fastest won rounds at a
 board size, in the game mode picked under Play, with the winner's name, rule
-and time; filtered by edge set or not, by **Bots** (a tap steps through
-Everything, Only bots — bots' wins — and No bots — people's), and by
-**Against** (who else was in the round: Anyone, Nobody, or Only bots). A
-rule's row takes it back to Play. Hovering a row shows who played that round,
-bots marked.
+and time. The filters are rows of buttons: **Size**, **Winner** (Anyone,
+Person, Bot), **Against** (who else was in the round: Anyone, Nobody, Only
+bots, or Not just bots — nobody, or at least one other person) and **Edges**.
+An icon beside each name says person or bot, and the **Opponents** column
+counts the people and bots the winner played against (`opponentCount`; `–`
+for a win recorded before `otherBots`). Tapping a row with opponents lists
+them (`opponents`, a name there more than once counted, `bot ×4`). A row's
+rule takes it back to Play.
 
 Every won round is recorded (`server/wins.ts`, `WinRecord`): mode, size, the
 winner's own rule (`ruleKey`), the round's played time (the room's ticked
 time, `roundMs` in the `win` log line), when, the winner's name, whether a
 bot, everyone else at the board (`others`, and which of them were bots,
 `otherBots`), and whether it was a `?room=` room. Its *company* (`companyOf`:
-`alone`, `bots`, or `people`) is what Against filters on; a win recorded
+`alone`, `bots`, or `people`) is what Against filters on (`notbots` is `alone` or `people`, a Firestore `IN`); a win recorded
 before `otherBots` was kept counts as `people` if anyone else was there. A win's
 a win: bots' and named rooms' count.
 
-`GET /wins?mode=normal&level=5[&subset=258][&bots=only|none][&company=alone|bots]`
+`GET /wins?mode=normal&level=5[&subset=258][&bots=only|none][&company=alone|bots|notbots]`
 answers `{ wins: [...] }`, fastest first, at most 20. With `WINS_FIRESTORE`,
 each combination of filters is a Firestore composite index, and the documents
 carry `company` to filter on (`deploy/gcp/stats.sh` makes all eight; re-run it

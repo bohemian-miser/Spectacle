@@ -375,7 +375,7 @@ const wins = new Wins(
   WINS_FIRESTORE ? { store: firestoreWins(WINS_FIRESTORE, gcpToken), shard: SHARD_NAME } : null,
 );
 
-/** GET /wins?mode=&level=[&subset=][&bots=only|none][&company=alone|bots]: the fastest wins at that size, of one edge set or all, bots' or people's, won alone or against bots only. */
+/** GET /wins?mode=&level=[&subset=][&bots=only|none][&company=alone|bots|notbots]: the fastest wins at that size, of one edge set or all, bots' or people's, by who else was there. */
 function handleWins(url: URL, res: ServerResponse): void {
   const q = parseWinsQuery(url.searchParams);
   if (!q || !LEVELS.some((l) => l.level === q.level)) {
