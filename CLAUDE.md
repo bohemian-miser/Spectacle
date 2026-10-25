@@ -718,8 +718,10 @@ each only after CI passes on that merge commit (wait-for-ci.yml).
   by every shard** (owner's call, 2026-10-21): one Firestore document per
   won round (`WINS_FIRESTORE`, server/firestore.ts, REST with the instance's
   token), `GET /wins` reads the fastest back (cached `REMOTE_TTL_MS` per
-  query) merged with the wins the answering process saw itself, so a win
-  shows at once where it was won. Without it, memory and `WINS_FILE`. No
+  query) merged with the wins the answering process recorded since it
+  started, so a win shows at once where it was won — not what `WINS_FILE`
+  read back (stale copies: the VM's lacked `otherBots` and passed "Not just
+  bots"). Without it, memory and `WINS_FILE`. No
   name filter (owner's call). `tests/wins.test.ts` plays a real win on a
   spawned server; `tests/stores.test.ts` the remote paths.
 - **Pattern stats are public.** `/patterns` (and `/patterns.json`) list which

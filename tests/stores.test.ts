@@ -4,11 +4,14 @@
  * stints and wins in BigQuery (server/bigquery.ts), and /patterns' stored
  * totals with the running stints on top (server/pattern-stats.ts).
  */
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { bigQuery } from '../server/bigquery';
 import { firestoreWins, type WinsRemote } from '../server/firestore';
 import { PatternStats, storedRows } from '../server/pattern-stats';
-import { REMOTE_TTL_MS, Wins, type WinRecord } from '../server/wins';
+import { REMOTE_TTL_MS, Wins, type WinRecord, type WinsFilter } from '../server/wins';
 import { defaultRule } from '../shared/game/rule';
 
 const win = (name: string, ms: number, at = ms): WinRecord => ({ mode: 'normal', level: 6, rule: 'hex|15|0.0.0', ms, at, name, bot: false, others: [], named: false });
@@ -32,6 +35,21 @@ describe('the leaderboard across shards', () => {
     w.add(win('mine', 500)); // won here, and already in the remote
     w.add(win('fresh', 100)); // won here, not in the remote yet
     expect((await w.board('normal', 6)).map((e) => e.name)).toEqual(['fresh', 'far', 'mine']);
+  });
+
+  it('leaves out what WINS_FILE read back: the remote has it, maybe filled in since', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'wins-'));
+    const file = join(dir, 'wins.jsonl');
+    const old = { ...win('old', 300), others: ['hexbot'] }; // before otherBots: would count as against people
+    writeFileSync(file, JSON.stringify(old) + '\n');
+    let asked: WinsFilter | undefined;
+    const remote: WinsRemote = { add: async () => {}, top: async (_m, _l, filter) => ((asked = filter), filter.company === 'notbots' ? [] : [{ ...old, otherBots: [true] }]) };
+    const w = new Wins(file, () => {}, { store: remote, shard: 'a' });
+    w.add({ ...win('fresh', 400), others: ['bob'], otherBots: [false] });
+    expect((await w.board('normal', 6, { company: 'notbots' })).map((e) => e.name)).toEqual(['fresh']);
+    expect(asked?.company).toBe('notbots');
+    expect((await w.board('normal', 6)).map((e) => [e.name, e.otherBots])).toEqual([['old', [true]], ['fresh', [false]]]);
+    rmSync(dir, { recursive: true });
   });
 
   it('asks the remote at most once per TTL, and keeps its last answer when it fails', async () => {
