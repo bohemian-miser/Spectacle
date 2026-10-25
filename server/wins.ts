@@ -113,6 +113,9 @@ export class Wins {
   /** Per `mode|level`, fastest first. */
   private readonly lists = new Map<string, WinRecord[]>();
 
+  /** The wins this process recorded since it started: with a remote, the only local ones the board adds, since it may not have them yet. */
+  private readonly fresh = new Set<WinRecord>();
+
   /** Per query, the remote's last answer and when it came. */
   private readonly cache = new Map<string, { rows: WinRecord[]; at: number; asking?: Promise<void> }>();
 
@@ -146,6 +149,7 @@ export class Wins {
 
   add(r: WinRecord): void {
     this.keep(r);
+    this.fresh.add(r);
     if (this.file) appendFile(this.file, JSON.stringify(r) + '\n').catch(this.onError);
     if (this.remote) this.remote.store.add(r, this.remote.shard).catch(this.onError);
   }
@@ -157,12 +161,15 @@ export class Wins {
 
   /**
    * The board for `GET /wins`: the remote's fastest (every shard's, kept for
-   * good) merged with this process's own, or the local board alone without a
-   * remote. A remote that fails leaves its last answer standing.
+   * good) merged with the wins this process recorded since it started, or the
+   * local board alone without a remote. What WINS_FILE read back is left out
+   * then: the remote has it already, maybe filled in since (the VM's file
+   * kept wins without `otherBots`, which passed "Not just bots" as wins
+   * against people). A remote that fails leaves its last answer standing.
    */
   async board(mode: GameMode, level: number, filter: WinsFilter = {}, now = Date.now()): Promise<WinEntry[]> {
-    const local = this.localTop(mode, level, filter);
-    if (!this.remote) return local.map(entry);
+    if (!this.remote) return this.localTop(mode, level, filter).map(entry);
+    const local = this.localTop(mode, level, filter, this.fresh);
     const key = `${mode}|${level}|${filter.subset ?? ''}|${filter.bots ?? 'all'}|${filter.company ?? 'all'}`;
     let c = this.cache.get(key);
     if (!c || now - c.at > REMOTE_TTL_MS) {
@@ -194,9 +201,10 @@ export class Wins {
     return merged.map(entry);
   }
 
-  private localTop(mode: GameMode, level: number, { subset = '', bots = 'all', company = 'all' }: WinsFilter): WinRecord[] {
+  private localTop(mode: GameMode, level: number, { subset = '', bots = 'all', company = 'all' }: WinsFilter, only?: Set<WinRecord>): WinRecord[] {
     const out: WinRecord[] = [];
     for (const r of this.lists.get(`${mode}|${level}`) ?? []) {
+      if (only && !only.has(r)) continue;
       if (subset && r.rule.split('|')[1] !== subset) continue;
       if ((bots === 'only' && !r.bot) || (bots === 'none' && r.bot)) continue;
       if (!companyIn(companyOf(r), company)) continue;

@@ -32,6 +32,10 @@ names of who else was there: the people are worked out from the join/leave
 lines, the bots counted from the `win` line — one bot is `hexbot` (Cloud Run
 ran `BOTS=1`), more are each just `bot`.
 
+With Firestore, a shard adds only the wins it recorded since it started (they
+may not have reached Firestore yet); what its `WINS_FILE` read back is left
+out, since Firestore has it, maybe filled in since.
+
 Records live in memory and, with `WINS_FILE` set, in that file (one JSON line
 each, read back at startup; the VM's compose file uses `/data/wins.jsonl`).
 Without it they go with the process — on Cloud Run, with every new instance.
